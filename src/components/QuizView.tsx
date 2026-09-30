@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Clock, ChevronLeft, ChevronRight, Flag, CheckCircle, XCircle, AlertCircle, Coffee, PlayCircle } from 'lucide-react';
 import type { ActiveQuiz, AnswerRecord } from '../types';
 
@@ -31,142 +31,90 @@ export default function QuizView({
   const [autoAdvanceTimer, setAutoAdvanceTimer] = useState<number | null>(null);
   const [pendingAutoAdvance, setPendingAutoAdvance] = useState(false);
 
-  // Use ref to track the current question to detect changes
   const currentIndexRef = useRef(quiz.currentIndex);
-  const autoAdvanceTimerRef = useRef<number | null>(null);
-  const countdownRef = useRef<number | null>(null);
 
   const isTestMode = quiz.config.mode === 'test';
   const isTargetMode = quiz.config.mode === 'target';
   const currentQuestion = quiz.questions[quiz.currentIndex];
   const questionId = currentQuestion?.id;
-  const answered = questionId ? quiz.answers[questionId] : undefined;
+  const answered = questionId ? (quiz.answers[questionId] as AnswerRecord | undefined) : undefined;
   const isAnswered = !!answered;
   const totalQuestions = quiz.questions.length;
 
-  // Overall timer logic
+  // 1. Unified Timer Logic (Consolidates overall time and question timeout into a single tick)
   useEffect(() => {
-    if (quiz.config.timeLimitMinutes <= 0 || quiz.isCompleted || quiz.isPaused) return;
+    if (quiz.isCompleted || quiz.isPaused) return;
 
     const interval = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - quiz.startTime) / 1000);
-      const totalSeconds = quiz.config.timeLimitMinutes * 60;
-      const remaining = totalSeconds - elapsed;
+      const now = Date.now();
 
-      if (remaining <= 0) {
-        onTimeUp();
-      } else {
-        onUpdateTime(remaining);
+      // Overall Time Check
+      if (quiz.config.timeLimitMinutes > 0) {
+        const elapsedOverall = Math.floor((now - quiz.startTime) / 1000);
+        const remainingOverall = (quiz.config.timeLimitMinutes * 60) - elapsedOverall;
+        if (remainingOverall <= 0) {
+          onTimeUp();
+          return; // Halt further processing if time is up
+        }
+        onUpdateTime(remainingOverall);
+      }
+
+      // Question Timeout Check
+      if (quiz.config.questionTimeoutMinutes > 0 && !isAnswered) {
+        const elapsedQuestion = Math.floor((now - quiz.questionStartTime) / 1000);
+        if (elapsedQuestion >= (quiz.config.questionTimeoutMinutes * 60)) {
+          onQuestionTimeout();
+        }
       }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [quiz.config.timeLimitMinutes, quiz.startTime, quiz.isCompleted, quiz.isPaused, onTimeUp, onUpdateTime]);
+  }, [
+    quiz.config.timeLimitMinutes, quiz.config.questionTimeoutMinutes,
+    quiz.startTime, quiz.questionStartTime, quiz.isCompleted,
+    quiz.isPaused, isAnswered, onTimeUp, onUpdateTime, onQuestionTimeout
+  ]);
 
-  // Question timeout logic
-  useEffect(() => {
-    if (quiz.config.questionTimeoutMinutes <= 0 || quiz.isCompleted || quiz.isPaused || isAnswered) return;
-
-    const interval = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - quiz.questionStartTime) / 1000);
-      const timeoutSeconds = quiz.config.questionTimeoutMinutes * 60;
-
-      if (elapsed >= timeoutSeconds) {
-        onQuestionTimeout();
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [quiz.config.questionTimeoutMinutes, quiz.questionStartTime, quiz.isCompleted, quiz.isPaused, isAnswered, onQuestionTimeout]);
-
-  // Reset states when question changes
+  // Reset states when the question index changes
   useEffect(() => {
     if (currentIndexRef.current !== quiz.currentIndex) {
       currentIndexRef.current = quiz.currentIndex;
       setShowExplanation(false);
       setPendingAutoAdvance(false);
       setAutoAdvanceTimer(null);
-
-      // Clear any pending timers
-      if (autoAdvanceTimerRef.current) {
-        clearTimeout(autoAdvanceTimerRef.current);
-        autoAdvanceTimerRef.current = null;
-      }
-      if (countdownRef.current) {
-        clearInterval(countdownRef.current);
-        countdownRef.current = null;
-      }
     }
   }, [quiz.currentIndex]);
 
-  // Auto-advance in Test/Target mode after answering
+  // 2. Simplified, State-Driven Auto-Advance Countdown
   useEffect(() => {
     if (!pendingAutoAdvance || quiz.isPaused) return;
-
-    // Clear any existing timers
-    if (autoAdvanceTimerRef.current) {
-      clearTimeout(autoAdvanceTimerRef.current);
-    }
-    if (countdownRef.current) {
-      clearInterval(countdownRef.current);
-    }
-
     setAutoAdvanceTimer(2);
+  }, [pendingAutoAdvance, quiz.isPaused]);
 
-    // Countdown display
-    countdownRef.current = window.setInterval(() => {
-      setAutoAdvanceTimer(prev => {
-        if (prev === null || prev <= 1) {
-          return prev;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+  useEffect(() => {
+    if (autoAdvanceTimer === null || quiz.isPaused) return;
 
-    // Actual advance after 2 seconds
-    autoAdvanceTimerRef.current = window.setTimeout(() => {
-      // Clear countdown
-      if (countdownRef.current) {
-        clearInterval(countdownRef.current);
-        countdownRef.current = null;
-      }
-
-      // Check what to do next
+    if (autoAdvanceTimer === 0) {
       if (isTargetMode && quiz.targetCorrect && quiz.correctCount >= quiz.targetCorrect) {
         onComplete();
       } else if (quiz.currentIndex < totalQuestions - 1) {
         onNext();
-      } else if (!isTargetMode) {
-        onComplete();
       } else {
-        // Target mode but ran out of questions
         onComplete();
       }
-    }, 2000);
+      setAutoAdvanceTimer(null);
+      return;
+    }
 
-    return () => {
-      if (autoAdvanceTimerRef.current) {
-        clearTimeout(autoAdvanceTimerRef.current);
-        autoAdvanceTimerRef.current = null;
-      }
-      if (countdownRef.current) {
-        clearInterval(countdownRef.current);
-        countdownRef.current = null;
-      }
-    };
-  }, [pendingAutoAdvance, quiz.isPaused, isTargetMode, quiz.targetCorrect, quiz.correctCount, quiz.currentIndex, totalQuestions, onNext, onComplete]);
+    const timer = setTimeout(() => {
+      setAutoAdvanceTimer(prev => (prev !== null ? prev - 1 : null));
+    }, 1000);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (autoAdvanceTimerRef.current) {
-        clearTimeout(autoAdvanceTimerRef.current);
-      }
-      if (countdownRef.current) {
-        clearInterval(countdownRef.current);
-      }
-    };
-  }, []);
+    return () => clearTimeout(timer);
+  }, [
+    autoAdvanceTimer, quiz.isPaused, isTargetMode, quiz.targetCorrect,
+    quiz.correctCount, quiz.currentIndex, totalQuestions, onNext, onComplete
+  ]);
 
   const handleOptionClick = useCallback((option: string) => {
     if (isAnswered || quiz.isPaused) return;
@@ -182,15 +130,11 @@ export default function QuizView({
   }, [isAnswered, quiz.isPaused, quiz.questionStartTime, questionId, onAnswer, isTestMode, isTargetMode]);
 
   const handleNext = useCallback(() => {
-    if (quiz.currentIndex < totalQuestions - 1) {
-      onNext();
-    }
+    if (quiz.currentIndex < totalQuestions - 1) onNext();
   }, [quiz.currentIndex, totalQuestions, onNext]);
 
   const handlePrev = useCallback(() => {
-    if (quiz.currentIndex > 0) {
-      onPrev();
-    }
+    if (quiz.currentIndex > 0) onPrev();
   }, [quiz.currentIndex, onPrev]);
 
   const handleSkipTimeout = useCallback(() => {
@@ -202,9 +146,19 @@ export default function QuizView({
     }
   }, [quiz.questionStartTime, questionId, onAnswer, onResume, onNext, quiz.currentIndex, totalQuestions]);
 
+  // 3. Memoized Options Array to prevent GC churn on timer ticks
+  const options = useMemo(() => {
+    if (!currentQuestion) return [];
+    return [
+      { key: 'A', text: currentQuestion.option_a },
+      { key: 'B', text: currentQuestion.option_b },
+      { key: 'C', text: currentQuestion.option_c },
+      { key: 'D', text: currentQuestion.option_d },
+    ];
+  }, [currentQuestion]);
+
   if (!currentQuestion) return null;
 
-  // Pause screen
   if (quiz.isPaused) {
     return (
       <div className="max-w-2xl mx-auto p-6 animate-fade-in">
@@ -245,39 +199,20 @@ export default function QuizView({
     );
   }
 
-  const options: { key: string; text: string }[] = [
-    { key: 'A', text: currentQuestion.option_a },
-    { key: 'B', text: currentQuestion.option_b },
-    { key: 'C', text: currentQuestion.option_c },
-    { key: 'D', text: currentQuestion.option_d },
-  ];
-
   const correctAnswer = currentQuestion.correct_answer;
 
   const getOptionStyle = (optKey: string): string => {
-    if (!isAnswered) {
-      return 'bg-gray-800 border-gray-600 hover:border-brand-400 hover:bg-gray-750 cursor-pointer';
-    }
-
-    const ans = answered as AnswerRecord;
-    if (ans.timedOut) {
-      return 'bg-gray-800/50 border-gray-700 text-gray-500';
-    }
-    if (optKey === correctAnswer) {
-      return 'bg-success-50/10 border-success-500 text-success-500';
-    }
-    if (optKey === ans.selected && !ans.isCorrect) {
-      return 'bg-danger-50/10 border-danger-500 text-danger-500';
-    }
+    if (!isAnswered) return 'bg-gray-800 border-gray-600 hover:border-brand-400 hover:bg-gray-750 cursor-pointer';
+    if (answered.timedOut) return 'bg-gray-800/50 border-gray-700 text-gray-500';
+    if (optKey === correctAnswer) return 'bg-success-50/10 border-success-500 text-success-500';
+    if (optKey === answered.selected && !answered.isCorrect) return 'bg-danger-50/10 border-danger-500 text-danger-500';
     return 'bg-gray-800/50 border-gray-700 text-gray-500';
   };
 
   const getOptionIcon = (optKey: string) => {
-    if (!isAnswered) return null;
-    const ans = answered as AnswerRecord;
-    if (ans.timedOut) return null;
+    if (!isAnswered || answered.timedOut) return null;
     if (optKey === correctAnswer) return <CheckCircle size={20} className="text-success-500" />;
-    if (optKey === ans.selected && !ans.isCorrect) return <XCircle size={20} className="text-danger-500" />;
+    if (optKey === answered.selected && !answered.isCorrect) return <XCircle size={20} className="text-danger-500" />;
     return null;
   };
 
@@ -289,22 +224,17 @@ export default function QuizView({
 
   const timeRemaining = quiz.timeRemainingSeconds;
   const isTimeLow = timeRemaining !== null && timeRemaining < 60;
-
-  // Progress
   const answeredCount = Object.keys(quiz.answers).length;
+
   const progressPercent = isTargetMode && quiz.targetCorrect
     ? (quiz.correctCount / quiz.targetCorrect) * 100
     : (answeredCount / totalQuestions) * 100;
 
-  // Time spent on current question
   const currentQuestionTime = Math.floor((Date.now() - quiz.questionStartTime) / 1000);
-
-  // Determine if showing feedback in test/target mode
   const showingFeedback = (isTestMode || isTargetMode) && isAnswered && pendingAutoAdvance;
 
   return (
     <div className="max-w-4xl mx-auto p-6 animate-fade-in">
-      {/* Top Bar */}
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div className="flex items-center gap-4">
           <div className="bg-gray-800 rounded-xl px-4 py-2 flex items-center gap-2">
@@ -330,7 +260,6 @@ export default function QuizView({
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Mode indicator */}
           <span className={`px-3 py-1 rounded-full text-xs font-medium ${
             isTestMode ? 'bg-brand-500/20 text-brand-400' :
             isTargetMode ? 'bg-purple-500/20 text-purple-400' :
@@ -339,7 +268,6 @@ export default function QuizView({
             {isTestMode ? '📝 Test' : isTargetMode ? '🎯 Target' : '📖 Learn'}
           </span>
 
-          {/* Question time */}
           {!isAnswered && (
             <div className="bg-gray-800 rounded-lg px-3 py-1 text-xs text-gray-400">
               ⏱️ {formatTime(currentQuestionTime)}
@@ -357,7 +285,6 @@ export default function QuizView({
         </div>
       </div>
 
-      {/* Progress Bar */}
       <div className="w-full bg-gray-800 rounded-full h-2 mb-6">
         <div
           className={`h-2 rounded-full transition-all duration-500 ${
@@ -367,7 +294,6 @@ export default function QuizView({
         />
       </div>
 
-      {/* Target mode progress */}
       {isTargetMode && quiz.targetCorrect && (
         <div className="text-center mb-4">
           <p className="text-sm text-gray-400">
@@ -380,7 +306,6 @@ export default function QuizView({
         </div>
       )}
 
-      {/* Question Card */}
       <div className="bg-gray-800/60 backdrop-blur-sm rounded-2xl border border-gray-700 p-8 mb-6">
         <div className="flex items-center gap-2 mb-4">
           <span className="px-3 py-1 bg-brand-600/20 text-brand-400 rounded-full text-xs font-medium">
@@ -397,7 +322,6 @@ export default function QuizView({
           {currentQuestion.question}
         </h2>
 
-        {/* Options */}
         <div className="space-y-3">
           {options.map(opt => (
             <button
@@ -410,7 +334,7 @@ export default function QuizView({
                 <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold ${
                   isAnswered && !answered?.timedOut && opt.key === correctAnswer
                     ? 'bg-success-500 text-white'
-                    : isAnswered && answered && opt.key === (answered as AnswerRecord).selected && !(answered as AnswerRecord).isCorrect
+                    : isAnswered && answered && opt.key === answered.selected && !answered.isCorrect
                     ? 'bg-danger-500 text-white'
                     : 'bg-gray-700 text-gray-300'
                 }`}>
@@ -424,7 +348,6 @@ export default function QuizView({
         </div>
       </div>
 
-      {/* Test/Target Mode: Auto-advance indicator */}
       {showingFeedback && (
         <div className="animate-fade-in bg-gray-800/60 border border-gray-700 rounded-xl p-4 mb-6 text-center">
           <p className="text-gray-400 text-sm">
@@ -444,7 +367,6 @@ export default function QuizView({
         </div>
       )}
 
-      {/* Learn Mode: Explanation (with HTML support) */}
       {!isTestMode && !isTargetMode && isAnswered && showExplanation && (
         <div className="animate-fade-in bg-brand-600/10 border border-brand-500/30 rounded-2xl p-6 mb-6">
           <div className="flex items-start gap-3">
@@ -465,7 +387,6 @@ export default function QuizView({
         </div>
       )}
 
-      {/* Navigation - Only show in Learn mode or when not auto-advancing */}
       {!isTestMode && !isTargetMode && (
         <div className="flex items-center justify-between">
           <button
@@ -483,7 +404,7 @@ export default function QuizView({
                 const a = quiz.answers[q.id];
                 return (
                   <div
-                    key={i}
+                    key={q.id}
                     className={`w-3 h-3 rounded-full transition-all ${
                       i === quiz.currentIndex
                         ? 'bg-brand-500 scale-125'

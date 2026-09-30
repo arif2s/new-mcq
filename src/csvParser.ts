@@ -1,15 +1,17 @@
 import Papa from 'papaparse';
-import type { QuizQuestion } from './types';
+import type { QuizQuestion, OptionKey } from './types';
 
-// Simple deterministic hash for stable question IDs
-function simpleHash(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
+// Improved deterministic hash (cyrb53) for stable, collision-resistant IDs
+function generateStableId(str: string, seed = 0): string {
+  let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+  for (let i = 0, ch; i < str.length; i++) {
+    ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
   }
-  return Math.abs(hash).toString(36);
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
 interface RawRow {
@@ -25,14 +27,16 @@ interface RawRow {
 
 export function parseCSV(csvText: string): { questions: QuizQuestion[]; errors: string[] } {
   const errors: string[] = [];
+
   const result = Papa.parse<RawRow>(csvText, {
     header: true,
     skipEmptyLines: true,
-    transformHeader: (header: string) => header.trim().toLowerCase(),
+    // Safely strip BOM (\ufeff) to prevent required column mismatches on the first header
+    transformHeader: (header: string) => header.replace(/^\ufeff/, '').trim().toLowerCase(),
   });
 
   if (result.errors.length > 0) {
-    errors.push(...result.errors.map(e => `Row ${e.row}: ${e.message}`));
+    errors.push(...result.errors.map(e => `Row ${e.row ?? 'Unknown'}: ${e.message}`));
   }
 
   const requiredColumns = ['topic_name', 'question', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer', 'explanation'];
@@ -46,31 +50,42 @@ export function parseCSV(csvText: string): { questions: QuizQuestion[]; errors: 
 
   const questions: QuizQuestion[] = [];
 
-  result.data.forEach((row, index) => {
+  for (let index = 0; index < result.data.length; index++) {
+    const row = result.data[index];
     const q = row.question?.trim();
+
     if (!q) {
       errors.push(`Row ${index + 1}: Empty question`);
-      return;
+      continue;
     }
 
     const correct = (row.correct_answer || '').trim().toUpperCase();
     if (!['A', 'B', 'C', 'D'].includes(correct)) {
       errors.push(`Row ${index + 1}: Invalid correct_answer "${row.correct_answer}". Must be A, B, C, or D.`);
-      return;
+      continue;
     }
 
+    const optA = (row.option_a || '').trim();
+    const optB = (row.option_b || '').trim();
+    const optC = (row.option_c || '').trim();
+    const optD = (row.option_d || '').trim();
+
+    // Hash complete row contents to guarantee stable ID uniqueness
+    const hashInput = `${q}|${correct}|${optA}|${optB}|${optC}|${optD}`;
+    const stableId = `q_${index}_${generateStableId(hashInput)}`;
+
     questions.push({
-      id: `q_${index}_${simpleHash(q + correct + (row.option_a || ''))}`,
+      id: stableId,
       topic_name: (row.topic_name || 'General').trim(),
       question: q,
-      option_a: (row.option_a || '').trim(),
-      option_b: (row.option_b || '').trim(),
-      option_c: (row.option_c || '').trim(),
-      option_d: (row.option_d || '').trim(),
-      correct_answer: correct,
+      option_a: optA,
+      option_b: optB,
+      option_c: optC,
+      option_d: optD,
+      correct_answer: correct as OptionKey,
       explanation: (row.explanation || 'No explanation provided.').trim(),
     });
-  });
+  }
 
   return { questions, errors };
 }

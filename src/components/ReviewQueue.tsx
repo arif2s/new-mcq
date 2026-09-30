@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { CheckCircle, Circle, Trash2, AlertTriangle, BookOpen, Settings } from 'lucide-react';
 import type { AppPersistence } from '../types';
 
@@ -22,23 +22,50 @@ export default function ReviewQueue({
   const [filterSubject, setFilterSubject] = useState<string>('all');
 
   const { reviewQueue, reviewQueueLimit, totalReviewedEver } = persistence;
-  const unreviewedCount = reviewQueue.filter(r => !r.reviewed).length;
-  const reviewedInQueueCount = reviewQueue.filter(r => r.reviewed).length;
-  const isAtLimit = reviewQueue.length >= reviewQueueLimit;
 
-  // Get unique subjects
-  const subjects = [...new Set(reviewQueue.map(r => r.subjectName))];
+  // Memoize heavy filtering, mapping, and sorting operations to prevent
+  // recalculation on simple state changes (like expanding an accordion item).
+  const {
+    unreviewedCount,
+    reviewedInQueueCount,
+    subjects,
+    sortedItems,
+    isAtLimit
+  } = useMemo(() => {
+    let unreviewed = 0;
+    const subjectSet = new Set<string>();
 
-  // Filter items
-  const filteredItems = filterSubject === 'all'
-    ? reviewQueue
-    : reviewQueue.filter(r => r.subjectName === filterSubject);
+    // Single pass for counts and unique subjects
+    for (const item of reviewQueue) {
+      if (!item.reviewed) unreviewed++;
+      subjectSet.add(item.subjectName);
+    }
 
-  // Sort: unreviewed first, then by date (newest first)
-  const sortedItems = [...filteredItems].sort((a, b) => {
-    if (a.reviewed !== b.reviewed) return a.reviewed ? 1 : -1;
-    return new Date(b.dateAdded).getTime() - new Date(a.dateAdded).getTime();
-  });
+    const reviewed = reviewQueue.length - unreviewed;
+    const uniqueSubjects = Array.from(subjectSet);
+    const atLimit = reviewQueue.length >= reviewQueueLimit;
+
+    const filtered = filterSubject === 'all'
+      ? reviewQueue
+      : reviewQueue.filter(r => r.subjectName === filterSubject);
+
+    // Fast O(N log N) sorting using pre-computed integers or fast parsing,
+    // avoiding heavy object allocation (new Date) in the sort loop.
+    const sorted = [...filtered].sort((a, b) => {
+      if (a.reviewed !== b.reviewed) return a.reviewed ? 1 : -1;
+      const timeA = a.addedTimestamp || Date.parse(a.dateAdded);
+      const timeB = b.addedTimestamp || Date.parse(b.dateAdded);
+      return timeB - timeA;
+    });
+
+    return {
+      unreviewedCount: unreviewed,
+      reviewedInQueueCount: reviewed,
+      subjects: uniqueSubjects,
+      sortedItems: sorted,
+      isAtLimit: atLimit
+    };
+  }, [reviewQueue, filterSubject, reviewQueueLimit]);
 
   const optionLabels: Record<string, string> = { A: 'a', B: 'b', C: 'c', D: 'd' };
 

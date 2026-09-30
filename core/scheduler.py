@@ -5,6 +5,12 @@ from typing import Dict, Any
 W = [0.40255, 1.18385, 3.173, 15.69105, 7.1949, 0.5345, 1.4604, 0.0046, 1.54575, 0.1192, 1.01925, 1.9395, 0.11, 0.29605, 0.22695, 0.56995, 2.85535]
 REQUESTED_RETENTION = 0.9
 
+# Pre-computed mathematical constants for CPU efficiency
+_FACTOR_LAPSES = math.exp(W[14] * (1 - REQUESTED_RETENTION))
+_FACTOR_STABILITY = math.exp((1 - REQUESTED_RETENTION) * W[10]) - 1
+_EXP_W8 = math.exp(W[8])
+_INTERVAL_SCALER = (math.pow(REQUESTED_RETENTION, -1 / 0.5) - 1) / 19
+
 def calculate_fsrs_next_interval(rating: int, state: int, difficulty: float, stability: float, reps: int, lapses: int) -> Dict[str, Any]:
     """
     Computes updated FSRS v4.5 metrics.
@@ -25,17 +31,18 @@ def calculate_fsrs_next_interval(rating: int, state: int, difficulty: float, sta
         d = min(max(new_d + mean_reversion, 1.0), 10.0)
 
         if rating == 1:
-            s = W[11] * math.pow(d, -W[12]) * (math.pow(stability + 1, W[13]) - 1) * math.exp(W[14] * (1 - REQUESTED_RETENTION))
+            s = W[11] * math.pow(d, -W[12]) * (math.pow(stability + 1, W[13]) - 1) * _FACTOR_LAPSES
             next_state = 3
             new_lapses = lapses + 1
         else:
             hard_penalty = W[15] if rating == 2 else 1.0
             easy_bonus = W[16] if rating == 4 else 1.0
-            s = stability * (1 + math.exp(W[8]) * (11 - d) * math.pow(stability, -W[9]) * (math.exp((1 - REQUESTED_RETENTION) * W[10]) - 1) * hard_penalty * easy_bonus)
+            s = stability * (1 + _EXP_W8 * (11 - d) * math.pow(stability, -W[9]) * _FACTOR_STABILITY * hard_penalty * easy_bonus)
             next_state = 2
             new_lapses = lapses
 
-    interval_days = max(1, round(s / 19 * (math.pow(REQUESTED_RETENTION, -1 / 0.5) - 1)))
+    interval_days = max(1, round(s * _INTERVAL_SCALER))
+
     return {
         "state": next_state,
         "difficulty": round(d, 4),

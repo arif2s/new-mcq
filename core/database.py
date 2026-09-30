@@ -6,18 +6,22 @@ def get_db_connection():
     """Yields a connection configured for concurrent async access."""
     conn = sqlite3.connect(DB_PATH, timeout=20.0)
     conn.row_factory = sqlite3.Row
+
+    # Apply performance PRAGMAs to EVERY connection, not just initialization
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    conn.execute("PRAGMA busy_timeout = 20000;")
     return conn
 
 def initialize_database():
     """Executes schema creation and configures Write-Ahead Logging."""
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
+    # WAL must be enabled outside of a transaction block
+    with sqlite3.connect(DB_PATH, timeout=20.0, isolation_level=None) as setup_conn:
+        setup_conn.execute("PRAGMA journal_mode = WAL;")
+
     with get_db_connection() as conn:
         cursor = conn.cursor()
-
-        # Performance PRAGMAs
-        cursor.execute("PRAGMA journal_mode = WAL;")
-        cursor.execute("PRAGMA synchronous = NORMAL;")
-        cursor.execute("PRAGMA busy_timeout = 20000;")
 
         # MCQ Bank Table
         cursor.execute("""
@@ -40,11 +44,11 @@ def initialize_database():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS task_queue (
                 task_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_type TEXT NOT NULL,          -- 'INTERACTIVE_CHAT', 'SESSION_EXPLAIN', 'BATCH_PRECOMPUTE'
-                priority INTEGER DEFAULT 3,       -- 1=Immediate, 2=Active Session, 3=Batch Low
+                task_type TEXT NOT NULL,
+                priority INTEGER DEFAULT 3,
                 mcq_id INTEGER,
                 payload TEXT NOT NULL,
-                status TEXT DEFAULT 'PENDING',    -- 'PENDING', 'PROCESSING', 'COMPLETED', 'FAILED'
+                status TEXT DEFAULT 'PENDING',
                 error_message TEXT,
                 created_at REAL DEFAULT (unixepoch('now')),
                 updated_at REAL DEFAULT (unixepoch('now')),

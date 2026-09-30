@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from jinja2 import Template
 from config import REPORTS_DIR
@@ -40,11 +41,15 @@ DOSSIER_TEMPLATE = """
 </html>
 """
 
+# Pre-compile the Jinja2 template once at module load
+_COMPILED_TEMPLATE = Template(DOSSIER_TEMPLATE)
+
 def generate_topic_report(topic: str, search_results: dict, synthesis_output: dict):
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    slug = topic.lower().replace(" ", "_")
+
+    # Robust slugification for valid filesystem paths
+    slug = re.sub(r'[^a-z0-9]+', '_', topic.lower()).strip('_')
     output_path = REPORTS_DIR / f"{slug}_report.html"
 
-    template = Template(DOSSIER_TEMPLATE)
-    html_content = template.render(topic=topic, search_results=search_results, synthesis=synthesis_output)
+    html_content = _COMPILED_TEMPLATE.render(topic=topic, search_results=search_results, synthesis=synthesis_output)
     output_path.write_text(html_content, encoding="utf-8")

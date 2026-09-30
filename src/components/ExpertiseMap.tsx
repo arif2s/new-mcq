@@ -1,34 +1,59 @@
+import { useMemo } from 'react';
 import { Brain, TrendingUp, TrendingDown, Minus } from 'lucide-react';
-import type { AppPersistence } from '../types';
+import type { AppPersistence, TopicExpertise } from '../types';
 
 interface ExpertiseMapProps {
   persistence: AppPersistence;
 }
 
+// Extract static configuration outside the component to prevent recreation on render
+const LEVEL_CONFIG: Record<string, { color: string; bg: string; border: string; emoji: string }> = {
+  beginner: { color: 'text-danger-500', bg: 'bg-danger-500/10', border: 'border-danger-500/30', emoji: '🌱' },
+  intermediate: { color: 'text-warning-500', bg: 'bg-warning-500/10', border: 'border-warning-500/30', emoji: '📗' },
+  advanced: { color: 'text-brand-400', bg: 'bg-brand-500/10', border: 'border-brand-500/30', emoji: '⭐' },
+  expert: { color: 'text-success-500', bg: 'bg-success-500/10', border: 'border-success-500/30', emoji: '👑' },
+};
+
 export default function ExpertiseMap({ persistence }: ExpertiseMapProps) {
   const { topicExpertise, subjects } = persistence;
 
-  const levelConfig: Record<string, { color: string; bg: string; border: string; emoji: string }> = {
-    beginner: { color: 'text-danger-500', bg: 'bg-danger-500/10', border: 'border-danger-500/30', emoji: '🌱' },
-    intermediate: { color: 'text-warning-500', bg: 'bg-warning-500/10', border: 'border-warning-500/30', emoji: '📗' },
-    advanced: { color: 'text-brand-400', bg: 'bg-brand-500/10', border: 'border-brand-500/30', emoji: '⭐' },
-    expert: { color: 'text-success-500', bg: 'bg-success-500/10', border: 'border-success-500/30', emoji: '👑' },
-  };
+  // Memoize all heavy array processing into a single pass
+  const { subjectGroups, levelCounts, recommendations } = useMemo(() => {
+    const groups: Record<string, TopicExpertise[]> = {};
+    const counts = { beginner: 0, intermediate: 0, advanced: 0, expert: 0 };
+    const recs: TopicExpertise[] = [];
 
-  // Group by subject
-  const subjectGroups: Record<string, typeof topicExpertise> = {};
-  for (const exp of topicExpertise) {
-    if (!subjectGroups[exp.subject]) subjectGroups[exp.subject] = [];
-    subjectGroups[exp.subject].push(exp);
-  }
+    for (const exp of topicExpertise) {
+      // 1. Group by subject
+      if (!groups[exp.subject]) groups[exp.subject] = [];
+      groups[exp.subject].push(exp);
 
-  // Overall expertise distribution
-  const levelCounts = {
-    beginner: topicExpertise.filter(e => e.level === 'beginner').length,
-    intermediate: topicExpertise.filter(e => e.level === 'intermediate').length,
-    advanced: topicExpertise.filter(e => e.level === 'advanced').length,
-    expert: topicExpertise.filter(e => e.level === 'expert').length,
-  };
+      // 2. Count levels
+      if (exp.level in counts) {
+        counts[exp.level as keyof typeof counts]++;
+      }
+
+      // 3. Collect recommendations
+      if (exp.level === 'beginner' || exp.level === 'intermediate') {
+        recs.push(exp);
+      }
+    }
+
+    // Pre-sort grouped topics by accuracy descending
+    for (const subject in groups) {
+      groups[subject].sort((a, b) => b.accuracy - a.accuracy);
+    }
+
+    // Pre-sort recommendations by accuracy ascending and limit to top 5
+    recs.sort((a, b) => a.accuracy - b.accuracy);
+
+    return {
+      subjectGroups: groups,
+      levelCounts: counts,
+      recommendations: recs.slice(0, 5)
+    };
+  }, [topicExpertise]);
+
   const totalTopics = topicExpertise.length;
 
   return (
@@ -39,7 +64,7 @@ export default function ExpertiseMap({ persistence }: ExpertiseMapProps) {
       </h1>
       <p className="text-gray-400 mb-8">Track your mastery level across all topics and subjects</p>
 
-      {topicExpertise.length === 0 ? (
+      {totalTopics === 0 ? (
         <div className="text-center py-20">
           <Brain size={64} className="mx-auto text-gray-600 mb-4" />
           <h2 className="text-xl text-gray-400 mb-2">No expertise data yet</h2>
@@ -52,7 +77,7 @@ export default function ExpertiseMap({ persistence }: ExpertiseMapProps) {
             <h3 className="text-lg font-semibold text-gray-200 mb-4">📊 Expertise Distribution</h3>
             <div className="grid grid-cols-4 gap-4 mb-6">
               {(Object.entries(levelCounts) as [string, number][]).map(([level, count]) => {
-                const config = levelConfig[level];
+                const config = LEVEL_CONFIG[level];
                 const pct = totalTopics > 0 ? (count / totalTopics) * 100 : 0;
                 return (
                   <div key={level} className={`${config.bg} ${config.border} border rounded-xl p-4 text-center`}>
@@ -67,14 +92,10 @@ export default function ExpertiseMap({ persistence }: ExpertiseMapProps) {
 
             {/* Distribution bar */}
             <div className="w-full h-6 rounded-full overflow-hidden flex">
-              {totalTopics > 0 && (
-                <>
-                  <div className="bg-danger-500 transition-all" style={{ width: `${(levelCounts.beginner / totalTopics) * 100}%` }} />
-                  <div className="bg-warning-500 transition-all" style={{ width: `${(levelCounts.intermediate / totalTopics) * 100}%` }} />
-                  <div className="bg-brand-500 transition-all" style={{ width: `${(levelCounts.advanced / totalTopics) * 100}%` }} />
-                  <div className="bg-success-500 transition-all" style={{ width: `${(levelCounts.expert / totalTopics) * 100}%` }} />
-                </>
-              )}
+              <div className="bg-danger-500 transition-all" style={{ width: `${(levelCounts.beginner / totalTopics) * 100}%` }} />
+              <div className="bg-warning-500 transition-all" style={{ width: `${(levelCounts.intermediate / totalTopics) * 100}%` }} />
+              <div className="bg-brand-500 transition-all" style={{ width: `${(levelCounts.advanced / totalTopics) * 100}%` }} />
+              <div className="bg-success-500 transition-all" style={{ width: `${(levelCounts.expert / totalTopics) * 100}%` }} />
             </div>
           </div>
 
@@ -103,8 +124,8 @@ export default function ExpertiseMap({ persistence }: ExpertiseMapProps) {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {topics.sort((a, b) => b.accuracy - a.accuracy).map(exp => {
-                    const config = levelConfig[exp.level] || levelConfig.beginner;
+                  {topics.map(exp => {
+                    const config = LEVEL_CONFIG[exp.level] || LEVEL_CONFIG.beginner;
                     return (
                       <div
                         key={exp.topic}
@@ -153,25 +174,21 @@ export default function ExpertiseMap({ persistence }: ExpertiseMapProps) {
           <div className="bg-gradient-to-r from-purple-600/20 to-brand-600/20 rounded-xl p-6 border border-purple-500/30">
             <h3 className="text-lg font-semibold text-gray-200 mb-4">🎯 Focus Recommendations</h3>
             <div className="space-y-3">
-              {topicExpertise
-                .filter(e => e.level === 'beginner' || e.level === 'intermediate')
-                .sort((a, b) => a.accuracy - b.accuracy)
-                .slice(0, 5)
-                .map(exp => (
-                  <div key={`${exp.subject}-${exp.topic}`} className="flex items-center justify-between bg-gray-900/50 rounded-lg p-3">
-                    <div>
-                      <span className="text-sm text-gray-300">{exp.topic}</span>
-                      <span className="text-xs text-gray-500 ml-2">({exp.subject})</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${levelConfig[exp.level].bg} ${levelConfig[exp.level].color}`}>
-                        {exp.accuracy.toFixed(0)}%
-                      </span>
-                      <span className="text-xs text-gray-500">→ Practice more</span>
-                    </div>
+              {recommendations.map(exp => (
+                <div key={`${exp.subject}-${exp.topic}`} className="flex items-center justify-between bg-gray-900/50 rounded-lg p-3">
+                  <div>
+                    <span className="text-sm text-gray-300">{exp.topic}</span>
+                    <span className="text-xs text-gray-500 ml-2">({exp.subject})</span>
                   </div>
-                ))}
-              {topicExpertise.filter(e => e.level === 'beginner' || e.level === 'intermediate').length === 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${LEVEL_CONFIG[exp.level].bg} ${LEVEL_CONFIG[exp.level].color}`}>
+                      {exp.accuracy.toFixed(0)}%
+                    </span>
+                    <span className="text-xs text-gray-500">→ Practice more</span>
+                  </div>
+                </div>
+              ))}
+              {recommendations.length === 0 && (
                 <p className="text-gray-500 text-sm">All topics are at advanced level or above! 🎉</p>
               )}
             </div>

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { X } from 'lucide-react';
 
 interface HelpModalProps {
@@ -5,7 +6,38 @@ interface HelpModalProps {
   onClose: () => void;
 }
 
+// Extract static configuration outside the component to prevent recreation on render
+const APP_FEATURES = [
+  { icon: '📋', title: 'Review Queue', desc: 'Wrong answers collected for focused review' },
+  { icon: '🎯', title: 'Daily Targets', desc: 'Set goals for questions, correct answers, reviews' },
+  { icon: '📊', title: 'Dashboard', desc: 'View performance analytics and test history' },
+  { icon: '📅', title: 'Habit Tracker', desc: 'GitHub-style heatmap of daily practice' },
+  { icon: '🧠', title: 'Expertise Map', desc: 'See mastery level across all topics' },
+  { icon: '📈', title: 'Hourly Activity', desc: 'See when you study best during the day' },
+  { icon: '🔥', title: 'Streak & Motivation', desc: 'Compare today vs yesterday, get motivated' },
+  { icon: '⏱️', title: 'Distraction Detection', desc: 'Analyzes when you lose focus' },
+];
+
 export default function HelpModal({ isOpen, onClose }: HelpModalProps) {
+  // Manage keyboard accessibility and body scroll locking
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+
+    // Lock body scroll when modal is open
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      // Restore body scroll on cleanup
+      document.body.style.overflow = 'unset';
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
@@ -14,17 +46,24 @@ export default function HelpModal({ isOpen, onClose }: HelpModalProps) {
       <div
         className="fixed inset-0 bg-black/70 z-50 animate-fade-in"
         onClick={onClose}
+        aria-hidden="true"
       />
 
       {/* Modal */}
-      <div className="fixed inset-4 md:inset-10 lg:inset-20 bg-gray-900 border border-gray-700 rounded-2xl z-50 overflow-hidden flex flex-col animate-fade-in">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="help-modal-title"
+        className="fixed inset-4 md:inset-10 lg:inset-20 bg-gray-900 border border-gray-700 rounded-2xl z-50 overflow-hidden flex flex-col animate-fade-in"
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-700 bg-gray-800/50">
-          <h2 className="text-xl font-bold text-gray-100 flex items-center gap-2">
+          <h2 id="help-modal-title" className="text-xl font-bold text-gray-100 flex items-center gap-2">
             📚 Help & Documentation
           </h2>
           <button
             onClick={onClose}
+            aria-label="Close help dialog"
             className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
           >
             <X size={20} />
@@ -207,18 +246,9 @@ export default function HelpModal({ isOpen, onClose }: HelpModalProps) {
                 ✨ Features
               </h3>
               <div className="grid md:grid-cols-2 gap-3">
-                {[
-                  { icon: '📋', title: 'Review Queue', desc: 'Wrong answers collected for focused review' },
-                  { icon: '🎯', title: 'Daily Targets', desc: 'Set goals for questions, correct answers, reviews' },
-                  { icon: '📊', title: 'Dashboard', desc: 'View performance analytics and test history' },
-                  { icon: '📅', title: 'Habit Tracker', desc: 'GitHub-style heatmap of daily practice' },
-                  { icon: '🧠', title: 'Expertise Map', desc: 'See mastery level across all topics' },
-                  { icon: '📈', title: 'Hourly Activity', desc: 'See when you study best during the day' },
-                  { icon: '🔥', title: 'Streak & Motivation', desc: 'Compare today vs yesterday, get motivated' },
-                  { icon: '⏱️', title: 'Distraction Detection', desc: 'Analyzes when you lose focus' },
-                ].map(f => (
+                {APP_FEATURES.map(f => (
                   <div key={f.title} className="bg-gray-800/50 rounded-lg p-3 border border-gray-700 flex items-start gap-3">
-                    <span className="text-xl">{f.icon}</span>
+                    <span className="text-xl" aria-hidden="true">{f.icon}</span>
                     <div>
                       <h4 className="font-medium text-gray-200 text-sm">{f.title}</h4>
                       <p className="text-xs text-gray-500">{f.desc}</p>

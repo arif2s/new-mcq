@@ -1,9 +1,11 @@
 import os
+import re
 import tantivy
 from config import INDEX_PATH
 
 _schema = None
 _index = None
+_reader = None
 
 def get_schema():
     global _schema
@@ -19,26 +21,39 @@ def get_schema():
     return _schema
 
 def get_index():
-    global _index
+    global _index, _reader
     if _index is None:
         os.makedirs(INDEX_PATH, exist_ok=True)
         _index = tantivy.Index(get_schema(), path=str(INDEX_PATH))
-    return _index
+        _reader = _index.reader()
+    return _index, _reader
 
 def search_index(query_str: str, limit_per_source: int = 3) -> dict:
-    """Executes a sub-millisecond BM25 search partitioned by source type."""
-    index = get_index()
-    searcher = index.reader().searcher()
-    query = index.parse_query(query_str, ["title", "body"])
-    top_docs = searcher.search(query, limit=50)
+    index, reader = get_index()
+    reader.reload()
+    searcher = reader.searcher()
 
+    # Fallback for complex characters breaking the query parser
+    try:
+        query = index.parse_query(query_str, ["title", "body"])
+    except ValueError:
+        safe_query = re.sub(r'[^\w\s]', ' ', query_str)
+        query = index.parse_query(safe_query, ["title", "body"])
+
+    top_docs = searcher.search(query, limit=50)
     results = {"obsidian": [], "pdf": [], "zim": []}
+
     for score, doc_address in top_docs.hits:
         doc = searcher.doc(doc_address)
         source = doc["source_type"][0]
+
+        if source not in results:
+            results[source] = []
+
         if len(results[source]) < limit_per_source:
             results[source].append({
                 "doc_id": doc["doc_id"][0], "file_path": doc["file_path"][0],
                 "page": doc["page_number"][0], "title": doc["title"][0], "score": score
             })
+
     return results

@@ -1,42 +1,102 @@
+import { useMemo } from 'react';
 import { Flame, Calendar, TrendingUp, BookOpen, Target, Award } from 'lucide-react';
-import type { AppPersistence } from '../types';
+import type { AppPersistence, HabitEntry } from '../types';
 
 interface HabitTrackerProps {
   persistence: AppPersistence;
 }
 
 export default function HabitTracker({ persistence }: HabitTrackerProps) {
-  const { habitLog, streakDays, longestStreak } = persistence;
+  const { habitLog, streakDays, longestStreak, testResults, totalQuestionsEver } = persistence;
 
-  // Build a 365-day calendar (last 52 weeks)
-  const today = new Date();
-  const calendarData: { date: string; count: number; day: number }[] = [];
-
-  for (let i = 364; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    const dateStr = d.toISOString().split('T')[0];
-    const habit = habitLog.find(h => h.date === dateStr);
-    calendarData.push({
-      date: dateStr,
-      count: habit?.questionsAnswered || 0,
-      day: d.getDay(),
-    });
-  }
-
-  // Group into weeks
-  const weeks: typeof calendarData[] = [];
-  let currentWeek: typeof calendarData = [];
-  for (const day of calendarData) {
-    currentWeek.push(day);
-    if (day.day === 6) {
-      weeks.push(currentWeek);
-      currentWeek = [];
+  const {
+    weeks,
+    weeklyQuestions,
+    activeDaysThisWeek,
+    monthlyQuestions,
+    activeDaysThisMonth,
+    bestDay,
+    todayCount,
+    monthLabels,
+    recentActivity
+  } = useMemo(() => {
+    // 1. Create O(1) lookup map to eliminate O(N) nested searches
+    const habitMap = new Map<string, HabitEntry>();
+    for (const h of habitLog) {
+      habitMap.set(h.date, h);
     }
-  }
-  if (currentWeek.length > 0) weeks.push(currentWeek);
 
-  // Get intensity level
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    const currentTodayCount = habitMap.get(todayStr)?.questionsAnswered || 0;
+
+    const calendarData: { date: string; count: number; day: number }[] = [];
+
+    // 2. Prevent excessive object allocation by stepping a single Date instance
+    const iterDate = new Date(today);
+    iterDate.setDate(iterDate.getDate() - 364);
+
+    for (let i = 0; i <= 364; i++) {
+      const dateStr = iterDate.toISOString().split('T')[0];
+      const habit = habitMap.get(dateStr);
+      calendarData.push({
+        date: dateStr,
+        count: habit?.questionsAnswered || 0,
+        day: iterDate.getDay(),
+      });
+      iterDate.setDate(iterDate.getDate() + 1);
+    }
+
+    // Group into weeks
+    const calculatedWeeks: typeof calendarData[] = [];
+    let currentWeek: typeof calendarData = [];
+    for (const day of calendarData) {
+      currentWeek.push(day);
+      if (day.day === 6) {
+        calculatedWeeks.push(currentWeek);
+        currentWeek = [];
+      }
+    }
+    if (currentWeek.length > 0) calculatedWeeks.push(currentWeek);
+
+    // Slice stats
+    const last7Days = calendarData.slice(-7);
+    const wQuestions = last7Days.reduce((acc, d) => acc + d.count, 0);
+    const wActive = last7Days.filter(d => d.count > 0).length;
+
+    const last30Days = calendarData.slice(-30);
+    const mQuestions = last30Days.reduce((acc, d) => acc + d.count, 0);
+    const mActive = last30Days.filter(d => d.count > 0).length;
+
+    const best = habitLog.length > 0
+      ? habitLog.reduce((b, h) => h.questionsAnswered > b.questionsAnswered ? h : b, habitLog[0])
+      : null;
+
+    // Fast month labels iteration
+    const mLabels: string[] = [];
+    const labelDate = new Date(today);
+    labelDate.setMonth(labelDate.getMonth() - 11);
+    for (let i = 0; i < 12; i++) {
+      mLabels.push(labelDate.toLocaleString('default', { month: 'short' }));
+      labelDate.setMonth(labelDate.getMonth() + 1);
+    }
+
+    // Pre-sort recent activity
+    const recent = [...habitLog].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 14);
+
+    return {
+      weeks: calculatedWeeks,
+      weeklyQuestions: wQuestions,
+      activeDaysThisWeek: wActive,
+      monthlyQuestions: mQuestions,
+      activeDaysThisMonth: mActive,
+      bestDay: best,
+      todayCount: currentTodayCount,
+      monthLabels: mLabels,
+      recentActivity: recent
+    };
+  }, [habitLog]);
+
   const getIntensity = (count: number): string => {
     if (count === 0) return 'bg-gray-800';
     if (count <= 5) return 'bg-success-700/50';
@@ -45,34 +105,8 @@ export default function HabitTracker({ persistence }: HabitTrackerProps) {
     return 'bg-success-500';
   };
 
-  // Weekly stats
-  const last7Days = calendarData.slice(-7);
-  const weeklyQuestions = last7Days.reduce((acc, d) => acc + d.count, 0);
-  const activeDaysThisWeek = last7Days.filter(d => d.count > 0).length;
-
-  // Monthly stats
-  const last30Days = calendarData.slice(-30);
-  const monthlyQuestions = last30Days.reduce((acc, d) => acc + d.count, 0);
-  const activeDaysThisMonth = last30Days.filter(d => d.count > 0).length;
-
-  // Best day
-  const bestDay = habitLog.length > 0
-    ? habitLog.reduce((best, h) => h.questionsAnswered > best.questionsAnswered ? h : best, habitLog[0])
-    : null;
-
-  // Daily goal progress (assume 10 q/day)
   const dailyGoal = 10;
-  const todayHabit = habitLog.find(h => h.date === today.toISOString().split('T')[0]);
-  const todayCount = todayHabit?.questionsAnswered || 0;
   const goalProgress = Math.min((todayCount / dailyGoal) * 100, 100);
-
-  // Months labels
-  const monthLabels: string[] = [];
-  for (let i = 11; i >= 0; i--) {
-    const d = new Date(today);
-    d.setMonth(d.getMonth() - i);
-    monthLabels.push(d.toLocaleString('default', { month: 'short' }));
-  }
 
   return (
     <div className="max-w-6xl mx-auto p-6 animate-fade-in">
@@ -208,11 +242,11 @@ export default function HabitTracker({ persistence }: HabitTrackerProps) {
       {/* Recent Activity */}
       <div className="bg-gray-800/60 rounded-xl p-6 border border-gray-700 mb-8">
         <h3 className="text-lg font-semibold text-gray-200 mb-4">📝 Recent Activity</h3>
-        {habitLog.length === 0 ? (
+        {recentActivity.length === 0 ? (
           <p className="text-gray-500 text-sm">No activity recorded yet. Start a quiz to begin tracking!</p>
         ) : (
           <div className="space-y-2 max-h-64 overflow-y-auto">
-            {[...habitLog].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 14).map(h => (
+            {recentActivity.map(h => (
               <div key={h.date} className="flex items-center justify-between bg-gray-900/50 rounded-lg p-3">
                 <div>
                   <span className="text-sm text-gray-300 font-medium">{h.date}</span>
@@ -236,14 +270,14 @@ export default function HabitTracker({ persistence }: HabitTrackerProps) {
         <h3 className="text-lg font-semibold text-gray-200 mb-4">🏆 Milestones</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
-            { label: 'First Quiz', target: 1, current: persistence.testResults.length, icon: '🌱' },
-            { label: '10 Quizzes', target: 10, current: persistence.testResults.length, icon: '📚' },
-            { label: '100 Questions', target: 100, current: persistence.totalQuestionsEver, icon: '💯' },
-            { label: '500 Questions', target: 500, current: persistence.totalQuestionsEver, icon: '🚀' },
+            { label: 'First Quiz', target: 1, current: testResults.length, icon: '🌱' },
+            { label: '10 Quizzes', target: 10, current: testResults.length, icon: '📚' },
+            { label: '100 Questions', target: 100, current: totalQuestionsEver, icon: '💯' },
+            { label: '500 Questions', target: 500, current: totalQuestionsEver, icon: '🚀' },
             { label: '7 Day Streak', target: 7, current: longestStreak, icon: '🔥' },
             { label: '30 Day Streak', target: 30, current: longestStreak, icon: '⭐' },
             { label: 'Best Day', target: 1, current: bestDay ? 1 : 0, icon: bestDay ? `${bestDay.questionsAnswered}Q` : '🎯' },
-            { label: '1000 Questions', target: 1000, current: persistence.totalQuestionsEver, icon: '👑' },
+            { label: '1000 Questions', target: 1000, current: totalQuestionsEver, icon: '👑' },
           ].map(milestone => {
             const achieved = milestone.current >= milestone.target;
             return (
@@ -271,4 +305,5 @@ export default function HabitTracker({ persistence }: HabitTrackerProps) {
       </div>
     </div>
   );
+
 }

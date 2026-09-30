@@ -95,9 +95,14 @@ export function importPersistenceJSON(json: string): AppPersistence | null {
   }
 }
 
-// Habit tracking helpers
 export function getTodayString(): string {
   return new Date().toISOString().split('T')[0];
+}
+
+export function getYesterdayString(): string {
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  return yesterday.toISOString().split('T')[0];
 }
 
 export function getCurrentHour(): number {
@@ -113,26 +118,29 @@ export function updateHabitLog(
 ): AppPersistence {
   const today = getTodayString();
   const hour = getCurrentHour();
-  const existing = persistence.habitLog.find(h => h.date === today);
+  const newHabitLog = [...persistence.habitLog];
+  const existingIdx = newHabitLog.findIndex(h => h.date === today);
 
-  if (existing) {
+  if (existingIdx !== -1) {
+    const existing = { ...newHabitLog[existingIdx] };
     existing.questionsAnswered += questionsAnswered;
     existing.correctAnswers += correctAnswers;
     if (!existing.subjects.includes(subject)) {
-      existing.subjects.push(subject);
+      existing.subjects = [...existing.subjects, subject];
     }
     existing.sessionsCount += 1;
     existing.timeSpentSeconds += timeSpent;
 
-    // Update hourly stats
-    if (!existing.hourlyStats) {
-      existing.hourlyStats = [];
-    }
-    const hourlyEntry = existing.hourlyStats.find(h => h.hour === hour);
-    if (hourlyEntry) {
-      hourlyEntry.questionsAnswered += questionsAnswered;
-      hourlyEntry.correctAnswers += correctAnswers;
-      hourlyEntry.timeSpentSeconds += timeSpent;
+    existing.hourlyStats = [...(existing.hourlyStats || [])];
+    const hourlyEntryIdx = existing.hourlyStats.findIndex(h => h.hour === hour);
+
+    if (hourlyEntryIdx !== -1) {
+      existing.hourlyStats[hourlyEntryIdx] = {
+        ...existing.hourlyStats[hourlyEntryIdx],
+        questionsAnswered: existing.hourlyStats[hourlyEntryIdx].questionsAnswered + questionsAnswered,
+        correctAnswers: existing.hourlyStats[hourlyEntryIdx].correctAnswers + correctAnswers,
+        timeSpentSeconds: existing.hourlyStats[hourlyEntryIdx].timeSpentSeconds + timeSpent,
+      };
     } else {
       existing.hourlyStats.push({
         hour,
@@ -141,56 +149,43 @@ export function updateHabitLog(
         timeSpentSeconds: timeSpent,
       });
     }
+    newHabitLog[existingIdx] = existing;
   } else {
-    persistence.habitLog.push({
+    newHabitLog.push({
       date: today,
       questionsAnswered,
       correctAnswers,
       subjects: [subject],
       sessionsCount: 1,
       timeSpentSeconds: timeSpent,
-      hourlyStats: [{
-        hour,
-        questionsAnswered,
-        correctAnswers,
-        timeSpentSeconds: timeSpent,
-      }],
+      hourlyStats: [{ hour, questionsAnswered, correctAnswers, timeSpentSeconds: timeSpent }],
     });
   }
 
-  // Update streak
-  const sortedDates = persistence.habitLog
-    .map(h => h.date)
-    .sort()
-    .reverse();
-
-  let streak = 0;
-  const now = new Date();
-  for (let i = 0; i < 365; i++) {
-    const checkDate = new Date(now);
-    checkDate.setDate(checkDate.getDate() - i);
-    const dateStr = checkDate.toISOString().split('T')[0];
-    if (sortedDates.includes(dateStr)) {
-      streak++;
-    } else if (i > 0) {
-      break;
+  // O(1) Streak Calculation (avoids parsing/sorting all 365 dates on every answer)
+  let newStreak = persistence.streakDays;
+  if (persistence.lastActiveDate !== today) {
+    if (persistence.lastActiveDate === getYesterdayString() || !persistence.lastActiveDate) {
+      newStreak += 1;
+    } else {
+      newStreak = 1;
     }
   }
 
-  persistence.streakDays = streak;
-  persistence.longestStreak = Math.max(persistence.longestStreak, streak);
-  persistence.totalQuestionsEver += questionsAnswered;
-  persistence.lastActiveDate = today;
-
-  return { ...persistence };
+  return {
+    ...persistence,
+    habitLog: newHabitLog,
+    streakDays: newStreak,
+    longestStreak: Math.max(persistence.longestStreak, newStreak),
+    totalQuestionsEver: persistence.totalQuestionsEver + questionsAnswered,
+    lastActiveDate: today
+  };
 }
 
-// Review queue helpers
 export function addToReviewQueue(
   persistence: AppPersistence,
   item: Omit<ReviewQueueItem, 'id' | 'dateAdded' | 'reviewed'>
 ): AppPersistence {
-  // Check if already in queue
   const exists = persistence.reviewQueue.some(
     r => r.questionId === item.questionId && r.subjectName === item.subjectName
   );
@@ -198,34 +193,34 @@ export function addToReviewQueue(
 
   const newItem: ReviewQueueItem = {
     ...item,
-    id: `review_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    id: `review_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
     dateAdded: new Date().toISOString(),
     reviewed: false,
   };
 
-  // Add to queue, respecting limit (remove oldest if needed)
-  let queue = [...persistence.reviewQueue, newItem];
-  if (queue.length > persistence.reviewQueueLimit) {
-    // Remove oldest unreviewed items first, then oldest reviewed
-    queue.sort((a, b) => {
-      if (a.reviewed !== b.reviewed) return a.reviewed ? -1 : 1;
-      return new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime();
-    });
-    queue = queue.slice(-persistence.reviewQueueLimit);
+  const newQueue = [...persistence.reviewQueue, newItem];
+
+  // O(N) Eviction: Find first reviewed to remove, otherwise remove oldest unreviewed
+  if (newQueue.length > persistence.reviewQueueLimit) {
+    const firstReviewedIdx = newQueue.findIndex(r => r.reviewed);
+    if (firstReviewedIdx !== -1) {
+      newQueue.splice(firstReviewedIdx, 1);
+    } else {
+      newQueue.shift();
+    }
   }
 
-  return { ...persistence, reviewQueue: queue };
+  return { ...persistence, reviewQueue: newQueue };
 }
 
 export function markReviewItemDone(persistence: AppPersistence, itemId: string): AppPersistence {
   const item = persistence.reviewQueue.find(r => r.id === itemId);
-  const alreadyReviewed = item?.reviewed ?? false;
+  if (!item || item.reviewed) return persistence;
+
   return {
     ...persistence,
-    totalReviewedEver: persistence.totalReviewedEver + (alreadyReviewed ? 0 : 1),
-    reviewQueue: persistence.reviewQueue.map(r =>
-      r.id === itemId ? { ...r, reviewed: true } : r
-    ),
+    totalReviewedEver: persistence.totalReviewedEver + 1,
+    reviewQueue: persistence.reviewQueue.map(r => r.id === itemId ? { ...r, reviewed: true } : r),
   };
 }
 
@@ -234,25 +229,18 @@ export function removeReviewItem(persistence: AppPersistence, itemId: string): A
   const wasUnreviewed = item && !item.reviewed;
   return {
     ...persistence,
-    // Count it as reviewed when removed
     totalReviewedEver: persistence.totalReviewedEver + (wasUnreviewed ? 1 : 0),
     reviewQueue: persistence.reviewQueue.filter(r => r.id !== itemId),
   };
 }
 
 export function clearAllReviewQueue(persistence: AppPersistence): AppPersistence {
-  // Count all unreviewed items as reviewed before clearing
   const unreviewedCount = persistence.reviewQueue.filter(r => !r.reviewed).length;
   return {
     ...persistence,
     totalReviewedEver: persistence.totalReviewedEver + unreviewedCount,
     reviewQueue: [],
   };
-}
-
-// Anki spaced repetition helpers
-export function getAnkiCard(persistence: AppPersistence, questionId: string): AnkiCard | undefined {
-  return persistence.ankiCards.find(c => c.questionId === questionId);
 }
 
 export function updateAnkiCard(
@@ -262,24 +250,21 @@ export function updateAnkiCard(
   topic: string,
   isCorrect: boolean
 ): AppPersistence {
-  let card = persistence.ankiCards.find(c => c.questionId === questionId);
   const today = getTodayString();
+  const newAnkiCards = [...persistence.ankiCards];
+  const cardIdx = newAnkiCards.findIndex(c => c.questionId === questionId);
 
-  if (!card) {
+  let card: AnkiCard;
+
+  if (cardIdx === -1) {
     card = {
-      questionId,
-      subjectName,
-      topic,
-      interval: 1,
-      easeFactor: 2.5,
-      repetitions: 0,
-      nextReviewDate: today,
-      lastReviewDate: today,
-      totalAttempts: 0,
-      correctAttempts: 0,
-      status: 'new',
+      questionId, subjectName, topic,
+      interval: 1, easeFactor: 2.5, repetitions: 0,
+      nextReviewDate: today, lastReviewDate: today,
+      totalAttempts: 0, correctAttempts: 0, status: 'new',
     };
-    persistence.ankiCards.push(card);
+  } else {
+    card = { ...newAnkiCards[cardIdx] };
   }
 
   card.totalAttempts++;
@@ -288,22 +273,15 @@ export function updateAnkiCard(
   if (isCorrect) {
     card.correctAttempts++;
     card.repetitions++;
-    if (card.repetitions === 1) {
-      card.interval = 1;
-    } else if (card.repetitions === 2) {
-      card.interval = 3;
-    } else {
-      card.interval = Math.round(card.interval * card.easeFactor);
-    }
+    if (card.repetitions === 1) card.interval = 1;
+    else if (card.repetitions === 2) card.interval = 3;
+    else card.interval = Math.round(card.interval * card.easeFactor);
+
     card.easeFactor = Math.max(1.3, card.easeFactor + 0.1);
 
-    if (card.repetitions >= 5 && card.correctAttempts / card.totalAttempts >= 0.8) {
-      card.status = 'mastered';
-    } else if (card.repetitions >= 2) {
-      card.status = 'review';
-    } else {
-      card.status = 'learning';
-    }
+    if (card.repetitions >= 5 && card.correctAttempts / card.totalAttempts >= 0.8) card.status = 'mastered';
+    else if (card.repetitions >= 2) card.status = 'review';
+    else card.status = 'learning';
   } else {
     card.repetitions = 0;
     card.interval = 1;
@@ -315,17 +293,18 @@ export function updateAnkiCard(
   nextDate.setDate(nextDate.getDate() + card.interval);
   card.nextReviewDate = nextDate.toISOString().split('T')[0];
 
-  return { ...persistence };
+  if (cardIdx === -1) newAnkiCards.push(card);
+  else newAnkiCards[cardIdx] = card;
+
+  return { ...persistence, ankiCards: newAnkiCards };
 }
 
-// Get questions due for Anki review
 export function getAnkiDueQuestions(
   persistence: AppPersistence,
   subjectName: string,
   allQuestionIds: string[]
 ): { dueForReview: string[]; newQuestions: string[] } {
   const today = getTodayString();
-
   const dueForReview: string[] = [];
   const reviewedIds = new Set<string>();
 
@@ -337,13 +316,10 @@ export function getAnkiDueQuestions(
       }
     }
   }
-
   const newQuestions = allQuestionIds.filter(id => !reviewedIds.has(id));
-
   return { dueForReview, newQuestions };
 }
 
-// Topic expertise tracking
 export function updateTopicExpertise(
   persistence: AppPersistence,
   topic: string,
@@ -352,9 +328,8 @@ export function updateTopicExpertise(
   attempted: number,
   correct: number
 ): AppPersistence {
-  let expertise = persistence.topicExpertise.find(
-    e => e.topic === topic && e.subject === subject
-  );
+  const newTopicExpertise = [...persistence.topicExpertise];
+  const idx = newTopicExpertise.findIndex(e => e.topic === topic && e.subject === subject);
 
   const accuracy = attempted > 0 ? (correct / attempted) * 100 : 0;
   const level: TopicExpertise['level'] =
@@ -362,41 +337,28 @@ export function updateTopicExpertise(
     accuracy >= 70 ? 'advanced' :
     accuracy >= 50 ? 'intermediate' : 'beginner';
 
-  if (!expertise) {
-    expertise = {
-      topic,
-      subject,
-      totalQuestions: totalInTopic,
-      attempted,
-      correct,
-      accuracy,
-      level,
-      trend: 'stable',
-      lastAttemptDate: getTodayString(),
-    };
-    persistence.topicExpertise.push(expertise);
+  if (idx === -1) {
+    newTopicExpertise.push({
+      topic, subject, totalQuestions: totalInTopic,
+      attempted, correct, accuracy, level,
+      trend: 'stable', lastAttemptDate: getTodayString(),
+    });
   } else {
-    const prevAccuracy = expertise.accuracy;
-    expertise.attempted = Math.max(expertise.attempted, attempted);
-    expertise.correct = Math.max(expertise.correct, correct);
-    expertise.accuracy = accuracy;
-    expertise.level = level;
-    expertise.totalQuestions = totalInTopic;
-    expertise.lastAttemptDate = getTodayString();
-    expertise.trend = accuracy > prevAccuracy ? 'improving' : accuracy < prevAccuracy ? 'declining' : 'stable';
+    const existing = { ...newTopicExpertise[idx] };
+    const prevAccuracy = existing.accuracy;
+    existing.attempted = Math.max(existing.attempted, attempted);
+    existing.correct = Math.max(existing.correct, correct);
+    existing.accuracy = accuracy;
+    existing.level = level;
+    existing.totalQuestions = totalInTopic;
+    existing.lastAttemptDate = getTodayString();
+    existing.trend = accuracy > prevAccuracy ? 'improving' : accuracy < prevAccuracy ? 'declining' : 'stable';
+    newTopicExpertise[idx] = existing;
   }
 
-  return { ...persistence };
+  return { ...persistence, topicExpertise: newTopicExpertise };
 }
 
-// Get yesterday's date
-export function getYesterdayString(): string {
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  return yesterday.toISOString().split('T')[0];
-}
-
-// Get stats for comparison
 export function getDayStats(persistence: AppPersistence, date: string) {
   const entry = persistence.habitLog.find(h => h.date === date);
   if (!entry) {
@@ -411,31 +373,28 @@ export function getDayStats(persistence: AppPersistence, date: string) {
   }
   return {
     ...entry,
-    accuracy: entry.questionsAnswered > 0
-      ? (entry.correctAnswers / entry.questionsAnswered) * 100
-      : 0,
+    accuracy: entry.questionsAnswered > 0 ? (entry.correctAnswers / entry.questionsAnswered) * 100 : 0,
     hourlyStats: entry.hourlyStats || [],
   };
 }
 
-// ── Rank Simulation ──
-
 function findBand(config: RankSimConfig, projectedMarks: number) {
   const bands = config.bands || [];
-  const current = bands.find(b => projectedMarks >= b.marksMin && projectedMarks <= b.marksMax) ?? null;
+  const currentBand = bands.find(b => projectedMarks >= b.marksMin && projectedMarks <= b.marksMax) ?? null;
 
-  // Next better band = first band whose marksMin is above projectedMarks
-  const sortedBands = [...bands].sort((a, b) => a.marksMin - b.marksMin);
-  const nextBetter = sortedBands.find(b => b.marksMin > projectedMarks) ?? null;
-  const marksToNext = nextBetter ? nextBetter.marksMin - projectedMarks : 0;
+  // Linear scan (O(N) where N < 20) instead of re-sorting arrays on every call
+  let nextBand: typeof currentBand = null;
+  let minDiff = Infinity;
+  for (const b of bands) {
+    if (b.marksMin > projectedMarks && b.marksMin - projectedMarks < minDiff) {
+      minDiff = b.marksMin - projectedMarks;
+      nextBand = b;
+    }
+  }
 
-  return { currentBand: current, nextBand: nextBetter, marksToNextBand: marksToNext };
+  return { currentBand, nextBand, marksToNextBand: nextBand ? nextBand.marksMin - projectedMarks : 0 };
 }
 
-/**
- * Given a test result (correct, wrong, unanswered from N questions scored +4/-1),
- * project the marks onto an exam's total-question scale and interpolate a rank.
- */
 export function simulateRank(
   config: RankSimConfig,
   testCorrect: number,
@@ -446,34 +405,41 @@ export function simulateRank(
   const scaleFactor = testTotal > 0 ? config.totalQuestions / testTotal : 1;
   const projectedMarks = Math.round(rawMarks * scaleFactor);
 
-  const sorted = [...config.dataPoints].sort((a, b) => b.marks - a.marks);
   const { currentBand, nextBand, marksToNextBand } = findBand(config, projectedMarks);
-
   const baseSim = { currentBand, nextBand, marksToNextBand };
 
-  if (sorted.length === 0) {
+  const dps = config.dataPoints;
+  if (dps.length === 0) {
     return { projectedMarks, estimatedRank: 0, percentile: '-', nearestAbove: null, nearestBelow: null, ...baseSim };
   }
 
-  const topRankValue = sorted[sorted.length - 1].rank;
+  // Assuming dataPoints is stored pre-sorted descending by the RankConfigEditor UI
+  const topRankValue = dps[dps.length - 1].rank;
 
-  const exact = sorted.find(d => d.marks === projectedMarks);
+  const exact = dps.find(d => d.marks === projectedMarks);
   if (exact) {
     const percentile = topRankValue > 0 ? (((topRankValue - exact.rank) / topRankValue) * 100).toFixed(1) : '-';
     return { projectedMarks, estimatedRank: exact.rank, percentile, nearestAbove: null, nearestBelow: null, ...baseSim };
   }
 
-  const above = sorted.find(d => d.marks >= projectedMarks) ?? null;
-  const below = [...sorted].reverse().find(d => d.marks <= projectedMarks) ?? null;
+  const above = dps.find(d => d.marks >= projectedMarks) ?? null;
+
+  let below = null;
+  for (let i = dps.length - 1; i >= 0; i--) {
+    if (dps[i].marks <= projectedMarks) {
+      below = dps[i];
+      break;
+    }
+  }
 
   if (!above) {
-    const best = sorted[0];
+    const best = dps[0];
     const estRank = Math.max(1, best.rank - 50);
     const percentile = topRankValue > 0 ? (((topRankValue - estRank) / topRankValue) * 100).toFixed(1) : '-';
     return { projectedMarks, estimatedRank: estRank, percentile, nearestAbove: null, nearestBelow: best, ...baseSim };
   }
   if (!below) {
-    const worst = sorted[sorted.length - 1];
+    const worst = dps[dps.length - 1];
     return { projectedMarks, estimatedRank: worst.rank + 10000, percentile: '0.0', nearestAbove: worst, nearestBelow: null, ...baseSim };
   }
 
