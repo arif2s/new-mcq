@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo } from 'react';
 import {
-  Upload, BookOpen, Brain, BarChart3, Calendar,
+  Upload, BookOpen, Brain, BarChart3, Calendar, Database,
   Settings, ChevronDown, Play, Download, Trash2, FileText, CheckCircle, ClipboardList
 } from 'lucide-react';
 import type { QuizConfig, SubjectData, QuizQuestion } from '../types';
@@ -126,6 +126,7 @@ export default function Sidebar({
 
   const navItems = [
     { id: 'home', icon: BookOpen, label: 'Home' },
+    { id: 'sources', icon: Database, label: 'Knowledge Vault' },
     { id: 'review', icon: ClipboardList, label: 'Review Queue' },
     { id: 'dashboard', icon: BarChart3, label: 'Dashboard' },
     { id: 'habits', icon: Calendar, label: 'Habit Tracker' },
