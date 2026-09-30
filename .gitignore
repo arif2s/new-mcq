@@ -3,3 +3,5 @@ dist/
 __pycache__/
 *.pyc
 mcq/mcq_ui-output.xml
+data/
+server_output.log
