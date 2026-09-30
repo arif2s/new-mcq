@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { Trophy, Target, CheckCircle, XCircle, RotateCcw, BookOpen, TrendingUp, AlertTriangle, Clock, Brain } from 'lucide-react';
 import type { TestResult, QuizQuestion, TopicExpertise, RankSimConfig } from '../types';
 import { simulateRank } from '../storage';
@@ -31,47 +32,84 @@ export default function ResultsView({
     accuracy >= 50 ? { label: 'D', color: 'text-warning-600', bg: 'bg-warning-500/20' } :
     { label: 'F', color: 'text-danger-500', bg: 'bg-danger-500/20' };
 
-  // Calculate timing stats (excluding timed out questions)
-  const validAnswers = result.answers.filter(a => !a.timedOut);
-  const timings = validAnswers.map(a => a.timeSpentMs || 0).filter(t => t > 0);
-  const avgTimeMs = timings.length > 0 ? timings.reduce((a, b) => a + b, 0) / timings.length : 0;
-  const minTimeMs = timings.length > 0 ? Math.min(...timings) : 0;
-  const maxTimeMs = timings.length > 0 ? Math.max(...timings) : 0;
+  // Memoize timing stats and core answer subsets
+  const { validAnswers, avgTimeMs, minTimeMs, maxTimeMs, wrongAnswers, timedOutCount } = useMemo(() => {
+    const valid = result.answers.filter(a => !a.timedOut);
+    const wrongs = valid.filter(a => !a.isCorrect);
+    const timeouts = result.answers.length - valid.length;
 
-  // Distraction analysis - detect when response times started increasing
-  const distractionAnalysis = analyzeDistraction(validAnswers);
+    let totalTime = 0, minTime = Infinity, maxTime = 0;
 
-  // Topic-level analysis
-  const topicStats: Record<string, { total: number; correct: number; wrong: number; avgTime: number }> = {};
-  for (const answer of result.answers) {
-    if (answer.timedOut) continue;
-    const q = questions.find(qq => qq.id === answer.questionId);
-    if (!q) continue;
-    if (!topicStats[q.topic_name]) {
-      topicStats[q.topic_name] = { total: 0, correct: 0, wrong: 0, avgTime: 0 };
+    for (const ans of valid) {
+      const t = ans.timeSpentMs || 0;
+      if (t > 0) {
+        totalTime += t;
+        if (t < minTime) minTime = t;
+        if (t > maxTime) maxTime = t;
+      }
     }
-    topicStats[q.topic_name].total++;
-    topicStats[q.topic_name].avgTime += (answer.timeSpentMs || 0);
-    if (answer.isCorrect) topicStats[q.topic_name].correct++;
-    else topicStats[q.topic_name].wrong++;
-  }
-  // Calculate average times
-  for (const topic of Object.keys(topicStats)) {
-    if (topicStats[topic].total > 0) {
-      topicStats[topic].avgTime /= topicStats[topic].total;
+
+    return {
+      validAnswers: valid,
+      wrongAnswers: wrongs,
+      timedOutCount: timeouts,
+      avgTimeMs: valid.length > 0 ? totalTime / valid.length : 0,
+      minTimeMs: minTime === Infinity ? 0 : minTime,
+      maxTimeMs: maxTime
+    };
+  }, [result.answers]);
+
+  // Memoize distraction analysis
+  const distractionAnalysis = useMemo(() => analyzeDistraction(validAnswers), [validAnswers]);
+
+  // Transform O(N*M) topic stat calculation to O(N+M) using a lookup map
+  const { weakTopics, strongTopics } = useMemo(() => {
+    const qMap = new Map<string, QuizQuestion>();
+    for (const q of questions) {
+      qMap.set(q.id, q);
     }
-  }
 
-  const weakTopics = Object.entries(topicStats)
-    .filter(([_, s]) => s.total > 0 && (s.correct / s.total) < 0.7)
-    .sort((a, b) => (a[1].correct / a[1].total) - (b[1].correct / b[1].total));
+    const tStats: Record<string, { total: number; correct: number; wrong: number; avgTime: number }> = {};
 
-  const strongTopics = Object.entries(topicStats)
-    .filter(([_, s]) => s.total > 0 && (s.correct / s.total) >= 0.7)
-    .sort((a, b) => (b[1].correct / b[1].total) - (a[1].correct / a[1].total));
+    for (const answer of result.answers) {
+      if (answer.timedOut) continue;
+      const q = qMap.get(answer.questionId);
+      if (!q) continue;
 
-  const wrongAnswers = result.answers.filter(a => !a.isCorrect && !a.timedOut);
-  const timedOutCount = result.answers.filter(a => a.timedOut).length;
+      if (!tStats[q.topic_name]) {
+        tStats[q.topic_name] = { total: 0, correct: 0, wrong: 0, avgTime: 0 };
+      }
+
+      const stat = tStats[q.topic_name];
+      stat.total++;
+      stat.avgTime += (answer.timeSpentMs || 0);
+      if (answer.isCorrect) stat.correct++;
+      else stat.wrong++;
+    }
+
+    for (const topic of Object.keys(tStats)) {
+      if (tStats[topic].total > 0) tStats[topic].avgTime /= tStats[topic].total;
+    }
+
+    const weak = Object.entries(tStats)
+      .filter(([_, s]) => s.total > 0 && (s.correct / s.total) < 0.7)
+      .sort((a, b) => (a[1].correct / a[1].total) - (b[1].correct / b[1].total));
+
+    const strong = Object.entries(tStats)
+      .filter(([_, s]) => s.total > 0 && (s.correct / s.total) >= 0.7)
+      .sort((a, b) => (b[1].correct / b[1].total) - (a[1].correct / a[1].total));
+
+    return { weakTopics: weak, strongTopics: strong };
+  }, [result.answers, questions]);
+
+  // Pre-calculate Rank Simulations
+  const rankSims = useMemo(() => {
+    if (!rankConfigs || rankConfigs.length === 0 || result.totalQuestions === 0) return [];
+    return rankConfigs.map(config => ({
+      config,
+      sim: simulateRank(config, result.correctAnswers, result.wrongAnswers, result.totalQuestions)
+    }));
+  }, [rankConfigs, result]);
 
   const formatTime = (ms: number) => {
     if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -121,21 +159,18 @@ export default function ResultsView({
       </div>
 
       {/* Rank Simulation */}
-      {rankConfigs.length > 0 && result.totalQuestions > 0 && (
+      {rankSims.length > 0 && (
         <div className="mb-8">
-          {rankConfigs.map((config, i) => {
-            const sim = simulateRank(config, result.correctAnswers, result.wrongAnswers, result.totalQuestions);
-            return (
-              <RankSimCard
-                key={i}
-                config={config}
-                sim={sim}
-                testQuestions={result.totalQuestions}
-                correct={result.correctAnswers}
-                wrong={result.wrongAnswers}
-              />
-            );
-          })}
+          {rankSims.map(({ config, sim }, i) => (
+            <RankSimCard
+              key={i}
+              config={config}
+              sim={sim}
+              testQuestions={result.totalQuestions}
+              correct={result.correctAnswers}
+              wrong={result.wrongAnswers}
+            />
+          ))}
         </div>
       )}
 
@@ -399,23 +434,33 @@ function analyzeDistraction(answers: { timeSpentMs: number; isCorrect: boolean }
     return { detected: false, message: '', beforeCount: 0, afterQuestion: 0, avgBefore: 0, avgAfter: 0 };
   }
 
-  // Calculate rolling average and detect significant increase
   const windowSize = Math.min(10, Math.floor(answers.length / 3));
   let bestSplitIndex = -1;
-  let maxRatio = 1.5; // Need at least 50% increase to flag
+  let maxRatio = 1.5;
+
+  let sumBefore = 0;
+  for (let i = 0; i < windowSize; i++) {
+    sumBefore += answers[i].timeSpentMs || 0;
+  }
+
+  let sumAfter = 0;
+  for (let i = windowSize; i < answers.length; i++) {
+    sumAfter += answers[i].timeSpentMs || 0;
+  }
 
   for (let i = windowSize; i < answers.length - windowSize; i++) {
-    const before = answers.slice(0, i);
-    const after = answers.slice(i);
-
-    const avgBefore = before.reduce((a, b) => a + (b.timeSpentMs || 0), 0) / before.length;
-    const avgAfter = after.reduce((a, b) => a + (b.timeSpentMs || 0), 0) / after.length;
+    const avgBefore = sumBefore / i;
+    const avgAfter = sumAfter / (answers.length - i);
 
     const ratio = avgAfter / avgBefore;
     if (ratio > maxRatio) {
       maxRatio = ratio;
       bestSplitIndex = i;
     }
+
+    const nextVal = answers[i].timeSpentMs || 0;
+    sumBefore += nextVal;
+    sumAfter -= nextVal;
   }
 
   if (bestSplitIndex === -1) {
@@ -424,15 +469,15 @@ function analyzeDistraction(answers: { timeSpentMs: number; isCorrect: boolean }
 
   const before = answers.slice(0, bestSplitIndex);
   const after = answers.slice(bestSplitIndex);
-  const avgBefore = before.reduce((a, b) => a + (b.timeSpentMs || 0), 0) / before.length;
-  const avgAfter = after.reduce((a, b) => a + (b.timeSpentMs || 0), 0) / after.length;
+  const finalAvgBefore = before.reduce((a, b) => a + (b.timeSpentMs || 0), 0) / before.length;
+  const finalAvgAfter = after.reduce((a, b) => a + (b.timeSpentMs || 0), 0) / after.length;
 
   return {
     detected: true,
     message: `Your response time increased by ${((maxRatio - 1) * 100).toFixed(0)}% after question ${bestSplitIndex}. This might indicate fatigue or distraction.`,
     beforeCount: bestSplitIndex,
     afterQuestion: bestSplitIndex,
-    avgBefore,
-    avgAfter,
+    avgBefore: finalAvgBefore,
+    avgAfter: finalAvgAfter,
   };
 }

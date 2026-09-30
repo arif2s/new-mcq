@@ -1,3 +1,10 @@
+// Shared Literal Types for strict compiler safety
+export type OptionKey = 'A' | 'B' | 'C' | 'D';
+export type QuizMode = 'test' | 'learn' | 'target';
+export type ExpertiseLevel = 'beginner' | 'intermediate' | 'advanced' | 'expert';
+export type ExpertiseTrend = 'improving' | 'stable' | 'declining';
+export type AnkiStatus = 'new' | 'learning' | 'review' | 'mastered';
+
 // Core question from CSV
 export interface QuizQuestion {
   id: string;
@@ -7,18 +14,18 @@ export interface QuizQuestion {
   option_b: string;
   option_c: string;
   option_d: string;
-  correct_answer: string; // A, B, C, or D
+  correct_answer: OptionKey;
   explanation: string;
 }
 
 // Answer record
 export interface AnswerRecord {
   questionId: string;
-  selected: string;
+  selected: OptionKey | ''; // Empty string accounts for timeouts
   isCorrect: boolean;
   timestamp: number;
-  timeSpentMs: number; // Time spent on this question in milliseconds
-  timedOut: boolean; // True if question was skipped due to timeout
+  timeSpentMs: number;
+  timedOut: boolean;
 }
 
 // Test session result
@@ -38,22 +45,22 @@ export interface TestResult {
   timeLimitSeconds: number | null;
   timeUsedSeconds: number;
   answers: AnswerRecord[];
-  mode: 'test' | 'learn' | 'target';
+  mode: QuizMode;
 }
 
-// Anki-style spaced repetition data per question
+// Spaced repetition data per question
 export interface AnkiCard {
   questionId: string;
   subjectName: string;
   topic: string;
-  interval: number; // days until next review
+  interval: number;
   easeFactor: number;
   repetitions: number;
-  nextReviewDate: string; // ISO date
-  lastReviewDate: string;
+  nextReviewDate: string; // YYYY-MM-DD
+  lastReviewDate: string; // YYYY-MM-DD
   totalAttempts: number;
   correctAttempts: number;
-  status: 'new' | 'learning' | 'review' | 'mastered';
+  status: AnkiStatus;
 }
 
 // Subject tracking
@@ -86,66 +93,67 @@ export interface HourlyStats {
   timeSpentSeconds: number;
 }
 
-// Review queue item (wrong answers to review)
+// Review queue item
 export interface ReviewQueueItem {
   id: string;
   questionId: string;
   subjectName: string;
   topic: string;
   question: string;
-  correctAnswer: string;
-  userAnswer: string;
+  correctAnswer: OptionKey;
+  userAnswer: OptionKey | '';
   explanation: string;
   options: { a: string; b: string; c: string; d: string };
-  dateAdded: string;
+  dateAdded: string; // ISO string for UI display
+  addedTimestamp: number; // Integer for fast O(1) mathematical sorting
   reviewed: boolean;
 }
 
 // Daily targets
 export interface DailyTargets {
   questionsTarget: number;
-  reviewTarget: number; // Review queue items to clear
+  reviewTarget: number;
   correctTarget: number;
-  streakTarget: number; // Days in a row
+  streakTarget: number;
 }
 
-// Rank simulation: a single marks -> rank data point
+// Rank simulation data point
 export interface RankDataPoint {
   marks: number;
   rank: number;
 }
 
-// A marks range band with competitive outlook text
+// Marks range band
 export interface RankBand {
   marksMin: number;
   marksMax: number;
   rankMin: number;
   rankMax: number;
-  label: string; // e.g. "Top 25"
-  outlook: string; // competitive outlook description
+  label: string;
+  outlook: string;
 }
 
 // Rank simulation config per exam
 export interface RankSimConfig {
   examName: string;
-  totalQuestions: number; // e.g. 200
-  marksPerCorrect: number; // e.g. 4
-  negativePerWrong: number; // e.g. 1 (stored as positive)
-  maxMarks: number; // totalQuestions * marksPerCorrect
-  dataPoints: RankDataPoint[]; // user-editable marks→rank table
-  bands: RankBand[]; // competitive outlook bands
+  totalQuestions: number;
+  marksPerCorrect: number;
+  negativePerWrong: number;
+  maxMarks: number;
+  dataPoints: RankDataPoint[];
+  bands: RankBand[];
 }
 
-// Rank simulation result computed for a test
+// Rank simulation result
 export interface SimulatedRank {
-  projectedMarks: number; // scaled to exam's totalQuestions
+  projectedMarks: number;
   estimatedRank: number;
   percentile: string;
   nearestAbove: RankDataPoint | null;
   nearestBelow: RankDataPoint | null;
   currentBand: RankBand | null;
-  nextBand: RankBand | null; // the better band above current
-  marksToNextBand: number; // how many more marks needed
+  nextBand: RankBand | null;
+  marksToNextBand: number;
 }
 
 // Expertise tracker per topic
@@ -156,8 +164,8 @@ export interface TopicExpertise {
   attempted: number;
   correct: number;
   accuracy: number;
-  level: 'beginner' | 'intermediate' | 'advanced' | 'expert';
-  trend: 'improving' | 'stable' | 'declining';
+  level: ExpertiseLevel;
+  trend: ExpertiseTrend;
   lastAttemptDate: string;
 }
 
@@ -182,13 +190,13 @@ export interface AppPersistence {
 // Quiz configuration for a session
 export interface QuizConfig {
   subjectName: string;
-  topicFilter: string; // 'all' or specific topic
+  topicFilter: string;
   questionOrder: 'sequential' | 'random';
-  questionCount: number; // For test/learn: total questions. For target: target correct answers
-  timeLimitMinutes: number; // 0 = no limit
-  questionTimeoutMinutes: number; // Timeout per question (0 = no timeout, default 5)
-  mode: 'test' | 'learn' | 'target'; // target = continue until X correct answers
-  useSpacedRepetition: boolean; // Anki-style prioritization
+  questionCount: number;
+  timeLimitMinutes: number;
+  questionTimeoutMinutes: number;
+  mode: QuizMode;
+  useSpacedRepetition: boolean;
 }
 
 // Active quiz state
@@ -198,13 +206,13 @@ export interface ActiveQuiz {
   currentIndex: number;
   answers: Record<string, AnswerRecord>;
   startTime: number;
-  questionStartTime: number; // When current question was shown
+  questionStartTime: number;
   timeRemainingSeconds: number | null;
   questionTimeRemainingSeconds: number | null;
   isCompleted: boolean;
-  isPaused: boolean; // Paused due to timeout
+  isPaused: boolean;
   score: number;
   correctCount: number;
   wrongCount: number;
-  targetCorrect: number | null; // For target mode: goal correct answers
+  targetCorrect: number | null;
 }

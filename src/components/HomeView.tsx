@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   TrendingUp, TrendingDown, Minus, Target, Flame, Clock,
   CheckCircle, AlertTriangle, BookOpen, Zap, Award, Settings
@@ -14,108 +14,114 @@ interface HomeViewProps {
 
 export default function HomeView({ persistence, onNavigate, onUpdateTargets }: HomeViewProps) {
   const [showTargetSettings, setShowTargetSettings] = useState(false);
-  const [targets, setTargets] = useState(persistence.dailyTargets);
+  const [targets, setTargets] = useState<DailyTargets>(persistence.dailyTargets);
 
-  const todayStr = getTodayString();
-  const yesterdayStr = getYesterdayString();
-
-  const todayStats = getDayStats(persistence, todayStr);
-  const yesterdayStats = getDayStats(persistence, yesterdayStr);
-
-  const { reviewQueue, dailyTargets, streakDays, longestStreak } = persistence;
-  const unreviewedCount = reviewQueue.filter(r => !r.reviewed).length;
-
-  // Calculate target progress (cap display at 100% but track actual)
-  const questionsProgress = dailyTargets.questionsTarget > 0
-    ? (todayStats.questionsAnswered / dailyTargets.questionsTarget) * 100
-    : 100;
-  const correctProgress = dailyTargets.correctTarget > 0
-    ? (todayStats.correctAnswers / dailyTargets.correctTarget) * 100
-    : 100;
-
-  // Get reviewed today count
-  const reviewedToday = reviewQueue.filter(r =>
-    r.reviewed && r.dateAdded.startsWith(todayStr)
-  ).length;
-  const reviewProgress = dailyTargets.reviewTarget > 0
-    ? (reviewedToday / dailyTargets.reviewTarget) * 100
-    : 100;
-
-  // Calculate how much exceeded
-  const questionsExceeded = todayStats.questionsAnswered - dailyTargets.questionsTarget;
-  const correctExceeded = todayStats.correctAnswers - dailyTargets.correctTarget;
-  const reviewExceeded = reviewedToday - dailyTargets.reviewTarget;
-
-  // Check if targets are met
-  const questionsTargetMet = questionsProgress >= 100;
-  const correctTargetMet = correctProgress >= 100;
-  const reviewTargetMet = reviewProgress >= 100;
-  const allTargetsMet = questionsTargetMet && correctTargetMet && reviewTargetMet;
-
-  // Check yesterday's targets
-  const yesterdayMetQuestions = yesterdayStats.questionsAnswered >= dailyTargets.questionsTarget;
-  const yesterdayMetCorrect = yesterdayStats.correctAnswers >= dailyTargets.correctTarget;
-
-  // Comparison helpers
-  const getComparison = (today: number, yesterday: number) => {
-    if (yesterday === 0 && today === 0) return { trend: 'same' as const, percent: 0, text: '-' };
-    if (yesterday === 0) return { trend: 'up' as const, percent: 100, text: 'New!' };
-    const diff = ((today - yesterday) / yesterday) * 100;
-    if (diff > 5) return { trend: 'up' as const, percent: Math.abs(diff), text: `+${Math.abs(diff).toFixed(0)}%` };
-    if (diff < -5) return { trend: 'down' as const, percent: Math.abs(diff), text: `-${Math.abs(diff).toFixed(0)}%` };
-    return { trend: 'same' as const, percent: 0, text: 'Same' };
-  };
-
-  const questionsComparison = getComparison(todayStats.questionsAnswered, yesterdayStats.questionsAnswered);
-  const correctComparison = getComparison(todayStats.correctAnswers, yesterdayStats.correctAnswers);
-  const accuracyComparison = getComparison(todayStats.accuracy, yesterdayStats.accuracy);
-  const timeComparison = getComparison(todayStats.timeSpentSeconds, yesterdayStats.timeSpentSeconds);
-
-  // Generate motivational message
-  const getMotivation = () => {
-    // Super achievements
-    if (questionsExceeded >= dailyTargets.questionsTarget) {
-      return { emoji: '🚀', text: `Incredible! You've done 2x your daily target! Consider taking a break.`, color: 'text-purple-400' };
+  // Sync local form state when settings panel is opened
+  useEffect(() => {
+    if (showTargetSettings) {
+      setTargets(persistence.dailyTargets);
     }
-    if (allTargetsMet && streakDays >= 30) {
-      return { emoji: '👑', text: "A month-long streak with all targets met! You're unstoppable!", color: 'text-warning-500' };
-    }
-    if (streakDays >= 7 && allTargetsMet) {
-      return { emoji: '🔥', text: "You're on fire! A week-long streak and all targets crushed!", color: 'text-warning-500' };
-    }
-    if (allTargetsMet) {
-      return { emoji: '🏆', text: "All daily targets completed! You're a champion! Take a well-deserved break.", color: 'text-success-500' };
-    }
-    if (questionsTargetMet && !correctTargetMet) {
-      return { emoji: '📚', text: `Questions done! Focus on accuracy - ${dailyTargets.correctTarget - todayStats.correctAnswers} more correct needed.`, color: 'text-brand-400' };
-    }
-    if (questionsProgress >= 75) {
-      return { emoji: '🎯', text: `Almost there! Just ${Math.max(0, dailyTargets.questionsTarget - todayStats.questionsAnswered)} more questions to hit your target!`, color: 'text-brand-400' };
-    }
-    if (questionsProgress >= 50) {
-      return { emoji: '💪', text: `Halfway there! ${Math.max(0, dailyTargets.questionsTarget - todayStats.questionsAnswered)} more questions to go.`, color: 'text-brand-400' };
-    }
-    if (todayStats.questionsAnswered > 0) {
-      return { emoji: '👍', text: "Great start! Keep the momentum going.", color: 'text-brand-400' };
-    }
-    if (!yesterdayMetQuestions || !yesterdayMetCorrect) {
-      return { emoji: '🎯', text: "Yesterday's targets weren't met. Today is a fresh start!", color: 'text-warning-500' };
-    }
-    return { emoji: '☀️', text: "Ready to learn? Start your first quiz of the day!", color: 'text-gray-400' };
-  };
+  }, [showTargetSettings, persistence.dailyTargets]);
 
-  const motivation = getMotivation();
+  // Memoize all heavy daily calculations and comparisons
+  const stats = useMemo(() => {
+    const todayStr = getTodayString();
+    const yesterdayStr = getYesterdayString();
 
-  // Get hourly data for chart
-  const hourlyData = Array.from({ length: 24 }, (_, i) => {
-    const hourStat = todayStats.hourlyStats.find(h => h.hour === i);
-    return {
-      hour: i,
-      questions: hourStat?.questionsAnswered || 0,
-      time: hourStat?.timeSpentSeconds || 0,
+    const todayStats = getDayStats(persistence, todayStr);
+    const yesterdayStats = getDayStats(persistence, yesterdayStr);
+
+    const { reviewQueue, dailyTargets, streakDays } = persistence;
+    const unreviewedCount = reviewQueue.filter(r => !r.reviewed).length;
+    const reviewedToday = reviewQueue.filter(r => r.reviewed && r.dateAdded.startsWith(todayStr)).length;
+
+    // Progress & Exceeded Calculations
+    const questionsProgress = dailyTargets.questionsTarget > 0
+      ? (todayStats.questionsAnswered / dailyTargets.questionsTarget) * 100
+      : 100;
+    const correctProgress = dailyTargets.correctTarget > 0
+      ? (todayStats.correctAnswers / dailyTargets.correctTarget) * 100
+      : 100;
+    const reviewProgress = dailyTargets.reviewTarget > 0
+      ? (reviewedToday / dailyTargets.reviewTarget) * 100
+      : 100;
+
+    const questionsTargetMet = questionsProgress >= 100;
+    const correctTargetMet = correctProgress >= 100;
+    const reviewTargetMet = reviewProgress >= 100;
+    const allTargetsMet = questionsTargetMet && correctTargetMet && reviewTargetMet;
+
+    const yesterdayMetQuestions = yesterdayStats.questionsAnswered >= dailyTargets.questionsTarget;
+    const yesterdayMetCorrect = yesterdayStats.correctAnswers >= dailyTargets.correctTarget;
+
+    // Comparison Helper
+    const getComparison = (today: number, yesterday: number) => {
+      if (yesterday === 0 && today === 0) return { trend: 'same' as const, percent: 0, text: '-' };
+      if (yesterday === 0) return { trend: 'up' as const, percent: 100, text: 'New!' };
+      const diff = ((today - yesterday) / yesterday) * 100;
+      if (diff > 5) return { trend: 'up' as const, percent: Math.abs(diff), text: `+${Math.abs(diff).toFixed(0)}%` };
+      if (diff < -5) return { trend: 'down' as const, percent: Math.abs(diff), text: `-${Math.abs(diff).toFixed(0)}%` };
+      return { trend: 'same' as const, percent: 0, text: 'Same' };
     };
-  });
-  const maxQuestions = Math.max(...hourlyData.map(h => h.questions), 1);
+
+    // Motivation Generator
+    const getMotivation = () => {
+      const questionsExceeded = todayStats.questionsAnswered - dailyTargets.questionsTarget;
+      if (questionsExceeded >= dailyTargets.questionsTarget) return { emoji: '🚀', text: `Incredible! You've done 2x your daily target! Consider taking a break.`, color: 'text-purple-400' };
+      if (allTargetsMet && streakDays >= 30) return { emoji: '👑', text: "A month-long streak with all targets met! You're unstoppable!", color: 'text-warning-500' };
+      if (streakDays >= 7 && allTargetsMet) return { emoji: '🔥', text: "You're on fire! A week-long streak and all targets crushed!", color: 'text-warning-500' };
+      if (allTargetsMet) return { emoji: '🏆', text: "All daily targets completed! You're a champion! Take a well-deserved break.", color: 'text-success-500' };
+      if (questionsTargetMet && !correctTargetMet) return { emoji: '📚', text: `Questions done! Focus on accuracy - ${dailyTargets.correctTarget - todayStats.correctAnswers} more correct needed.`, color: 'text-brand-400' };
+      if (questionsProgress >= 75) return { emoji: '🎯', text: `Almost there! Just ${Math.max(0, dailyTargets.questionsTarget - todayStats.questionsAnswered)} more questions to hit your target!`, color: 'text-brand-400' };
+      if (questionsProgress >= 50) return { emoji: '💪', text: `Halfway there! ${Math.max(0, dailyTargets.questionsTarget - todayStats.questionsAnswered)} more questions to go.`, color: 'text-brand-400' };
+      if (todayStats.questionsAnswered > 0) return { emoji: '👍', text: "Great start! Keep the momentum going.", color: 'text-brand-400' };
+      if (!yesterdayMetQuestions || !yesterdayMetCorrect) return { emoji: '🎯', text: "Yesterday's targets weren't met. Today is a fresh start!", color: 'text-warning-500' };
+      return { emoji: '☀️', text: "Ready to learn? Start your first quiz of the day!", color: 'text-gray-400' };
+    };
+
+    // O(1) Hourly Data Generation
+    const hourlyMap = new Map();
+    todayStats.hourlyStats.forEach(h => hourlyMap.set(h.hour, h));
+
+    const hourlyData = Array.from({ length: 24 }, (_, i) => {
+      const hourStat = hourlyMap.get(i);
+      return {
+        hour: i,
+        questions: hourStat?.questionsAnswered || 0,
+        time: hourStat?.timeSpentSeconds || 0,
+      };
+    });
+
+    return {
+      todayStats,
+      yesterdayStats,
+      unreviewedCount,
+      reviewedToday,
+      questionsProgress,
+      correctProgress,
+      reviewProgress,
+      questionsExceeded: todayStats.questionsAnswered - dailyTargets.questionsTarget,
+      correctExceeded: todayStats.correctAnswers - dailyTargets.correctTarget,
+      reviewExceeded: reviewedToday - dailyTargets.reviewTarget,
+      questionsTargetMet,
+      correctTargetMet,
+      reviewTargetMet,
+      allTargetsMet,
+      yesterdayMetQuestions,
+      yesterdayMetCorrect,
+      comparisons: {
+        questions: getComparison(todayStats.questionsAnswered, yesterdayStats.questionsAnswered),
+        correct: getComparison(todayStats.correctAnswers, yesterdayStats.correctAnswers),
+        accuracy: getComparison(todayStats.accuracy, yesterdayStats.accuracy),
+        time: getComparison(todayStats.timeSpentSeconds, yesterdayStats.timeSpentSeconds)
+      },
+      motivation: getMotivation(),
+      hourlyData,
+      maxQuestions: Math.max(...hourlyData.map(h => h.questions), 1)
+    };
+  }, [persistence]);
+
+  const { dailyTargets, streakDays, longestStreak } = persistence;
 
   const handleSaveTargets = () => {
     onUpdateTargets(targets);
@@ -133,33 +139,33 @@ export default function HomeView({ persistence, onNavigate, onUpdateTargets }: H
       {/* Header with Motivation */}
       <div className="bg-gradient-to-r from-brand-600/20 via-purple-600/20 to-success-600/20 rounded-2xl p-6 border border-brand-500/30 mb-8">
         <div className="flex items-center gap-4 mb-4">
-          <span className="text-4xl">{motivation.emoji}</span>
+          <span className="text-4xl">{stats.motivation.emoji}</span>
           <div>
             <h1 className="text-2xl font-bold text-gray-100">
               {streakDays > 0 ? `Day ${streakDays} 🔥` : 'Welcome Back!'}
             </h1>
-            <p className={`${motivation.color}`}>{motivation.text}</p>
+            <p className={`${stats.motivation.color}`}>{stats.motivation.text}</p>
           </div>
         </div>
 
         {/* Yesterday's Missed Targets Alert */}
-        {(!yesterdayMetQuestions || !yesterdayMetCorrect) && yesterdayStats.questionsAnswered > 0 && (
+        {(!stats.yesterdayMetQuestions || !stats.yesterdayMetCorrect) && stats.yesterdayStats.questionsAnswered > 0 && (
           <div className="bg-warning-500/10 border border-warning-500/30 rounded-lg p-3 mt-4">
             <p className="text-sm text-warning-400 flex items-center gap-2">
               <AlertTriangle size={16} />
-              Yesterday: {yesterdayStats.questionsAnswered}/{dailyTargets.questionsTarget} questions,
-              {yesterdayStats.correctAnswers}/{dailyTargets.correctTarget} correct.
+              Yesterday: {stats.yesterdayStats.questionsAnswered}/{dailyTargets.questionsTarget} questions,
+              {stats.yesterdayStats.correctAnswers}/{dailyTargets.correctTarget} correct.
               Let's do better today! 💪
             </p>
           </div>
         )}
 
         {/* Review Queue Alert */}
-        {unreviewedCount >= persistence.reviewQueueLimit * 0.8 && (
+        {stats.unreviewedCount >= persistence.reviewQueueLimit * 0.8 && (
           <div className="bg-brand-500/10 border border-brand-500/30 rounded-lg p-3 mt-4">
             <p className="text-sm text-brand-400 flex items-center gap-2">
               <BookOpen size={16} />
-              {unreviewedCount} questions waiting for review!
+              {stats.unreviewedCount} questions waiting for review!
               <button
                 onClick={() => onNavigate('review')}
                 className="underline hover:text-brand-300"
@@ -247,66 +253,66 @@ export default function HomeView({ persistence, onNavigate, onUpdateTargets }: H
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {/* Questions Target */}
-          <div className={`rounded-xl p-4 ${questionsTargetMet ? 'bg-success-500/10 border border-success-500/30' : 'bg-gray-900/50'}`}>
+          <div className={`rounded-xl p-4 ${stats.questionsTargetMet ? 'bg-success-500/10 border border-success-500/30' : 'bg-gray-900/50'}`}>
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-gray-400">Questions</span>
-              {questionsTargetMet && <CheckCircle size={14} className="text-success-500" />}
+              {stats.questionsTargetMet && <CheckCircle size={14} className="text-success-500" />}
             </div>
             <p className="text-2xl font-bold text-gray-100">
-              {todayStats.questionsAnswered}
+              {stats.todayStats.questionsAnswered}
               <span className="text-gray-500 text-sm">/{dailyTargets.questionsTarget}</span>
             </p>
-            {questionsExceeded > 0 ? (
-              <p className="text-xs text-success-500 mt-1">+{questionsExceeded} extra! 🎉</p>
+            {stats.questionsExceeded > 0 ? (
+              <p className="text-xs text-success-500 mt-1">+{stats.questionsExceeded} extra! 🎉</p>
             ) : (
               <div className="w-full bg-gray-700 rounded-full h-1.5 mt-2">
                 <div
                   className="h-1.5 rounded-full transition-all bg-brand-500"
-                  style={{ width: `${Math.min(questionsProgress, 100)}%` }}
+                  style={{ width: `${Math.min(stats.questionsProgress, 100)}%` }}
                 />
               </div>
             )}
           </div>
 
           {/* Correct Target */}
-          <div className={`rounded-xl p-4 ${correctTargetMet ? 'bg-success-500/10 border border-success-500/30' : 'bg-gray-900/50'}`}>
+          <div className={`rounded-xl p-4 ${stats.correctTargetMet ? 'bg-success-500/10 border border-success-500/30' : 'bg-gray-900/50'}`}>
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-gray-400">Correct</span>
-              {correctTargetMet && <CheckCircle size={14} className="text-success-500" />}
+              {stats.correctTargetMet && <CheckCircle size={14} className="text-success-500" />}
             </div>
             <p className="text-2xl font-bold text-gray-100">
-              {todayStats.correctAnswers}
+              {stats.todayStats.correctAnswers}
               <span className="text-gray-500 text-sm">/{dailyTargets.correctTarget}</span>
             </p>
-            {correctExceeded > 0 ? (
-              <p className="text-xs text-success-500 mt-1">+{correctExceeded} extra! ✨</p>
+            {stats.correctExceeded > 0 ? (
+              <p className="text-xs text-success-500 mt-1">+{stats.correctExceeded} extra! ✨</p>
             ) : (
               <div className="w-full bg-gray-700 rounded-full h-1.5 mt-2">
                 <div
                   className="h-1.5 rounded-full transition-all bg-purple-500"
-                  style={{ width: `${Math.min(correctProgress, 100)}%` }}
+                  style={{ width: `${Math.min(stats.correctProgress, 100)}%` }}
                 />
               </div>
             )}
           </div>
 
           {/* Review Target */}
-          <div className={`rounded-xl p-4 ${reviewTargetMet ? 'bg-success-500/10 border border-success-500/30' : 'bg-gray-900/50'}`}>
+          <div className={`rounded-xl p-4 ${stats.reviewTargetMet ? 'bg-success-500/10 border border-success-500/30' : 'bg-gray-900/50'}`}>
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-gray-400">Reviews</span>
-              {reviewTargetMet && <CheckCircle size={14} className="text-success-500" />}
+              {stats.reviewTargetMet && <CheckCircle size={14} className="text-success-500" />}
             </div>
             <p className="text-2xl font-bold text-gray-100">
-              {reviewedToday}
+              {stats.reviewedToday}
               <span className="text-gray-500 text-sm">/{dailyTargets.reviewTarget}</span>
             </p>
-            {reviewExceeded > 0 ? (
-              <p className="text-xs text-success-500 mt-1">+{reviewExceeded} extra! 📚</p>
+            {stats.reviewExceeded > 0 ? (
+              <p className="text-xs text-success-500 mt-1">+{stats.reviewExceeded} extra! 📚</p>
             ) : (
               <div className="w-full bg-gray-700 rounded-full h-1.5 mt-2">
                 <div
                   className="h-1.5 rounded-full transition-all bg-warning-500"
-                  style={{ width: `${Math.min(reviewProgress, 100)}%` }}
+                  style={{ width: `${Math.min(stats.reviewProgress, 100)}%` }}
                 />
               </div>
             )}
@@ -336,7 +342,7 @@ export default function HomeView({ persistence, onNavigate, onUpdateTargets }: H
         </div>
 
         {/* Congratulations banner when all targets met */}
-        {allTargetsMet && (
+        {stats.allTargetsMet && (
           <div className="mt-4 bg-gradient-to-r from-success-500/20 to-brand-500/20 border border-success-500/30 rounded-xl p-4 text-center animate-fade-in">
             <p className="text-lg font-semibold text-success-400">
               🎊 All Daily Targets Achieved! 🎊
@@ -358,10 +364,10 @@ export default function HomeView({ persistence, onNavigate, onUpdateTargets }: H
           </h2>
           <div className="space-y-4">
             {[
-              { label: 'Questions', today: todayStats.questionsAnswered, yesterday: yesterdayStats.questionsAnswered, comparison: questionsComparison },
-              { label: 'Correct', today: todayStats.correctAnswers, yesterday: yesterdayStats.correctAnswers, comparison: correctComparison },
-              { label: 'Accuracy', today: `${todayStats.accuracy.toFixed(0)}%`, yesterday: `${yesterdayStats.accuracy.toFixed(0)}%`, comparison: accuracyComparison },
-              { label: 'Time', today: `${Math.floor(todayStats.timeSpentSeconds / 60)}m`, yesterday: `${Math.floor(yesterdayStats.timeSpentSeconds / 60)}m`, comparison: timeComparison },
+              { label: 'Questions', today: stats.todayStats.questionsAnswered, yesterday: stats.yesterdayStats.questionsAnswered, comparison: stats.comparisons.questions },
+              { label: 'Correct', today: stats.todayStats.correctAnswers, yesterday: stats.yesterdayStats.correctAnswers, comparison: stats.comparisons.correct },
+              { label: 'Accuracy', today: `${stats.todayStats.accuracy.toFixed(0)}%`, yesterday: `${stats.yesterdayStats.accuracy.toFixed(0)}%`, comparison: stats.comparisons.accuracy },
+              { label: 'Time', today: `${Math.floor(stats.todayStats.timeSpentSeconds / 60)}m`, yesterday: `${Math.floor(stats.yesterdayStats.timeSpentSeconds / 60)}m`, comparison: stats.comparisons.time },
             ].map(item => (
               <div key={item.label} className="flex items-center justify-between">
                 <span className="text-sm text-gray-400">{item.label}</span>
@@ -405,7 +411,7 @@ export default function HomeView({ persistence, onNavigate, onUpdateTargets }: H
             </div>
             <div className="bg-gray-900/50 rounded-lg p-3">
               <p className="text-xs text-gray-400 mb-1">To Review</p>
-              <p className="text-xl font-bold text-warning-500">{unreviewedCount}</p>
+              <p className="text-xl font-bold text-warning-500">{stats.unreviewedCount}</p>
             </div>
           </div>
         </div>
@@ -418,7 +424,7 @@ export default function HomeView({ persistence, onNavigate, onUpdateTargets }: H
           Today's Activity by Hour
         </h2>
 
-        {todayStats.questionsAnswered === 0 ? (
+        {stats.todayStats.questionsAnswered === 0 ? (
           <div className="text-center py-8 text-gray-500">
             <Clock size={32} className="mx-auto mb-2 opacity-50" />
             <p>No activity yet today. Start a quiz to see your hourly stats!</p>
@@ -426,7 +432,7 @@ export default function HomeView({ persistence, onNavigate, onUpdateTargets }: H
         ) : (
           <>
             <div className="flex items-end gap-1 h-32 mb-2">
-              {hourlyData.map((h, i) => (
+              {stats.hourlyData.map((h, i) => (
                 <div
                   key={i}
                   className="flex-1 flex flex-col items-center group relative"
@@ -435,7 +441,7 @@ export default function HomeView({ persistence, onNavigate, onUpdateTargets }: H
                     className={`w-full rounded-t transition-all ${
                       h.questions > 0 ? 'bg-brand-500 hover:bg-brand-400' : 'bg-gray-700'
                     }`}
-                    style={{ height: `${(h.questions / maxQuestions) * 100}%`, minHeight: h.questions > 0 ? '4px' : '2px' }}
+                    style={{ height: `${(h.questions / stats.maxQuestions) * 100}%`, minHeight: h.questions > 0 ? '4px' : '2px' }}
                   />
                   {h.questions > 0 && (
                     <div className="absolute bottom-full mb-2 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
@@ -479,8 +485,8 @@ export default function HomeView({ persistence, onNavigate, onUpdateTargets }: H
         >
           <BookOpen size={24} className="text-warning-500 mb-2 group-hover:scale-110 transition-transform" />
           <p className="font-medium text-gray-200">Review Queue</p>
-          <p className="text-xs text-gray-500">{unreviewedCount} to review</p>
-          {unreviewedCount > 0 && (
+          <p className="text-xs text-gray-500">{stats.unreviewedCount} to review</p>
+          {stats.unreviewedCount > 0 && (
             <span className="absolute top-3 right-3 w-2 h-2 bg-warning-500 rounded-full" />
           )}
         </button>

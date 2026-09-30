@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import {
   Upload, BookOpen, Brain, BarChart3, Calendar,
   Settings, ChevronDown, Play, Download, Trash2, FileText, CheckCircle, ClipboardList
@@ -37,25 +37,31 @@ export default function Sidebar({
   const [useSpacedRepetition, setUseSpacedRepetition] = useState(true);
   const [uploadError, setUploadError] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
-  const currentSubject = subjects.find(s => s.name === selectedSubject);
-  const topics = currentSubject ? ['all', ...currentSubject.topics] : ['all'];
-  const maxQuestions = currentSubject
-    ? topicFilter === 'all'
-      ? currentSubject.questions.length
-      : currentSubject.questions.filter(q => q.topic_name === topicFilter).length
-    : 0;
+  // Memoize heavy filtering to prevent re-execution when config sliders change
+  const { topics, maxQuestions } = useMemo(() => {
+    const subject = subjects.find(s => s.name === selectedSubject);
+    const t = subject ? ['all', ...subject.topics] : ['all'];
+    const maxQ = subject
+      ? topicFilter === 'all'
+        ? subject.questions.length
+        : subject.questions.filter(q => q.topic_name === topicFilter).length
+      : 0;
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    return { currentSubject: subject, topics: t, maxQuestions: maxQ };
+  }, [subjects, selectedSubject, topicFilter]);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploadError('');
 
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = ev.target?.result as string;
+    try {
+      // Use modern Promise-based File API
+      const text = await file.text();
       const { questions, errors } = parseCSV(text);
 
       if (errors.length > 0) {
@@ -72,21 +78,25 @@ export default function Sidebar({
       onAddSubject(subjectName, file.name, questions);
       setSelectedSubject(subjectName);
       setUploadError('');
-    };
-    reader.readAsText(file);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    } catch (error) {
+      setUploadError('Failed to process file. Please try again.');
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
-  const handleImportJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportJSON = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = ev.target?.result as string;
+
+    try {
+      const text = await file.text();
       onImportData(text);
-    };
-    reader.readAsText(file);
-    if (importInputRef.current) importInputRef.current.value = '';
+    } catch (error) {
+      // Import handler in App component manages parsing errors
+    } finally {
+      if (importInputRef.current) importInputRef.current.value = '';
+    }
   };
 
   const handleStart = () => {

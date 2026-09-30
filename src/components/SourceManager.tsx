@@ -1,10 +1,12 @@
-import { useState, useEffect } from 'react';
-import { Folder, FileText, Database, Play, CheckCircle, RefreshCw, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { Folder, FileText, Database, Play, RefreshCw, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
+
+export type SourceType = 'obsidian' | 'pdf' | 'zim';
 
 export interface RagSource {
   id: string;
   name: string;
-  type: 'obsidian' | 'pdf' | 'zim';
+  type: SourceType;
   path: string;
   enabled: boolean;
   itemCount?: number;
@@ -15,13 +17,23 @@ export default function SourceManager() {
   const [sources, setSources] = useState<RagSource[]>([]);
   const [newPath, setNewPath] = useState('');
   const [newName, setNewName] = useState('');
-  const [newType, setNewType] = useState<'obsidian' | 'pdf' | 'zim'>('obsidian');
+  const [newType, setNewType] = useState<SourceType>('obsidian');
   const [isIndexing, setIsIndexing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [statusMessage, setStatusMessage] = useState('');
 
+  // Refs for safe unmount cleanup
+  const wsRef = useRef<WebSocket | null>(null);
+  const timerRef = useRef<number | null>(null);
+
   useEffect(() => {
     fetchSources();
+
+    // Cleanup active connections/intervals on unmount
+    return () => {
+      if (wsRef.current) wsRef.current.close();
+      if (timerRef.current !== null) clearInterval(timerRef.current);
+    };
   }, []);
 
   const fetchSources = async () => {
@@ -30,6 +42,8 @@ export default function SourceManager() {
       if (res.ok) {
         const data = await res.json();
         setSources(data.sources || []);
+      } else {
+        throw new Error("Fallback to mock data");
       }
     } catch {
       setSources([
@@ -52,6 +66,10 @@ export default function SourceManager() {
       lastIndexed: 'Never',
     };
 
+    setSources(prev => [...prev, sourceObj]);
+    setNewPath('');
+    setNewName('');
+
     try {
       await fetch('/api/sources', {
         method: 'POST',
@@ -59,12 +77,8 @@ export default function SourceManager() {
         body: JSON.stringify(sourceObj),
       });
     } catch {
-      // ignore
+      // Optmistic UI update already applied
     }
-
-    setSources(prev => [...prev, sourceObj]);
-    setNewPath('');
-    setNewName('');
   };
 
   const handleToggle = async (id: string) => {
@@ -72,7 +86,7 @@ export default function SourceManager() {
     try {
       await fetch(`/api/sources/${id}/toggle`, { method: 'POST' });
     } catch {
-      // ignore
+      // Optmistic UI update already applied
     }
   };
 
@@ -81,7 +95,7 @@ export default function SourceManager() {
     try {
       await fetch(`/api/sources/${id}`, { method: 'DELETE' });
     } catch {
-      // ignore
+      // Optmistic UI update already applied
     }
   };
 
@@ -95,6 +109,8 @@ export default function SourceManager() {
       if (response.ok) {
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws/indexing`);
+        wsRef.current = ws;
+
         ws.onmessage = (event) => {
           const data = JSON.parse(event.data);
           if (data.event === 'INDEXING_PROGRESS') {
@@ -103,13 +119,12 @@ export default function SourceManager() {
             if (data.progress >= 100) {
               setIsIndexing(false);
               ws.close();
+              wsRef.current = null;
               fetchSources();
             }
           }
         };
-        ws.onerror = () => {
-          simulateFallbackIndexing();
-        };
+        ws.onerror = () => simulateFallbackIndexing();
       } else {
         simulateFallbackIndexing();
       }
@@ -119,20 +134,32 @@ export default function SourceManager() {
   };
 
   const simulateFallbackIndexing = () => {
-    let p = 10;
-    const interval = setInterval(() => {
-      p += 20;
-      setProgress(p);
-      if (p === 30) setStatusMessage('Parsing Obsidian Markdown Wikilinks...');
-      if (p === 70) setStatusMessage('Extracting PDF text layout & table structures...');
-      if (p === 90) setStatusMessage('Updating Tantivy BM25 Inverted Index...');
-      if (p >= 100) {
-        clearInterval(interval);
-        setIsIndexing(false);
-        setStatusMessage('Indexing Complete! All local knowledge material ready for AI RAG.');
-      }
+    if (timerRef.current !== null) clearInterval(timerRef.current);
+
+    timerRef.current = window.setInterval(() => {
+      setProgress(prev => {
+        const next = prev + 10;
+
+        if (next === 30) setStatusMessage('Parsing Obsidian Markdown Wikilinks...');
+        else if (next === 70) setStatusMessage('Extracting PDF text layout & table structures...');
+        else if (next === 90) setStatusMessage('Updating Tantivy BM25 Inverted Index...');
+        else if (next >= 100) {
+          if (timerRef.current !== null) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+          }
+          setIsIndexing(false);
+          setStatusMessage('Indexing Complete! All local knowledge material ready for AI RAG.');
+          return 100;
+        }
+
+        return next;
+      });
     }, 600);
   };
+
+  // Memoize enabled check to prevent O(N) array filtering on every typed character
+  const hasEnabledSources = useMemo(() => sources.some(s => s.enabled), [sources]);
 
   return (
     <div className="max-w-5xl mx-auto p-6 animate-fade-in">
@@ -149,7 +176,7 @@ export default function SourceManager() {
 
         <button
           onClick={handleStartIndexing}
-          disabled={isIndexing || sources.filter(s => s.enabled).length === 0}
+          disabled={isIndexing || !hasEnabledSources}
           className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-brand-600 to-purple-600 text-white rounded-xl font-medium hover:from-brand-500 hover:to-purple-500 transition-all disabled:opacity-40 shadow-lg"
         >
           {isIndexing ? <RefreshCw className="animate-spin" size={18} /> : <Play size={18} />}
@@ -179,7 +206,7 @@ export default function SourceManager() {
             <label className="text-xs text-gray-400 block mb-1">Source Type</label>
             <select
               value={newType}
-              onChange={e => setNewType(e.target.value as any)}
+              onChange={e => setNewType(e.target.value as SourceType)}
               className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200"
             >
               <option value="obsidian">Obsidian Vault (Folder)</option>
