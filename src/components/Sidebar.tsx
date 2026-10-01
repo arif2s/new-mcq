@@ -45,6 +45,23 @@ export default function Sidebar({
   const [selectedRemoteTopics, setSelectedRemoteTopics] = useState<string[]>(['all']);
   const [keyword, setKeyword] = useState('');
   const [matchedCount, setMatchedCount] = useState<number | null>(null);
+  const [dbExists, setDbExists] = useState<boolean>(false);
+
+  useEffect(() => {
+    fetch('/api/mcq/db_status')
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'success') {
+          setDbExists(data.exists);
+        } else {
+          setDbExists(false);
+        }
+      })
+      .catch((error) => {
+        console.error(error);
+        setDbExists(false);
+      });
+  }, []);
 
   useEffect(() => {
     fetch('/api/mcq/subjects').then(res => res.json()).then(data => setRemoteSubjects(data)).catch(console.error);
@@ -130,51 +147,44 @@ export default function Sidebar({
     }
   };
 
-  const handleStart = async (isRemote: boolean = false) => {
-    if (isRemote) {
-      try {
-        const res = await fetch('/api/mcq/generate_set', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            subjects: selectedRemoteSubjects,
-            topics: selectedRemoteTopics,
-            keyword,
-            count: questionCount
-          })
-        });
-        const data = await res.json();
-        if (data.status === 'success' && data.questions.length > 0) {
-          onAddSubject('Custom Keyword Set', 'custom_keyword_set.csv', data.questions);
-          onStartQuiz({
-            subjectName: 'Custom Keyword Set',
-            topicFilter: 'all',
-            questionOrder,
-            questionCount: data.questions.length,
-            timeLimitMinutes,
-            questionTimeoutMinutes,
-            mode,
-            useSpacedRepetition,
-          });
-        } else {
-          alert('No questions found or failed to load.');
-        }
-      } catch (e) {
-        console.error(e);
-        alert('Error loading questions');
-      }
-    } else {
-      if (!selectedSubject) return;
-      onStartQuiz({
-        subjectName: selectedSubject,
-        topicFilter,
-        questionOrder,
-        questionCount: mode === 'target' ? questionCount : Math.min(questionCount, maxQuestions),
-        timeLimitMinutes,
-        questionTimeoutMinutes,
-        mode,
-        useSpacedRepetition,
+  const handleStart = async (isRemote: boolean = true) => {
+    if (!dbExists) {
+      alert("Database not found! Please go to the Settings tab to build and index the database before searching.");
+      onNavigate('settings');
+      return;
+    }
+
+    try {
+      // If keyword is empty, just rely entirely on selectedRemoteSubjects and selectedRemoteTopics.
+      const res = await fetch('/api/mcq/generate_set', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          subjects: selectedRemoteSubjects,
+          topics: selectedRemoteTopics,
+          keyword: keyword.trim(),
+          count: questionCount
+        })
       });
+      const data = await res.json();
+      if (data.status === 'success' && data.questions.length > 0) {
+        onAddSubject('Custom Set', 'custom_set.csv', data.questions);
+        onStartQuiz({
+          subjectName: 'Custom Set',
+          topicFilter: 'all',
+          questionOrder,
+          questionCount: data.questions.length,
+          timeLimitMinutes,
+          questionTimeoutMinutes,
+          mode,
+          useSpacedRepetition,
+        });
+      } else {
+        alert('No matching questions found.');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Error loading questions');
     }
   };
 
@@ -221,7 +231,7 @@ export default function Sidebar({
 
   const navItems = [
     { id: 'home', icon: BookOpen, label: 'Home' },
-    { id: 'sources', icon: Database, label: 'Knowledge Vault' },
+    { id: 'settings', icon: Settings, label: 'Settings' },
     { id: 'review', icon: ClipboardList, label: 'Review Queue' },
     { id: 'dashboard', icon: BarChart3, label: 'Dashboard' },
     { id: 'queue', icon: Database, label: 'Processing Queue' },
@@ -294,63 +304,68 @@ export default function Sidebar({
           Quiz Configuration
         </h3>
 
-        {/* Local Subject (optional, if they want to run on local uploaded CSV instead of remote search) */}
-        {subjects.length > 0 && (
-          <div className="mb-4 p-3 bg-gray-800 rounded-lg border border-gray-700">
-            <label className="block text-xs font-semibold text-gray-400 mb-1">Local Uploaded Subject (Overrides Search)</label>
-            <div className="relative mb-2">
-              <select
-                value={selectedSubject}
-                onChange={e => {
-                  setSelectedSubject(e.target.value);
-                  setTopicFilter('all');
-                }}
-                className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 appearance-none pr-8"
-              >
-                <option value="">(None - Use Global Search Below)</option>
-                {subjects.map(s => (
-                  <option key={s.name} value={s.name}>{s.name} ({s.questions.length} Q)</option>
-                ))}
-              </select>
-              <ChevronDown size={14} className="absolute right-2 top-3 text-gray-400 pointer-events-none" />
-            </div>
+        {/* Unified Search Config */}
+        <div className="mb-4 p-3 bg-gray-800 rounded-lg border border-brand-500/30">
+          <h4 className="text-xs font-semibold text-brand-400 mb-2">Subject / Topic Selection</h4>
 
-            {/* Delete subject button */}
-            {selectedSubject && (
-              <button
-                onClick={() => {
-                  onRemoveSubject(selectedSubject);
-                  setSelectedSubject('');
-                }}
-                className="w-full py-1.5 text-xs text-danger-500 hover:bg-danger-500/10 rounded transition-colors flex items-center justify-center gap-1"
-              >
-                <Trash2 size={12} /> Remove Local Subject
-              </button>
-            )}
-
-            {/* Local Topic filter */}
-            {selectedSubject && (
-              <>
-                <label className="block text-xs text-gray-400 mb-1 mt-2">Local Topic Filter</label>
-                <div className="relative">
-                  <select
-                    value={topicFilter}
-                    onChange={e => setTopicFilter(e.target.value)}
-                    className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 appearance-none pr-8"
-                  >
-                    {topics.map(t => (
-                      <option key={t} value={t}>{t === 'all' ? '📋 All Topics' : t}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} className="absolute right-2 top-3 text-gray-400 pointer-events-none" />
-                </div>
-              </>
-            )}
+          {/* Remote Subjects Filter */}
+          <label className="block text-xs text-gray-400 mb-1">Subject Filters</label>
+          <div className="relative mb-2">
+            <select
+              value={selectedRemoteSubjects.includes('all') ? 'all' : selectedRemoteSubjects[0] || ''}
+              onChange={e => setSelectedRemoteSubjects(e.target.value === 'all' ? ['all'] : [e.target.value])}
+              className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 appearance-none pr-8"
+            >
+              <option value="all">📋 Select All Subjects</option>
+              {remoteSubjects.map(s => (
+                <option key={s.subject} value={s.subject}>{s.subject} ({s.count})</option>
+              ))}
+            </select>
+            <ChevronDown size={14} className="absolute right-2 top-3 text-gray-400 pointer-events-none" />
           </div>
-        )}
 
-        {/* Global Search Config (only active if no local subject selected) */}
-        {!selectedSubject && (
+          {/* Remote Topics Filter */}
+          <label className="block text-xs text-gray-400 mb-1">Topic Filters</label>
+          <div className="relative mb-2">
+            <select
+              value={selectedRemoteTopics.includes('all') ? 'all' : selectedRemoteTopics[0] || ''}
+              onChange={e => setSelectedRemoteTopics(e.target.value === 'all' ? ['all'] : [e.target.value])}
+              className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 appearance-none pr-8"
+            >
+              <option value="all">📋 All Topics</option>
+              {remoteTopics.map(t => (
+                <option key={t.topic} value={t.topic}>{t.topic} ({t.count})</option>
+              ))}
+            </select>
+            <ChevronDown size={14} className="absolute right-2 top-3 text-gray-400 pointer-events-none" />
+          </div>
+
+          {/* Custom Keyword Search */}
+          <label className="block text-xs text-gray-400 mb-1">Custom Keyword Search</label>
+          <input
+            type="text"
+            value={keyword}
+            onChange={e => setKeyword(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleStart();
+              }
+            }}
+            placeholder="e.g. potassium, insulin..."
+            className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 mb-2 focus:ring-brand-500 focus:border-brand-500"
+          />
+
+          {/* Status Indicator */}
+          {matchedCount !== null && (
+            <div className="flex items-center gap-2 mt-1">
+              <span className="flex w-2 h-2 rounded-full bg-brand-500"></span>
+              <span className="text-xs text-brand-300">
+                {matchedCount} matching questions found
+              </span>
+            </div>
+          )}
+        </div>
           <div className="mb-4 p-3 bg-gray-800 rounded-lg border border-brand-500/30">
             <h4 className="text-xs font-semibold text-brand-400 mb-2">Global Knowledge Search</h4>
 
@@ -396,17 +411,16 @@ export default function Sidebar({
               className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 mb-2 focus:ring-brand-500 focus:border-brand-500"
             />
 
-            {/* Status Indicator */}
-            {matchedCount !== null && (
-              <div className="flex items-center gap-2 mt-1">
-                <span className="flex w-2 h-2 rounded-full bg-brand-500"></span>
-                <span className="text-xs text-brand-300">
-                  {matchedCount} matching questions found
-                </span>
-              </div>
-            )}
-          </div>
-        )}
+          {/* Status Indicator */}
+          {matchedCount !== null && (
+            <div className="flex items-center gap-2 mt-1">
+              <span className="flex w-2 h-2 rounded-full bg-brand-500"></span>
+              <span className="text-xs text-brand-300">
+                {matchedCount} matching questions found
+              </span>
+            </div>
+          )}
+        </div>
 
         {/* Global Quiz Settings */}
 
@@ -496,14 +510,14 @@ export default function Sidebar({
           <label className="block text-xs text-gray-400 mb-1">
             {mode === 'target'
               ? `Target Correct: ${questionCount}`
-              : `Questions: ${questionCount} ${maxQuestions > 0 ? `(max ${maxQuestions})` : ''}`
+              : `Questions: ${questionCount} ${matchedCount ? `(max ${matchedCount})` : ''}`
             }
           </label>
           <input
             type="range"
             min={1}
-            max={mode === 'target' ? 100 : Math.max(maxQuestions, 1)}
-            value={mode === 'target' ? questionCount : Math.min(questionCount, maxQuestions || 1)}
+            max={mode === 'target' ? 100 : Math.max(matchedCount || 100, 1)}
+            value={mode === 'target' ? questionCount : Math.min(questionCount, matchedCount || 100)}
             onChange={e => setQuestionCount(Number(e.target.value))}
             className="w-full mb-3 accent-brand-500"
           />
@@ -541,8 +555,8 @@ export default function Sidebar({
 
           {/* Start Button */}
           <button
-            onClick={() => handleStart(!selectedSubject)}
-            disabled={selectedSubject ? false : (matchedCount === 0)}
+            onClick={() => handleStart()}
+            disabled={matchedCount === 0 && keyword !== ''}
             className="w-full py-3 mb-2 bg-gradient-to-r from-brand-600 to-purple-600 text-white font-bold rounded-xl
                        hover:from-brand-500 hover:to-purple-500 transition-all disabled:opacity-40 disabled:cursor-not-allowed
                        flex items-center justify-center gap-2 text-sm shadow-lg hover:shadow-brand-500/25"
@@ -552,15 +566,13 @@ export default function Sidebar({
           </button>
 
           {/* Process Offline Button */}
-          {!selectedSubject && (
-            <button
-              onClick={handleProcessRemote}
-              disabled={matchedCount === 0}
-              className="w-full py-2 bg-brand-800 hover:bg-brand-700 text-white rounded-lg text-sm disabled:opacity-50 transition-colors border border-brand-600 flex items-center justify-center gap-2 shadow-lg"
-            >
-              <Database size={16} /> Process (Offline Preparation)
-            </button>
-          )}
+          <button
+            onClick={handleProcessRemote}
+            disabled={matchedCount === 0 && keyword !== ''}
+            className="w-full py-2 bg-brand-800 hover:bg-brand-700 text-white rounded-lg text-sm disabled:opacity-50 transition-colors border border-brand-600 flex items-center justify-center gap-2 shadow-lg"
+          >
+            <Database size={16} /> Process (Offline Preparation)
+          </button>
         </div>
 
       {/* Auto-save indicator */}

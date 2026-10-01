@@ -1,7 +1,7 @@
-node_modules/
-dist/
-__pycache__/
-*.pyc
-mcq/mcq_ui-output.xml
-data/
-server_output.log
+node_modules
+dist
+.env
+.DS_Store
+*.log
+*.tmp
+/home/jules/verification

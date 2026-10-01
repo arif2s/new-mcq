@@ -1,4 +1,4 @@
-import SourceManager from "./components/SourceManager";
+import SettingsView from "./components/SettingsView";
 import { useState, useCallback, useEffect } from 'react';
 import { Menu, X, HelpCircle } from 'lucide-react';
 import Sidebar from './components/Sidebar';
@@ -457,7 +457,7 @@ export default function App() {
     if (currentView === 'habits') return <HabitTracker persistence={persistence} />;
     if (currentView === 'queue') return <QueueStatus />;
     if (currentView === 'expertise') return <ExpertiseMap persistence={persistence} />;
-    if (currentView === 'sources') return <SourceManager />;
+    if (currentView === 'settings') return <SettingsView />;
     if (currentView === 'review') {
       return (
         <ReviewQueue
