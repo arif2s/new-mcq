@@ -18,8 +18,16 @@ class ConnectionManager:
             self.active_connections.remove(websocket)
 
     async def broadcast_task_update(self, task_id: int, status: str, topic: str):
-        """Pushes a notification to the UI when a background RAG synthesis finishes."""
         message = json.dumps({"event": "TASK_UPDATE", "task_id": task_id, "status": status, "topic": topic})
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(message)
+            except Exception as e:
+                logger.error(f"Failed to send WS message: {e}")
+                self.disconnect(connection)
+
+    async def broadcast_indexing_progress(self, progress: int, message_str: str):
+        message = json.dumps({"event": "INDEXING_PROGRESS", "progress": progress, "message": message_str})
         for connection in self.active_connections:
             try:
                 await connection.send_text(message)

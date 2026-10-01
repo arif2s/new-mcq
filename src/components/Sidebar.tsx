@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, useEffect } from 'react';
 import {
   Upload, BookOpen, Brain, BarChart3, Calendar, Database,
   Settings, ChevronDown, Play, Download, Trash2, FileText, CheckCircle, ClipboardList
@@ -29,6 +29,7 @@ export default function Sidebar({
 }: SidebarProps) {
   const [selectedSubject, setSelectedSubject] = useState('');
   const [topicFilter, setTopicFilter] = useState('all');
+  const [remoteTopicFilter, setRemoteTopicFilter] = useState<string[]>([]);
   const [questionOrder, setQuestionOrder] = useState<'sequential' | 'random'>('random');
   const [questionCount, setQuestionCount] = useState(10);
   const [timeLimitMinutes, setTimeLimitMinutes] = useState(0);
@@ -37,6 +38,10 @@ export default function Sidebar({
   const [useSpacedRepetition, setUseSpacedRepetition] = useState(true);
   const [uploadError, setUploadError] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+  const [remoteTopics, setRemoteTopics] = useState<{topic: string, count: number}[]>([]);
+  useEffect(() => {
+    fetch('/api/mcq/topics').then(res => res.json()).then(data => setRemoteTopics(data)).catch(console.error);
+  }, []);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -129,6 +134,7 @@ export default function Sidebar({
     { id: 'sources', icon: Database, label: 'Knowledge Vault' },
     { id: 'review', icon: ClipboardList, label: 'Review Queue' },
     { id: 'dashboard', icon: BarChart3, label: 'Dashboard' },
+    { id: 'queue', icon: Database, label: 'Processing Queue' },
     { id: 'habits', icon: Calendar, label: 'Habit Tracker' },
     { id: 'expertise', icon: Brain, label: 'Expertise Map' },
   ];
@@ -200,6 +206,78 @@ export default function Sidebar({
       </div>
 
       {/* Quiz Config */}
+
+      <div className="mb-6">
+        <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Custom Server CSV Set</h3>
+        <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
+          <p className="text-sm text-gray-300 mb-2">Create a custom set from remote CSVs.</p>
+          <div className="max-h-40 overflow-y-auto mb-3 space-y-1">
+            {remoteTopics.map(t => (
+              <label key={t.topic} className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer p-1 hover:bg-gray-700 rounded">
+                <input type="checkbox" value={t.topic} onChange={(e) => {
+                  if (e.target.checked) setRemoteTopicFilter(prev => [...prev, t.topic]);
+                  else setRemoteTopicFilter(prev => prev.filter(x => x !== t.topic));
+                }} className="rounded bg-gray-900 border-gray-600 text-brand-500 focus:ring-brand-500" />
+                <span className="flex-1 truncate">{t.topic}</span>
+                <span className="text-gray-500 text-xs">({t.count})</span>
+              </label>
+            ))}
+          </div>
+          <button
+            disabled={remoteTopicFilter.length === 0}
+            onClick={async () => {
+              try {
+                const res = await fetch('/api/mcq/generate_set', {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({topics: remoteTopicFilter, count: questionCount})
+                });
+                const data = await res.json();
+                if (data.status === 'success' && data.questions.length > 0) {
+                  onAddSubject('Remote Set', 'remote.csv', data.questions);
+                  setSelectedSubject('Remote Set');
+                  setRemoteTopicFilter([]);
+                } else {
+                  alert('No questions found or failed to load.');
+                }
+              } catch (e) {
+                console.error(e);
+                alert('Error loading questions');
+              }
+            }}
+            className="w-full py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm disabled:opacity-50 transition-colors">
+            Load into Subject
+          </button>
+          <button
+            disabled={remoteTopicFilter.length === 0}
+            onClick={async () => {
+              try {
+                const res = await fetch('/api/mcq/generate_set', {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({topics: remoteTopicFilter, count: questionCount})
+                });
+                const data = await res.json();
+                if (data.status === 'success' && data.questions.length > 0) {
+                  const prepRes = await fetch('/api/queue/prepare', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({questions: data.questions})
+                  });
+                  if (prepRes.ok) {
+                    alert('Questions queued for preparation!');
+                  }
+                }
+              } catch (e) {
+                console.error(e);
+              }
+            }}
+            className="w-full mt-2 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg text-sm disabled:opacity-50 transition-colors">
+            Prepare Selected Topics (Process offline)
+          </button>
+        </div>
+      </div>
+
       {subjects.length > 0 && (
         <div className="p-4 border-b border-gray-700 flex-1 overflow-y-auto">
           <h3 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
