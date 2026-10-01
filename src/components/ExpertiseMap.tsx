@@ -23,7 +23,7 @@ export default function ExpertiseMap({ persistence }: ExpertiseMapProps) {
     const counts = { beginner: 0, intermediate: 0, advanced: 0, expert: 0 };
     const recs: TopicExpertise[] = [];
 
-    for (const exp of topicExpertise) {
+    for (const exp of Object.values(topicExpertise)) {
       // 1. Group by subject
       if (!groups[exp.subject]) groups[exp.subject] = [];
       groups[exp.subject].push(exp);
@@ -54,7 +54,7 @@ export default function ExpertiseMap({ persistence }: ExpertiseMapProps) {
     };
   }, [topicExpertise]);
 
-  const totalTopics = topicExpertise.length;
+  const totalTopics = Object.keys(topicExpertise).length;
 
   return (
     <div className="max-w-6xl mx-auto p-6 animate-fade-in">

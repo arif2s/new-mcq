@@ -175,7 +175,7 @@ export interface AppPersistence {
   testResults: TestResult[];
   ankiCards: AnkiCard[];
   habitLog: HabitEntry[];
-  topicExpertise: TopicExpertise[];
+  topicExpertise: Record<string, TopicExpertise>;
   reviewQueue: ReviewQueueItem[];
   dailyTargets: DailyTargets;
   rankSimConfigs: RankSimConfig[];
