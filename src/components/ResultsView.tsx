@@ -7,7 +7,7 @@ import RankSimCard from './RankSimCard';
 interface ResultsViewProps {
   result: TestResult;
   questions: QuizQuestion[];
-  topicExpertise: TopicExpertise[];
+  topicExpertise: Record<string, TopicExpertise>;
   rankConfigs: RankSimConfig[];
   onRetake: () => void;
   onGoHome: () => void;
@@ -361,11 +361,11 @@ export default function ResultsView({
       </div>
 
       {/* Expertise Levels */}
-      {topicExpertise.length > 0 && (
+      {Object.keys(topicExpertise).length > 0 && (
         <div className="bg-gray-800/60 rounded-xl p-6 border border-gray-700 mb-8">
           <h3 className="text-lg font-semibold text-gray-200 mb-4">📊 Your Expertise Levels</h3>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            {topicExpertise
+            {Object.values(topicExpertise)
               .filter(e => e.subject === result.subjectName)
               .map(exp => {
                 const levelColors: Record<string, string> = {

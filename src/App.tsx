@@ -84,12 +84,20 @@ export default function App() {
   }, []);
 
   const handleRemoveSubject = useCallback((name: string) => {
-    setPersistence(prev => ({
-      ...prev,
-      subjects: prev.subjects.filter(s => s.name !== name),
-      ankiCards: prev.ankiCards.filter(c => c.subjectName !== name),
-      topicExpertise: prev.topicExpertise.filter(e => e.subject !== name),
-    }));
+    setPersistence(prev => {
+      const newExpertise = { ...prev.topicExpertise };
+      for (const key of Object.keys(newExpertise)) {
+        if (newExpertise[key].subject === name) {
+          delete newExpertise[key];
+        }
+      }
+      return {
+        ...prev,
+        subjects: prev.subjects.filter(s => s.name !== name),
+        ankiCards: prev.ankiCards.filter(c => c.subjectName !== name),
+        topicExpertise: newExpertise,
+      };
+    });
   }, []);
 
   const handleStartQuiz = useCallback((config: QuizConfig) => {

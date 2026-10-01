@@ -8,7 +8,7 @@ export function getDefaultPersistence(): AppPersistence {
     testResults: [],
     ankiCards: [],
     habitLog: [],
-    topicExpertise: [],
+    topicExpertise: {},
     reviewQueue: [],
     dailyTargets: {
       questionsTarget: 20,
@@ -66,6 +66,16 @@ export function loadPersistence(): AppPersistence {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return getDefaultPersistence();
     const data = JSON.parse(raw) as AppPersistence;
+
+    // Migration: convert array topicExpertise to Record
+    if (Array.isArray(data.topicExpertise)) {
+      const migratedExpertise: Record<string, TopicExpertise> = {};
+      for (const exp of data.topicExpertise) {
+        migratedExpertise[`${exp.subject}_${exp.topic}`] = exp;
+      }
+      data.topicExpertise = migratedExpertise;
+    }
+
     return { ...getDefaultPersistence(), ...data };
   } catch {
     return getDefaultPersistence();
@@ -330,8 +340,8 @@ export function updateTopicExpertise(
   attempted: number,
   correct: number
 ): AppPersistence {
-  const newTopicExpertise = [...persistence.topicExpertise];
-  const idx = newTopicExpertise.findIndex(e => e.topic === topic && e.subject === subject);
+  const key = `${subject}_${topic}`;
+  const existing = persistence.topicExpertise[key];
 
   const accuracy = attempted > 0 ? (correct / attempted) * 100 : 0;
   const level: TopicExpertise['level'] =
@@ -339,26 +349,35 @@ export function updateTopicExpertise(
     accuracy >= 70 ? 'advanced' :
     accuracy >= 50 ? 'intermediate' : 'beginner';
 
-  if (idx === -1) {
-    newTopicExpertise.push({
+  let newEntry: TopicExpertise;
+
+  if (!existing) {
+    newEntry = {
       topic, subject, totalQuestions: totalInTopic,
       attempted, correct, accuracy, level,
       trend: 'stable', lastAttemptDate: getTodayString(),
-    });
+    };
   } else {
-    const existing = { ...newTopicExpertise[idx] };
     const prevAccuracy = existing.accuracy;
-    existing.attempted = Math.max(existing.attempted, attempted);
-    existing.correct = Math.max(existing.correct, correct);
-    existing.accuracy = accuracy;
-    existing.level = level;
-    existing.totalQuestions = totalInTopic;
-    existing.lastAttemptDate = getTodayString();
-    existing.trend = accuracy > prevAccuracy ? 'improving' : accuracy < prevAccuracy ? 'declining' : 'stable';
-    newTopicExpertise[idx] = existing;
+    newEntry = {
+      ...existing,
+      attempted: Math.max(existing.attempted, attempted),
+      correct: Math.max(existing.correct, correct),
+      accuracy,
+      level,
+      totalQuestions: totalInTopic,
+      lastAttemptDate: getTodayString(),
+      trend: accuracy > prevAccuracy ? 'improving' : accuracy < prevAccuracy ? 'declining' : 'stable',
+    };
   }
 
-  return { ...persistence, topicExpertise: newTopicExpertise };
+  return {
+    ...persistence,
+    topicExpertise: {
+      ...persistence.topicExpertise,
+      [key]: newEntry
+    }
+  };
 }
 
 export function getDayStats(persistence: AppPersistence, date: string) {
