@@ -131,3 +131,37 @@ def generate_set(req: GenerateSetRequest):
     if req.count > 0 and len(questions) > req.count:
         questions = random.sample(questions, req.count)
     return {"status": "success", "questions": questions}
+
+import urllib.request
+import urllib.error
+from config import LM_STUDIO_URL
+from server.routes_csv_loader import load_csvs_background
+
+@router.get("/db_status")
+def get_db_status():
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as count FROM csv_questions")
+            row = cursor.fetchone()
+            return {"status": "success", "exists": row["count"] > 0, "count": row["count"]}
+    except Exception as e:
+        return {"status": "success", "exists": False, "count": 0}
+
+@router.post("/build_db")
+def build_db():
+    load_csvs_background()
+    return {"status": "success", "message": "Database generation started."}
+
+@router.get("/diagnostics/lm_studio")
+def check_lm_studio():
+    try:
+        url = LM_STUDIO_URL.replace("/v1", "/v1/models") if LM_STUDIO_URL.endswith("/v1") else LM_STUDIO_URL + "/models"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=5) as response:
+            if response.status == 200:
+                return {"status": "success", "message": "LM Studio is reachable."}
+            else:
+                return {"status": "error", "message": f"LM Studio returned status {response.status}."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
