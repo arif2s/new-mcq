@@ -184,17 +184,19 @@ export function updateHabitLog(
 
 export function addToReviewQueue(
   persistence: AppPersistence,
-  item: Omit<ReviewQueueItem, 'id' | 'dateAdded' | 'reviewed'>
+  item: Omit<ReviewQueueItem, 'id' | 'dateAdded' | 'addedTimestamp' | 'reviewed'>
 ): AppPersistence {
   const exists = persistence.reviewQueue.some(
     r => r.questionId === item.questionId && r.subjectName === item.subjectName
   );
   if (exists) return persistence;
 
+  const now = Date.now();
   const newItem: ReviewQueueItem = {
     ...item,
-    id: `review_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
-    dateAdded: new Date().toISOString(),
+    id: `review_${now}_${Math.random().toString(36).substring(2, 11)}`,
+    dateAdded: new Date(now).toISOString(),
+    addedTimestamp: now,
     reviewed: false,
   };
 
