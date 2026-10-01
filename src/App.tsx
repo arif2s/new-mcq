@@ -281,9 +281,11 @@ export default function App() {
         updated = updateTopicExpertise(updated, topic, prevQuiz.config.subjectName, stats.total, stats.attempted, stats.correct);
       }
 
+      const questionMap = new Map(prevQuiz.questions.map(q => [q.id, q]));
+
       for (const ans of validAnswers) {
         if (!ans.isCorrect) {
-          const q = prevQuiz.questions.find(qq => qq.id === ans.questionId);
+          const q = questionMap.get(ans.questionId);
           if (q) {
             updated = addToReviewQueue(updated, {
               questionId: q.id,
