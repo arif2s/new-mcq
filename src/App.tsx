@@ -296,7 +296,6 @@ export default function App() {
               userAnswer: ans.selected as OptionKey | "",
               explanation: q.explanation,
               options: { a: q.option_a, b: q.option_b, c: q.option_c, d: q.option_d },
-              addedTimestamp: Date.now(), // Fix typescript issue missing addedTimestamp
             });
           }
         }
