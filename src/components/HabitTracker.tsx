@@ -124,10 +124,44 @@ export default function HabitTracker({ persistence }: HabitTrackerProps) {
               {streakDays > 0 ? `${streakDays} Day Streak! 🔥` : 'Start Your Streak Today! 💪'}
             </h2>
             <p className="text-gray-400">
-              {streakDays >= 30 ? 'Incredible consistency! You\'re a learning machine!' :
-               streakDays >= 7 ? 'Amazing! Keep the momentum going!' :
-               streakDays >= 3 ? 'Great start! Consistency is key!' :
-               'Every journey starts with a single step.'}
+              {(() => {
+                const pickRandom = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
+                if (streakDays >= 100) return pickRandom([
+                  "Century club! Your dedication is truly inspiring.",
+                  "100+ days! You are the definition of consistency.",
+                  "An absolute masterclass in habit building."
+                ]);
+                if (streakDays >= 30) return pickRandom([
+                  "Incredible consistency! You're a learning machine!",
+                  "A whole month! Your habit is officially cemented.",
+                  "Unstoppable! Keep this amazing momentum going."
+                ]);
+                if (streakDays >= 14) return pickRandom([
+                  "Two weeks strong! You're making real progress.",
+                  "Halfway to a month! Keep showing up.",
+                  "Fantastic work building this habit."
+                ]);
+                if (streakDays >= 7) return pickRandom([
+                  "A full week! Amazing! Keep the momentum going!",
+                  "7 days straight! You're building a solid foundation.",
+                  "Great job maintaining the streak for a week!"
+                ]);
+                if (streakDays >= 3) return pickRandom([
+                  "Great start! Consistency is key!",
+                  "You're on a roll! Don't break the chain.",
+                  "3 days in! Keep the fire burning."
+                ]);
+                if (streakDays > 0) return pickRandom([
+                  "You've started! Keep it up tomorrow.",
+                  "The journey of a thousand miles begins with a single step.",
+                  "Good work today. See you tomorrow!"
+                ]);
+                return pickRandom([
+                  "Every journey starts with a single step.",
+                  "Today is a great day to start a new streak.",
+                  "Ready to build a learning habit?"
+                ]);
+              })()}
             </p>
           </div>
         </div>

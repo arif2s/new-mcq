@@ -67,16 +67,122 @@ export default function HomeView({ persistence, onNavigate, onUpdateTargets }: H
     // Motivation Generator
     const getMotivation = () => {
       const questionsExceeded = todayStats.questionsAnswered - dailyTargets.questionsTarget;
-      if (questionsExceeded >= dailyTargets.questionsTarget) return { emoji: '🚀', text: `Incredible! You've done 2x your daily target! Consider taking a break.`, color: 'text-purple-400' };
-      if (allTargetsMet && streakDays >= 30) return { emoji: '👑', text: "A month-long streak with all targets met! You're unstoppable!", color: 'text-warning-500' };
-      if (streakDays >= 7 && allTargetsMet) return { emoji: '🔥', text: "You're on fire! A week-long streak and all targets crushed!", color: 'text-warning-500' };
-      if (allTargetsMet) return { emoji: '🏆', text: "All daily targets completed! You're a champion! Take a well-deserved break.", color: 'text-success-500' };
-      if (questionsTargetMet && !correctTargetMet) return { emoji: '📚', text: `Questions done! Focus on accuracy - ${dailyTargets.correctTarget - todayStats.correctAnswers} more correct needed.`, color: 'text-brand-400' };
-      if (questionsProgress >= 75) return { emoji: '🎯', text: `Almost there! Just ${Math.max(0, dailyTargets.questionsTarget - todayStats.questionsAnswered)} more questions to hit your target!`, color: 'text-brand-400' };
-      if (questionsProgress >= 50) return { emoji: '💪', text: `Halfway there! ${Math.max(0, dailyTargets.questionsTarget - todayStats.questionsAnswered)} more questions to go.`, color: 'text-brand-400' };
-      if (todayStats.questionsAnswered > 0) return { emoji: '👍', text: "Great start! Keep the momentum going.", color: 'text-brand-400' };
-      if (!yesterdayMetQuestions || !yesterdayMetCorrect) return { emoji: '🎯', text: "Yesterday's targets weren't met. Today is a fresh start!", color: 'text-warning-500' };
-      return { emoji: '☀️', text: "Ready to learn? Start your first quiz of the day!", color: 'text-gray-400' };
+      const pickRandom = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
+      const hour = new Date().getHours();
+
+      let greeting = "Ready to learn?";
+      let emoji = "☀️";
+      if (hour < 12) {
+        greeting = pickRandom(["Good morning! Let's get some learning done.", "Rise and shine! Ready for today's goals?", "Morning! Time to crush those targets."]);
+        emoji = pickRandom(["🌅", "☕", "🌤️"]);
+      } else if (hour < 18) {
+        greeting = pickRandom(["Good afternoon! Keep the momentum going.", "Afternoon! A great time for a quick quiz.", "Halfway through the day!"]);
+        emoji = pickRandom(["☀️", "😎", "🚀"]);
+      } else {
+        greeting = pickRandom(["Good evening! Wrap up the day with some learning.", "Evening! Perfect time to review.", "Late night study session?"]);
+        emoji = pickRandom(["🌙", "🦉", "✨"]);
+      }
+
+      if (questionsExceeded >= dailyTargets.questionsTarget && dailyTargets.questionsTarget > 0) {
+        return {
+          emoji: pickRandom(['🚀', '🤯', '🌟']),
+          text: pickRandom([
+            `Incredible! You've done 2x your daily target! Consider taking a break.`,
+            `Overachiever alert! Doubled your target for today.`,
+            `Going above and beyond! You've crushed your goal twice over.`
+          ]),
+          color: 'text-purple-400'
+        };
+      }
+      if (allTargetsMet && streakDays >= 30) {
+        return {
+          emoji: pickRandom(['👑', '💎', '🌟']),
+          text: pickRandom([
+            "A month-long streak with all targets met! You're unstoppable!",
+            "Legendary! 30+ days of pure dedication.",
+            "Consistency is your superpower. Incredible 30+ day streak!"
+          ]),
+          color: 'text-warning-500'
+        };
+      }
+      if (streakDays >= 7 && allTargetsMet) {
+        return {
+          emoji: pickRandom(['🔥', '⭐', '⚡']),
+          text: pickRandom([
+            "You're on fire! A week-long streak and all targets crushed!",
+            "7+ days strong! Your dedication is showing.",
+            "Another week, another set of targets destroyed!"
+          ]),
+          color: 'text-warning-500'
+        };
+      }
+      if (allTargetsMet) {
+        return {
+          emoji: pickRandom(['🏆', '🎉', '🙌']),
+          text: pickRandom([
+            "All daily targets completed! You're a champion! Take a well-deserved break.",
+            "Targets met! Great job today.",
+            "Mission accomplished! You hit all your goals for today."
+          ]),
+          color: 'text-success-500'
+        };
+      }
+      if (questionsTargetMet && !correctTargetMet) {
+        return {
+          emoji: pickRandom(['📚', '🎯', '🧠']),
+          text: pickRandom([
+            `Questions done! Focus on accuracy - ${dailyTargets.correctTarget - todayStats.correctAnswers} more correct needed.`,
+            `Volume target reached! Now let's get ${dailyTargets.correctTarget - todayStats.correctAnswers} more right answers.`,
+            `You've put in the reps! Focus on precision to hit that accuracy goal.`
+          ]),
+          color: 'text-brand-400'
+        };
+      }
+      if (questionsProgress >= 75) {
+        return {
+          emoji: pickRandom(['🎯', '🏃', '💨']),
+          text: pickRandom([
+            `Almost there! Just ${Math.max(0, dailyTargets.questionsTarget - todayStats.questionsAnswered)} more questions to hit your target!`,
+            `The finish line is in sight! Only ${Math.max(0, dailyTargets.questionsTarget - todayStats.questionsAnswered)} left.`,
+            `So close! Push through for those last ${Math.max(0, dailyTargets.questionsTarget - todayStats.questionsAnswered)} questions.`
+          ]),
+          color: 'text-brand-400'
+        };
+      }
+      if (questionsProgress >= 50) {
+        return {
+          emoji: pickRandom(['💪', '⚖️', '📈']),
+          text: pickRandom([
+            `Halfway there! ${Math.max(0, dailyTargets.questionsTarget - todayStats.questionsAnswered)} more questions to go.`,
+            `You're at the midpoint! Keep up the great pace.`,
+            `50% done! The second half is where champions are made.`
+          ]),
+          color: 'text-brand-400'
+        };
+      }
+      if (todayStats.questionsAnswered > 0) {
+        return {
+          emoji: pickRandom(['👍', '🌱', '🚀']),
+          text: pickRandom([
+            "Great start! Keep the momentum going.",
+            "You've taken the first step today. Let's keep moving!",
+            "Good progress. Every question counts!"
+          ]),
+          color: 'text-brand-400'
+        };
+      }
+      if (!yesterdayMetQuestions || !yesterdayMetCorrect) {
+        return {
+          emoji: pickRandom(['🎯', '🌅', '💪']),
+          text: pickRandom([
+            "Yesterday's targets weren't met. Today is a fresh start!",
+            "Let's bounce back! Make today better than yesterday.",
+            "New day, new opportunity to hit those targets!"
+          ]),
+          color: 'text-warning-500'
+        };
+      }
+      return { emoji, text: greeting, color: 'text-gray-400' };
     };
 
     // O(1) Hourly Data Generation
