@@ -103,4 +103,41 @@ def initialize_database():
         ''')
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_csv_topic ON csv_questions(topic_name);")
 
+        # FTS5 Virtual Table for fast keyword searching
+        # We index question and options, but explicitly NOT explanation
+        cursor.execute('''
+            CREATE VIRTUAL TABLE IF NOT EXISTS csv_questions_fts USING fts5(
+                id UNINDEXED,
+                question,
+                opt_a,
+                opt_b,
+                opt_c,
+                opt_d,
+                content='csv_questions',
+                content_rowid='rowid'
+            )
+        ''')
+
+        # Triggers to keep FTS table in sync with csv_questions
+        cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS csv_questions_ai AFTER INSERT ON csv_questions BEGIN
+                INSERT INTO csv_questions_fts(rowid, id, question, opt_a, opt_b, opt_c, opt_d)
+                VALUES (new.rowid, new.id, new.question, new.opt_a, new.opt_b, new.opt_c, new.opt_d);
+            END;
+        ''')
+        cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS csv_questions_ad AFTER DELETE ON csv_questions BEGIN
+                INSERT INTO csv_questions_fts(csv_questions_fts, rowid, id, question, opt_a, opt_b, opt_c, opt_d)
+                VALUES('delete', old.rowid, old.id, old.question, old.opt_a, old.opt_b, old.opt_c, old.opt_d);
+            END;
+        ''')
+        cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS csv_questions_au AFTER UPDATE ON csv_questions BEGIN
+                INSERT INTO csv_questions_fts(csv_questions_fts, rowid, id, question, opt_a, opt_b, opt_c, opt_d)
+                VALUES('delete', old.rowid, old.id, old.question, old.opt_a, old.opt_b, old.opt_c, old.opt_d);
+                INSERT INTO csv_questions_fts(rowid, id, question, opt_a, opt_b, opt_c, opt_d)
+                VALUES (new.rowid, new.id, new.question, new.opt_a, new.opt_b, new.opt_c, new.opt_d);
+            END;
+        ''')
+
         conn.commit()
