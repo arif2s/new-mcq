@@ -74,4 +74,33 @@ def initialize_database():
             )
         """)
 
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS knowledge_sources (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                path TEXT NOT NULL,
+                enabled INTEGER DEFAULT 1,
+                itemCount INTEGER DEFAULT 0,
+                lastIndexed TEXT DEFAULT 'Never'
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS csv_questions (
+                id TEXT PRIMARY KEY,
+                file_path TEXT,
+                topic_name TEXT,
+                question TEXT,
+                opt_a TEXT,
+                opt_b TEXT,
+                opt_c TEXT,
+                opt_d TEXT,
+                correct_answer TEXT,
+                explanation TEXT
+            )
+        ''')
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_csv_topic ON csv_questions(topic_name);")
+
         conn.commit()

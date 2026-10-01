@@ -7,6 +7,7 @@ import QuizView from './components/QuizView';
 import ResultsView from './components/ResultsView';
 import Dashboard from './components/Dashboard';
 import HabitTracker from './components/HabitTracker';
+import QueueStatus from './components/QueueStatus';
 import ExpertiseMap from './components/ExpertiseMap';
 import HelpModal from './components/HelpModal';
 import ReviewQueue from './components/ReviewQueue';
@@ -445,6 +446,7 @@ export default function App() {
     }
     if (currentView === 'dashboard') return <Dashboard persistence={persistence} onUpdateRankConfigs={handleUpdateRankConfigs} />;
     if (currentView === 'habits') return <HabitTracker persistence={persistence} />;
+    if (currentView === 'queue') return <QueueStatus />;
     if (currentView === 'expertise') return <ExpertiseMap persistence={persistence} />;
     if (currentView === 'sources') return <SourceManager />;
     if (currentView === 'review') {
