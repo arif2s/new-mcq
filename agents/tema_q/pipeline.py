@@ -9,10 +9,12 @@ from parsers.docling_parser import extract_structured_layout
 from parsers.pdf_extractor import extract_page_slice
 from parsers.obsidian_reader import read_markdown_body
 from parsers.zim_reader import get_zim_article
+import json
 from agents.tema_q.prompts import (
     PASS1_CLINICAL_SYSTEM_PROMPT,
     PASS2_AUDIT_SYSTEM_PROMPT,
     DISTRACTOR_ANALYSIS_PROMPT,
+    TOPIC_EXTRACTION_SYSTEM_PROMPT,
     STOP_TOKENS,
 )
 from agents.tema_q.auditor import detect_clinical_variances
@@ -84,40 +86,58 @@ def _extract_pdf_sync(file_path: str, page: int) -> str:
     except Exception:
         return extract_page_slice(file_path, page)
 
-async def resolve_primary_and_secondary_docs(search_results: dict) -> Tuple[str, str]:
-    """Resolves primary and secondary reference documents asynchronously without blocking the loop."""
+async def extract_topics_from_mcq(question: str, options: dict) -> dict:
+    user_msg = (
+        f"Question: {question}\n"
+        f"Options:\n"
+        f"(A) {options.get('A', '')}\n"
+        f"(B) {options.get('B', '')}\n"
+        f"(C) {options.get('C', '')}\n"
+        f"(D) {options.get('D', '')}\n"
+    )
+    response = await call_llm_async(TOPIC_EXTRACTION_SYSTEM_PROMPT, user_msg, max_tokens=150)
+    try:
+        data = json.loads(response)
+        return data
+    except Exception as e:
+        logger.error(f"Failed to parse topic extraction JSON: {e} - Response: {response}")
+        return {"main_topic": "General Medical Concept", "all_topics": []}
+
+async def resolve_documents(search_results: dict) -> list:
+    """Resolves reference documents respecting limits: max 1 ZIM, max 2 PDF, max 2 Obsidian (diff folders)."""
     documents = []
 
-    # 1. PDF Parser (CPU-bound layout parser offloaded to worker thread)
-    if search_results.get("pdf"):
-        top_pdf = search_results["pdf"][0]
-        content = await asyncio.to_thread(_extract_pdf_sync, top_pdf["file_path"], top_pdf["page"])
-        if content:
-            documents.append(f"Source (PDF - {top_pdf.get('title')}):\n{content}")
-
-    # 2. Obsidian Markdown Parser (Disk I/O offloaded)
-    if search_results.get("obsidian"):
-        top_obs = search_results["obsidian"][0]
-        content = await asyncio.to_thread(read_markdown_body, top_obs["file_path"])
-        if content:
-            documents.append(f"Source (Obsidian - {top_obs.get('title')}):\n{content}")
-
-    # 3. LibZim C-binding reader (Disk & C-decompression offloaded)
     if search_results.get("zim"):
         top_zim = search_results["zim"][0]
         content = await asyncio.to_thread(get_zim_article, top_zim["file_path"], top_zim.get("title", ""))
         if content:
             documents.append(f"Source (ZIM - {top_zim.get('title')}):\n{content}")
 
-    return (
-        documents[0] if len(documents) > 0 else "",
-        documents[1] if len(documents) > 1 else "",
-    )
+    if search_results.get("pdf"):
+        for top_pdf in search_results["pdf"][:2]:
+            content = await asyncio.to_thread(_extract_pdf_sync, top_pdf["file_path"], top_pdf["page"])
+            if content:
+                documents.append(f"Source (PDF - {top_pdf.get('title')} - Page {top_pdf.get('page')}):\n{content}")
+
+    if search_results.get("obsidian"):
+        used_folders = set()
+        for top_obs in search_results["obsidian"]:
+            if len(used_folders) >= 2:
+                break
+            folder = top_obs.get("file_path", "").rsplit("/", 1)[0]
+            if folder in used_folders:
+                continue
+            content = await asyncio.to_thread(read_markdown_body, top_obs["file_path"])
+            if content:
+                documents.append(f"Source (Obsidian - {top_obs.get('title')}):\n{content}")
+                used_folders.add(folder)
+
+    return documents
 
 async def run_tema_q_synthesis(topic: str, search_results: dict, mcq_context: dict = None) -> dict:
-    doc1_content, doc2_content = await resolve_primary_and_secondary_docs(search_results)
+    documents = await resolve_documents(search_results)
 
-    if not doc1_content and not doc2_content:
+    if not documents:
         return {
             "enhanced_explanation": "No local reference files found.",
             "distractor_analysis": "N/A",
@@ -125,27 +145,32 @@ async def run_tema_q_synthesis(topic: str, search_results: dict, mcq_context: di
         }
 
     # Strict token reservation: Pass 1
+    doc1_content = documents[0]
     doc1_budget = 2000
-    doc2_budget = 1200
     bounded_doc1 = truncate_to_token_limit(doc1_content, doc1_budget)
 
     pass1_user_msg = f"Clinical Topic: {topic}\n\nPrimary Reference:\n{bounded_doc1}"
     base_note = await call_llm_async(PASS1_CLINICAL_SYSTEM_PROMPT, pass1_user_msg, 350)
 
-    # Pass 2: Auditing with dynamic context limits
-    if doc2_content:
-        used_tokens = count_tokens(base_note) + count_tokens(PASS2_AUDIT_SYSTEM_PROMPT) + 150
-        dynamic_doc2_budget = min(doc2_budget, MAX_CONTEXT_TOKENS - used_tokens - 600)
-        bounded_doc2 = truncate_to_token_limit(doc2_content, max(dynamic_doc2_budget, 400))
+    final_article = base_note
+    discrepancy_report_all = ""
 
-        pass2_user_msg = f"Topic: {topic}\n\nBaseline Note:\n{base_note}\n\nSecondary Reference:\n{bounded_doc2}"
+    # Pass 2+: Iterative Breadth-First Micro-editing
+    doc_budget = 1200
+    for doc_content in documents[1:]:
+        used_tokens = count_tokens(final_article) + count_tokens(PASS2_AUDIT_SYSTEM_PROMPT) + 150
+        dynamic_doc_budget = min(doc_budget, MAX_CONTEXT_TOKENS - used_tokens - 600)
+        bounded_doc = truncate_to_token_limit(doc_content, max(dynamic_doc_budget, 400))
+
+        pass2_user_msg = f"Topic: {topic}\n\nBaseline Note:\n{final_article}\n\nSecondary Reference:\n{bounded_doc}"
         final_article = await call_llm_async(PASS2_AUDIT_SYSTEM_PROMPT, pass2_user_msg, 500)
 
-        discrepancy_report = detect_clinical_variances(base_note, bounded_doc2)
-        if discrepancy_report and "### Discrepancies & Variances" not in final_article:
-            final_article += f"\n\n### Discrepancies & Variances\n{discrepancy_report}"
-    else:
-        final_article = base_note
+        discrepancy_report = detect_clinical_variances(base_note, bounded_doc)
+        if discrepancy_report:
+             discrepancy_report_all += "\n" + discrepancy_report
+
+    if discrepancy_report_all and "### Discrepancies & Variances" not in final_article:
+        final_article += f"\n\n### Discrepancies & Variances\n{discrepancy_report_all}"
 
     # Pass 3: Distractor Audit (Optional)
     if mcq_context and mcq_context.get("options"):

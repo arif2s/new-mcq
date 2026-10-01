@@ -12,6 +12,7 @@ interface ResultsViewProps {
   onRetake: () => void;
   onGoHome: () => void;
   onPracticeWrong: () => void;
+  onStudyTopics: () => void;
 }
 
 export default function ResultsView({
@@ -22,6 +23,7 @@ export default function ResultsView({
   onRetake,
   onGoHome,
   onPracticeWrong,
+  onStudyTopics,
 }: ResultsViewProps) {
   const accuracy = result.accuracy;
   const grade =
@@ -397,8 +399,14 @@ export default function ResultsView({
       {/* Action Buttons */}
       <div className="flex flex-wrap gap-4 justify-center">
         <button
+          onClick={onStudyTopics}
+          className="flex items-center gap-2 px-6 py-3 bg-brand-600 text-white rounded-xl hover:bg-brand-500 transition-all font-medium shadow-lg hover:shadow-brand-500/25"
+        >
+          <BookOpen size={18} /> Study Topics Covered
+        </button>
+        <button
           onClick={onRetake}
-          className="flex items-center gap-2 px-6 py-3 bg-brand-600 text-white rounded-xl hover:bg-brand-500 transition-all font-medium"
+          className="flex items-center gap-2 px-6 py-3 bg-gray-800 text-white border border-gray-700 rounded-xl hover:bg-gray-700 transition-all font-medium"
         >
           <RotateCcw size={18} /> Retake Test
         </button>

@@ -118,6 +118,65 @@ def initialize_database():
             )
         ''')
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS quiz_sessions (
+                id TEXT PRIMARY KEY,
+                subject_name TEXT NOT NULL,
+                date TEXT NOT NULL,
+                timestamp REAL NOT NULL,
+                total_questions INTEGER NOT NULL,
+                correct_answers INTEGER NOT NULL,
+                wrong_answers INTEGER NOT NULL,
+                unanswered INTEGER NOT NULL,
+                score INTEGER NOT NULL,
+                max_score INTEGER NOT NULL,
+                accuracy REAL NOT NULL,
+                time_limit_seconds INTEGER,
+                time_used_seconds INTEGER NOT NULL,
+                mode TEXT NOT NULL,
+                is_completed INTEGER DEFAULT 1,
+                created_at REAL DEFAULT (unixepoch('now'))
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS session_questions (
+                session_id TEXT NOT NULL,
+                question_id TEXT NOT NULL,
+                selected_option TEXT,
+                is_correct INTEGER NOT NULL,
+                timed_out INTEGER NOT NULL,
+                time_spent_ms INTEGER NOT NULL,
+                timestamp REAL NOT NULL,
+                question_text TEXT,
+                opt_a TEXT,
+                opt_b TEXT,
+                opt_c TEXT,
+                opt_d TEXT,
+                correct_answer TEXT,
+                explanation TEXT,
+                topic TEXT,
+                FOREIGN KEY(session_id) REFERENCES quiz_sessions(id) ON DELETE CASCADE
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_session_questions_sid ON session_questions (session_id);")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS extracted_topics (
+                question_id TEXT NOT NULL,
+                topic_name TEXT NOT NULL,
+                is_main_topic INTEGER DEFAULT 0,
+                PRIMARY KEY (question_id, topic_name)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at REAL DEFAULT (unixepoch('now'))
+            )
+        """)
+
         # Triggers to keep FTS table in sync with csv_questions
         cursor.execute('''
             CREATE TRIGGER IF NOT EXISTS csv_questions_ai AFTER INSERT ON csv_questions BEGIN

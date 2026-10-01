@@ -10,7 +10,11 @@ import HabitTracker from './components/HabitTracker';
 import QueueStatus from './components/QueueStatus';
 import ExpertiseMap from './components/ExpertiseMap';
 import HelpModal from './components/HelpModal';
-import ReviewQueue from './components/ReviewQueue';
+import KnowledgeHub from './components/KnowledgeHub';
+import StudyNotesView from './components/StudyNotesView';
+import PreQuizModal from './components/PreQuizModal';
+import SessionReviewView from './components/SessionReviewView';
+import { fetchState, saveState, saveSession, fetchSessionHistory } from './api';
 import {
   loadPersistence,
   savePersistence,
@@ -50,14 +54,26 @@ export default function App() {
   const [persistence, setPersistence] = useState<AppPersistence>(() => loadPersistence());
   const [currentView, setCurrentView] = useState('home');
   const [activeQuiz, setActiveQuiz] = useState<ActiveQuiz | null>(null);
+  const [pendingQuiz, setPendingQuiz] = useState<ActiveQuiz | null>(null);
   const [lastResult, setLastResult] = useState<TestResult | null>(null);
   const [lastQuizQuestions, setLastQuizQuestions] = useState<QuizQuestion[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [isStateLoaded, setIsStateLoaded] = useState(false);
 
   useEffect(() => {
-    savePersistence(persistence);
-  }, [persistence]);
+    fetchState().then((state) => {
+      if (state) setPersistence(state);
+      setIsStateLoaded(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (isStateLoaded) {
+      savePersistence(persistence);
+      saveState(persistence);
+    }
+  }, [persistence, isStateLoaded]);
 
   const handleAddSubject = useCallback((name: string, fileName: string, questions: QuizQuestion[]) => {
     setPersistence(prev => {
@@ -132,7 +148,7 @@ export default function App() {
 
       if (pool.length > 0) {
         const now = Date.now();
-        setActiveQuiz({
+        const newQuiz = {
           config,
           questions: pool,
           currentIndex: 0,
@@ -147,13 +163,26 @@ export default function App() {
           correctCount: 0,
           wrongCount: 0,
           targetCorrect: config.mode === 'target' ? config.questionCount : null,
-        });
-        setLastResult(null);
-        setCurrentView('quiz');
+        };
+        setPendingQuiz(newQuiz);
       }
       return prev;
     });
   }, []);
+
+  const handleStartPendingQuiz = useCallback(() => {
+    if (pendingQuiz) {
+      setActiveQuiz({
+        ...pendingQuiz,
+        startTime: Date.now(),
+        questionStartTime: Date.now()
+      });
+      setLastResult(null);
+      setCurrentView('quiz');
+      setPendingQuiz(null);
+      setActiveSessionId(null);
+    }
+  }, [pendingQuiz]);
 
   const handleAnswer = useCallback((questionId: string, selected: string, timeSpentMs: number, timedOut: boolean) => {
     if (!activeQuiz || activeQuiz.answers[questionId]) return;
@@ -311,6 +340,7 @@ export default function App() {
       return updated;
     });
 
+    saveSession(result, prevQuiz.questions);
     setLastResult(result);
     setLastQuizQuestions(prevQuiz.questions);
     setCurrentView('results');
@@ -423,7 +453,42 @@ export default function App() {
   const handleUpdateTargets = useCallback((targets: DailyTargets) => setPersistence(prev => ({ ...prev, dailyTargets: targets })), []);
   const handleUpdateRankConfigs = useCallback((configs: RankSimConfig[]) => setPersistence(prev => ({ ...prev, rankSimConfigs: configs })), []);
 
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+
   const renderContent = () => {
+    if (currentView === 'study-notes' && pendingQuiz) {
+      // Show notes for pending quiz topics
+      return (
+        <StudyNotesView
+          sessionId=""
+          pendingTopics={pendingQuiz.questions.map(q => q.topic_name)}
+          onBack={() => setPendingQuiz(null)}
+          onStartQuiz={handleStartPendingQuiz}
+        />
+      );
+    }
+    if (currentView === 'study-notes' && activeSessionId) {
+      return (
+        <StudyNotesView
+          sessionId={activeSessionId}
+          onBack={() => {
+            setActiveSessionId(null);
+            setCurrentView('knowledge');
+          }}
+        />
+      );
+    }
+    if (currentView === 'session-review' && activeSessionId) {
+      return (
+        <SessionReviewView
+          sessionId={activeSessionId}
+          onBack={() => {
+            setActiveSessionId(null);
+            setCurrentView('knowledge');
+          }}
+        />
+      );
+    }
     if (currentView === 'quiz' && activeQuiz) {
       return (
         <QuizView
@@ -450,6 +515,10 @@ export default function App() {
           onRetake={handleRetake}
           onGoHome={handleGoHome}
           onPracticeWrong={handlePracticeWrongAnswers}
+          onStudyTopics={() => {
+            setActiveSessionId(lastResult.id);
+            setCurrentView('study-notes');
+          }}
         />
       );
     }
@@ -458,14 +527,31 @@ export default function App() {
     if (currentView === 'queue') return <QueueStatus />;
     if (currentView === 'expertise') return <ExpertiseMap persistence={persistence} />;
     if (currentView === 'settings') return <SettingsView />;
-    if (currentView === 'review') {
+    if (currentView === 'knowledge') {
       return (
-        <ReviewQueue
+        <KnowledgeHub
           persistence={persistence}
-          onMarkReviewed={handleMarkReviewed}
-          onRemoveItem={handleRemoveReviewItem}
-          onClearAll={handleClearReviewQueue}
-          onUpdateLimit={handleUpdateReviewLimit}
+          onNavigate={handleNavigate}
+          onStudyTopics={(sessionId) => {
+            setActiveSessionId(sessionId);
+            setCurrentView('study-notes');
+          }}
+          onReviewExplanations={(sessionId) => {
+            setActiveSessionId(sessionId);
+            setCurrentView('session-review');
+          }}
+          onRetakeSet={(session) => {
+            handleStartQuiz({
+              subjectName: session.subject_name,
+              topicFilter: 'all',
+              questionOrder: 'random',
+              questionCount: session.total_questions,
+              timeLimitMinutes: session.time_limit_seconds ? session.time_limit_seconds / 60 : 0,
+              questionTimeoutMinutes: 5,
+              mode: session.mode as any,
+              useSpacedRepetition: true,
+            });
+          }}
         />
       );
     }
@@ -474,6 +560,14 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen bg-gray-950">
+      {pendingQuiz && currentView !== 'study-notes' && (
+        <PreQuizModal
+          config={pendingQuiz.config}
+          onStudyFirst={() => setCurrentView('study-notes')}
+          onStartQuiz={handleStartPendingQuiz}
+          onCancel={() => setPendingQuiz(null)}
+        />
+      )}
       <button
         onClick={() => setSidebarOpen(!sidebarOpen)}
         className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-gray-800 rounded-lg border border-gray-700 text-gray-300 hover:text-white"

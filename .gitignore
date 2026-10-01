@@ -5,3 +5,14 @@ dist
 *.log
 *.tmp
 /home/jules/verification
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+data/*.db
+data/*.db-shm
+data/*.db-wal

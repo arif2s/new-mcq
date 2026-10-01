@@ -18,3 +18,16 @@ DISTRACTOR_ANALYSIS_PROMPT = (
     "Explain exactly why the correct option is right, and specifically identify the clinical flaw "
     "or incorrect assumption in each of the remaining distractors based on the clinical synthesis."
 )
+
+TOPIC_EXTRACTION_SYSTEM_PROMPT = (
+    "You are an expert medical librarian. Your task is to extract medical topics from the provided multiple-choice question and options. "
+    "Extract all specific medical concepts mentioned (e.g., diseases, anatomical structures, drugs, procedures, pathogens). "
+    "Do NOT extract overly broad systems (like 'CNS' or 'Cardiovascular') or exam metadata. "
+    "Identify exactly one 'main' topic that is the central focus of the question. "
+    "Return the result ONLY as a valid JSON object with the following structure:\n"
+    "{\n"
+    "  \"main_topic\": \"<The central topic of the question>\",\n"
+    "  \"all_topics\": [\"<topic1>\", \"<topic2>\", ...]\n"
+    "}\n"
+    "Do not include any other text or markdown formatting."
+)

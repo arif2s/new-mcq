@@ -66,6 +66,20 @@ class AsyncPriorityQueueWorker:
                         asyncio.to_thread(generate_topic_report, topic, search_results, synthesis_output),
                         asyncio.to_thread(self._persist_cached_synthesis, topic, synthesis_output, search_results),
                     )
+                elif task_type == "SESSION_PROCESSING":
+                    from agents.tema_q.session_processor import process_session_questions
+                    session_id = payload.get("session_id", "")
+                    if session_id:
+                        await process_session_questions(session_id)
+                elif task_type == "synthesis":
+                    topic = payload.get("topic", "")
+                    mcq_context = payload.get("mcq_context", None)
+                    search_results = await asyncio.to_thread(search_index, topic, limit_per_source=3)
+                    synthesis_output = await run_tema_q_synthesis(topic, search_results, mcq_context)
+                    await asyncio.gather(
+                        asyncio.to_thread(generate_topic_report, topic, search_results, synthesis_output),
+                        asyncio.to_thread(self._persist_cached_synthesis, topic, synthesis_output, search_results),
+                    )
 
                 await asyncio.to_thread(self._update_task_status, task_id, "COMPLETED")
 

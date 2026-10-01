@@ -232,7 +232,7 @@ export default function Sidebar({
   const navItems = [
     { id: 'home', icon: BookOpen, label: 'Home' },
     { id: 'settings', icon: Settings, label: 'Settings' },
-    { id: 'review', icon: ClipboardList, label: 'Review Queue' },
+    { id: 'knowledge', icon: BookOpen, label: 'Knowledge Hub' },
     { id: 'dashboard', icon: BarChart3, label: 'Dashboard' },
     { id: 'queue', icon: Database, label: 'Processing Queue' },
     { id: 'habits', icon: Calendar, label: 'Habit Tracker' },
