@@ -162,7 +162,12 @@ export default function StudyNotesView({ sessionId, pendingTopics, onBack, onSta
 
             <div className="bg-gray-900 border border-gray-800 rounded-2xl shadow-xl overflow-hidden mb-8">
               <div className="p-6 md:p-8 prose prose-invert prose-brand max-w-none prose-headings:text-gray-200 prose-a:text-brand-400">
-                {currentTopic.unified_article ? (
+                {currentTopic.llm_status === 'pending' ? (
+                  <div className="text-gray-400 italic animate-pulse flex items-center gap-2">
+                    <span className="w-4 h-4 rounded-full border-2 border-brand-500 border-t-transparent animate-spin inline-block"></span>
+                    LM Studio generating detailed explanation...
+                  </div>
+                ) : currentTopic.unified_article ? (
                   <div dangerouslySetInnerHTML={{ __html: currentTopic.unified_article }} />
                 ) : (
                    <div dangerouslySetInnerHTML={{ __html: currentTopic.enhanced_explanation || "No detailed notes available." }} />

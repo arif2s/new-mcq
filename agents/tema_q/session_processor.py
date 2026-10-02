@@ -43,6 +43,10 @@ async def process_session_questions(session_id: str):
         if main_topic and main_topic not in all_topics:
             all_topics.append(main_topic)
 
+        # For progressive rendering: ensure that search_index is run and initial references persisted if topic not fully synthesized
+        from parsers.tantivy_engine import search_index
+        from core.queue_manager import queue_worker
+
         with get_db_connection() as conn:
             cursor = conn.cursor()
             for topic in all_topics:
@@ -53,8 +57,20 @@ async def process_session_questions(session_id: str):
                 """, (q["question_id"], topic, is_main))
 
                 # Queue the topic for synthesis if not already cached/queued
-                cursor.execute("SELECT 1 FROM cached_syntheses WHERE topic_key = ?", (topic.lower().replace(" ", "-"),))
-                if not cursor.fetchone():
+                topic_key = topic.lower().replace(" ", "-")
+                cursor.execute("SELECT unified_article FROM cached_syntheses WHERE topic_key = ?", (topic_key,))
+                row = cursor.fetchone()
+                fully_processed = False
+                if row:
+                    article = row["unified_article"]
+                    if article and "Skipped LM Studio processing" not in article and "Please add reference material" not in article:
+                        fully_processed = True
+
+                if not fully_processed:
+                    # Run phase 1 (search) immediately
+                    search_results = search_index(topic, limit_per_source=3)
+                    queue_worker._persist_initial_references(topic, search_results)
+
                     cursor.execute("SELECT 1 FROM task_queue WHERE task_type = 'synthesis' AND payload LIKE ?", (f'%"{topic}"%',))
                     if not cursor.fetchone():
                         cursor.execute("""

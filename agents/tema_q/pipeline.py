@@ -169,6 +169,7 @@ async def run_tema_q_synthesis(topic: str, search_results: dict, mcq_context: di
             "enhanced_explanation": "No local reference files found.",
             "distractor_analysis": "N/A",
             "unified_article": f"### {topic}\nPlease add reference material.",
+            "reference_links": search_results
         }
 
     # Strict token reservation: Pass 1

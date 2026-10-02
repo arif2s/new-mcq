@@ -185,6 +185,10 @@ export interface AppPersistence {
   totalReviewedEver: number;
   lastActiveDate: string;
   reviewQueueLimit: number;
+  processingQueueLimit?: number;
+  pdfParser?: string;
+  extractorStrategy?: string;
+  skipLMStudio?: boolean;
 }
 
 // Quiz configuration for a session

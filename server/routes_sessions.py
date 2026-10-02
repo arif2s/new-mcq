@@ -162,7 +162,12 @@ def get_session_topics_and_notes(session_id: str):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT DISTINCT e.topic_name, c.display_title, c.enhanced_explanation, c.unified_article, c.top_references
+            SELECT DISTINCT e.topic_name, c.display_title, c.enhanced_explanation, c.unified_article, c.top_references,
+            CASE
+                WHEN c.unified_article IS NOT NULL AND c.unified_article != '' THEN 'completed'
+                WHEN c.top_references IS NOT NULL AND c.top_references != '' THEN 'pending'
+                ELSE 'pending'
+            END as llm_status
             FROM session_questions sq
             JOIN extracted_topics e ON sq.question_id = e.question_id
             LEFT JOIN cached_syntheses c ON LOWER(REPLACE(e.topic_name, ' ', '-')) = c.topic_key

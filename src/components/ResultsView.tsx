@@ -3,6 +3,7 @@ import { Trophy, Target, CheckCircle, XCircle, RotateCcw, BookOpen, TrendingUp, 
 import type { TestResult, QuizQuestion, TopicExpertise, RankSimConfig } from '../types';
 import { simulateRank } from '../storage';
 import RankSimCard from './RankSimCard';
+import ReferenceRenderer from './ReferenceRenderer';
 
 interface ResultsViewProps {
   result: TestResult;

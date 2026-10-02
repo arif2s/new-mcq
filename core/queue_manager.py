@@ -59,27 +59,35 @@ class AsyncPriorityQueueWorker:
                     # Sub-millisecond BM25 index query
                     search_results = await asyncio.to_thread(search_index, topic, limit_per_source=3)
 
-                    # Multi-pass clinical synthesis
-                    # Multi-pass clinical synthesis
-                    skip_lm = False
-                    with get_db_connection() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT value FROM user_state WHERE key = 'app_persistence'")
-                        row = cursor.fetchone()
-                        if row:
-                            try:
-                                import json
-                                app_state = json.loads(row["value"])
-                                skip_lm = app_state.get('skipLMStudio', False)
-                            except:
-                                pass
-                    synthesis_output = await run_tema_q_synthesis(topic, search_results, mcq_context, skip_lm=skip_lm)
+                    # Phase 1: Persist references immediately for progressive rendering
+                    await asyncio.to_thread(self._persist_initial_references, topic, search_results)
 
-                    # Write reports & persistence in parallel worker threads
-                    await asyncio.gather(
-                        asyncio.to_thread(generate_topic_report, topic, search_results, synthesis_output),
-                        asyncio.to_thread(self._persist_cached_synthesis, topic, synthesis_output, search_results),
-                    )
+                    # Check if LM Studio output already exists to avoid redundant processing
+                    is_processed = await asyncio.to_thread(self._is_topic_fully_processed, topic)
+
+                    if not is_processed:
+                        # Multi-pass clinical synthesis
+                        skip_lm = False
+                        with get_db_connection() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute("SELECT value FROM user_state WHERE key = 'app_persistence'")
+                            row = cursor.fetchone()
+                            if row:
+                                try:
+                                    import json
+                                    app_state = json.loads(row["value"])
+                                    skip_lm = app_state.get('skipLMStudio', False)
+                                except:
+                                    pass
+
+                        # Phase 2: Deferred/Slow LM Studio Synthesis
+                        synthesis_output = await run_tema_q_synthesis(topic, search_results, mcq_context, skip_lm=skip_lm)
+
+                        # Write reports & persistence in parallel worker threads
+                        await asyncio.gather(
+                            asyncio.to_thread(generate_topic_report, topic, search_results, synthesis_output),
+                            asyncio.to_thread(self._persist_cached_synthesis, topic, synthesis_output, search_results),
+                        )
 
                 elif task_type == "SESSION_PROCESSING":
                     # Deferred import to avoid circular dependencies at startup
@@ -146,6 +154,51 @@ class AsyncPriorityQueueWorker:
                 (status, error_message, task_id),
             )
             conn.commit()
+
+    def _persist_initial_references(self, topic: str, results: dict):
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            topic_key = topic.lower().replace(" ", "-")
+
+            cursor.execute("SELECT 1 FROM cached_syntheses WHERE topic_key = ?", (topic_key,))
+            if cursor.fetchone():
+                cursor.execute("""
+                    UPDATE cached_syntheses
+                    SET top_references = ?, has_obsidian_note = ?, has_pdf_match = ?, has_zim_match = ?, updated_at = unixepoch('now')
+                    WHERE topic_key = ?
+                """, (
+                    json.dumps(results),
+                    1 if results.get("obsidian") else 0,
+                    1 if results.get("pdf") else 0,
+                    1 if results.get("zim") else 0,
+                    topic_key
+                ))
+            else:
+                cursor.execute("""
+                    INSERT INTO cached_syntheses (
+                        topic_key, display_title, enhanced_explanation, distractor_analysis,
+                        unified_article, top_references, has_obsidian_note, has_pdf_match, has_zim_match, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))
+                """, (
+                    topic_key, topic, "", "", "",
+                    json.dumps(results),
+                    1 if results.get("obsidian") else 0,
+                    1 if results.get("pdf") else 0,
+                    1 if results.get("zim") else 0
+                ))
+            conn.commit()
+
+    def _is_topic_fully_processed(self, topic: str) -> bool:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            topic_key = topic.lower().replace(" ", "-")
+            cursor.execute("SELECT unified_article FROM cached_syntheses WHERE topic_key = ?", (topic_key,))
+            row = cursor.fetchone()
+            if row:
+                article = row["unified_article"]
+                if article and "Skipped LM Studio processing" not in article and "Please add reference material" not in article:
+                    return True
+            return False
 
     def _persist_cached_synthesis(self, topic: str, synthesis: dict, results: dict):
         with get_db_connection() as conn:
