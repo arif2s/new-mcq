@@ -510,7 +510,7 @@ export default function App() {
     if (currentView === 'habits') return <HabitTracker persistence={persistence} />;
     if (currentView === 'queue') return <QueueStatus
       persistence={persistence}
-      onUpdateLimit={(limit) => setPersistence(prev => ({ ...prev, processingQueueLimit: limit }))}
+      onUpdatePersistence={(updates) => setPersistence(prev => ({ ...prev, ...updates }))}
     />;
     if (currentView === 'expertise') return <ExpertiseMap persistence={persistence} />;
     if (currentView === 'settings') return <SettingsView />;

@@ -59,6 +59,9 @@ export function getDefaultPersistence(): AppPersistence {
     ],
     reviewQueueLimit: 50,
     processingQueueLimit: 10,
+    pdfParser: 'fitz',
+    extractorStrategy: 'regex',
+    skipLMStudio: false,
   };
 }
 
@@ -77,6 +80,9 @@ export function loadPersistence(): AppPersistence {
     }
 
     if (data.processingQueueLimit === undefined) data.processingQueueLimit = 10;
+    if (data.pdfParser === undefined) data.pdfParser = 'fitz';
+    if (data.extractorStrategy === undefined) data.extractorStrategy = 'regex';
+    if (data.skipLMStudio === undefined) data.skipLMStudio = false;
     return { ...getDefaultPersistence(), ...data };
   } catch {
     return getDefaultPersistence();

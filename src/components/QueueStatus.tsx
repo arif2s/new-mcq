@@ -4,10 +4,10 @@ import { AppPersistence } from '../types';
 
 interface QueueStatusProps {
   persistence: AppPersistence;
-  onUpdateLimit: (limit: number) => void;
+  onUpdatePersistence: (updates: Partial<AppPersistence>) => void;
 }
 
-export default function QueueStatus({ persistence, onUpdateLimit }: QueueStatusProps) {
+export default function QueueStatus({ persistence, onUpdatePersistence }: QueueStatusProps) {
   const [tasks, setTasks] = useState<any[]>([]);
   const [showSettings, setShowSettings] = useState(false);
 
@@ -53,11 +53,44 @@ export default function QueueStatus({ persistence, onUpdateLimit }: QueueStatusP
                 min="1"
                 max="500"
                 value={persistence.processingQueueLimit || 10}
-                onChange={(e) => onUpdateLimit(Math.max(1, parseInt(e.target.value) || 10))}
-                className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200"
+                onChange={(e) => onUpdatePersistence({ processingQueueLimit: Math.max(1, parseInt(e.target.value) || 10) })}
+                className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 mb-3"
               />
-              <p className="text-[10px] text-gray-500 mt-2">
-                Limit the number of topics added at once to prevent crashing the local LM Studio backend.
+
+              <label className="block text-xs text-gray-400 mb-1">PDF Parser Selection</label>
+              <select
+                value={persistence.pdfParser || 'fitz'}
+                onChange={(e) => onUpdatePersistence({ pdfParser: e.target.value as 'fitz' | 'docling' })}
+                className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 mb-3"
+              >
+                <option value="fitz">PyMuPDF (fitz)</option>
+                <option value="docling">Docling</option>
+              </select>
+
+              <label className="block text-xs text-gray-400 mb-1">MCQ Topic Extractor Strategy</label>
+              <select
+                value={persistence.extractorStrategy || 'regex'}
+                onChange={(e) => onUpdatePersistence({ extractorStrategy: e.target.value as 'regex' | 'medspacy' })}
+                className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 mb-3"
+              >
+                <option value="regex">Regex / Fast Heuristics</option>
+                <option value="medspacy">medSpaCy (Clinical NLP)</option>
+              </select>
+
+              <label className="flex items-center gap-2 mt-4 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={persistence.skipLMStudio || false}
+                  onChange={(e) => onUpdatePersistence({ skipLMStudio: e.target.checked })}
+                  className="w-4 h-4 rounded border-gray-600 bg-gray-900 text-brand-500 focus:ring-brand-500"
+                />
+                <span className="text-xs text-gray-300 group-hover:text-white transition-colors">
+                  Skip LM Studio Processing
+                </span>
+              </label>
+
+              <p className="text-[10px] text-gray-500 mt-4">
+                These settings configure how documents and questions are ingested and processed.
               </p>
             </div>
           )}

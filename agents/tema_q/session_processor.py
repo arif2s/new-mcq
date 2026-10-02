@@ -18,7 +18,24 @@ async def process_session_questions(session_id: str):
 
     for q in questions:
         options = {"A": q["opt_a"], "B": q["opt_b"], "C": q["opt_c"], "D": q["opt_d"]}
-        topics_data = await extract_topics_from_mcq(q["question_text"], options)
+
+        # Fetch configurations from user_state table
+        skip_lm = False
+        extractor_strategy = 'regex'
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM user_state WHERE key = 'app_persistence'")
+            row = cursor.fetchone()
+            if row:
+                try:
+                    import json
+                    app_state = json.loads(row["value"])
+                    skip_lm = app_state.get('skipLMStudio', False)
+                    extractor_strategy = app_state.get('extractorStrategy', 'regex')
+                except:
+                    pass
+
+        topics_data = await extract_topics_from_mcq(q["question_text"], options, skip_lm, extractor_strategy)
 
         main_topic = topics_data.get("main_topic", "")
         all_topics = topics_data.get("all_topics", [])

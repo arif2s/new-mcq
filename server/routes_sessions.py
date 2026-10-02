@@ -147,12 +147,13 @@ def get_session_questions(session_id: str):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT question_id, selected_option, is_correct, timed_out, time_spent_ms,
-                   timestamp, question_text, opt_a, opt_b, opt_c, opt_d, correct_answer,
-                   explanation, topic
-            FROM session_questions
-            WHERE session_id = ?
-            ORDER BY timestamp ASC
+            SELECT sq.question_id, sq.selected_option, sq.is_correct, sq.timed_out, sq.time_spent_ms,
+                   sq.timestamp, sq.question_text, sq.opt_a, sq.opt_b, sq.opt_c, sq.opt_d, sq.correct_answer,
+                   sq.explanation, sq.topic, cs.top_references as reference_links
+            FROM session_questions sq
+            LEFT JOIN cached_syntheses cs ON LOWER(REPLACE(sq.topic, ' ', '-')) = cs.topic_key
+            WHERE sq.session_id = ?
+            ORDER BY sq.timestamp ASC
         """, (session_id,))
         return [dict(row) for row in cursor.fetchall()]
 
@@ -161,7 +162,7 @@ def get_session_topics_and_notes(session_id: str):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT DISTINCT e.topic_name, c.display_title, c.enhanced_explanation, c.unified_article
+            SELECT DISTINCT e.topic_name, c.display_title, c.enhanced_explanation, c.unified_article, c.top_references
             FROM session_questions sq
             JOIN extracted_topics e ON sq.question_id = e.question_id
             LEFT JOIN cached_syntheses c ON LOWER(REPLACE(e.topic_name, ' ', '-')) = c.topic_key

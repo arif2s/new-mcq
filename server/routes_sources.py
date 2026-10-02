@@ -158,3 +158,19 @@ async def run_indexing():
 def index_sources(background_tasks: BackgroundTasks):
     background_tasks.add_task(run_indexing)
     return {"status": "started"}
+
+class OpenPdfPayload(BaseModel):
+    file_path: str
+    page: int
+
+@router.post("/open_pdf")
+def open_pdf(payload: OpenPdfPayload):
+    import subprocess
+    import sys
+    try:
+        # We need to construct the SumatraPDF command correctly
+        # Passing flags and values properly separated: subprocess.run(["SumatraPDF", "-page", str(payload.page), payload.file_path])
+        subprocess.Popen(["SumatraPDF", "-page", str(payload.page), payload.file_path], shell=False)
+        return {"status": "success"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}

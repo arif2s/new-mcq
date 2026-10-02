@@ -81,12 +81,32 @@ async def call_llm_async(system_prompt: str, user_prompt: str, max_tokens: int =
     return data["choices"][0]["message"]["content"].strip()
 
 def _extract_pdf_sync(file_path: str, page: int) -> str:
+    parser = 'fitz'
+    from core.database import get_db_connection
     try:
-        return extract_structured_layout(file_path, page)
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM user_state WHERE key = 'app_persistence'")
+            row = cursor.fetchone()
+            if row:
+                import json
+                app_state = json.loads(row["value"])
+                parser = app_state.get('pdfParser', 'fitz')
     except Exception:
+        pass
+
+    if parser == 'docling':
+        try:
+            return extract_structured_layout(file_path, page)
+        except Exception:
+            return extract_page_slice(file_path, page)
+    else:
         return extract_page_slice(file_path, page)
 
-async def extract_topics_from_mcq(question: str, options: dict) -> dict:
+async def extract_topics_from_mcq(question: str, options: dict, skip_lm: bool = False, extractor_strategy: str = 'regex') -> dict:
+    if skip_lm:
+        from agents.tema_q.topic_extractor import extract_topics_local
+        return extract_topics_local(question, options, extractor_strategy)
     user_msg = (
         f"Question: {question}\n"
         f"Options:\n"
@@ -134,7 +154,14 @@ async def resolve_documents(search_results: dict) -> list:
 
     return documents
 
-async def run_tema_q_synthesis(topic: str, search_results: dict, mcq_context: dict = None) -> dict:
+async def run_tema_q_synthesis(topic: str, search_results: dict, mcq_context: dict = None, skip_lm: bool = False) -> dict:
+    if skip_lm:
+        return {
+            "enhanced_explanation": "LM Studio processing skipped.",
+            "distractor_analysis": "LM Studio processing skipped.",
+            "unified_article": f"### {topic}\nSkipped LM Studio processing.",
+            "reference_links": search_results
+        }
     documents = await resolve_documents(search_results)
 
     if not documents:
@@ -194,4 +221,5 @@ async def run_tema_q_synthesis(topic: str, search_results: dict, mcq_context: di
         "enhanced_explanation": base_note,
         "distractor_analysis": distractor_output,
         "unified_article": final_article,
+        "reference_links": search_results
     }

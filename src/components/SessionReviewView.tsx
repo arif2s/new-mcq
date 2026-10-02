@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { fetchSessionQuestions } from '../api';
 import { ArrowLeft, CheckCircle, XCircle } from 'lucide-react';
+import ReferenceRenderer from './ReferenceRenderer';
 
 interface SessionReviewViewProps {
   sessionId: string;
@@ -85,6 +86,7 @@ export default function SessionReviewView({ sessionId, onBack }: SessionReviewVi
                       <div dangerouslySetInnerHTML={{__html: q.explanation}}></div>
                     </div>
                   )}
+                  <ReferenceRenderer references={q.reference_links} correctTopics={[q.topic]} />
                 </div>
               </div>
             </div>

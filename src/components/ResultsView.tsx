@@ -356,6 +356,7 @@ export default function ResultsView({
                     </div>
                   </>
                 )}
+                <ReferenceRenderer references={(q as any).reference_links} correctTopics={q.topic_name ? [q.topic_name] : []} />
               </div>
             );
           })}

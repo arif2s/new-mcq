@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, Play, ArrowLeft } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Play, ArrowLeft, BookOpen, List, X } from 'lucide-react';
 import { fetchSessionTopics } from '../api';
+import ReferenceRenderer from './ReferenceRenderer';
 
 interface StudyNotesViewProps {
   sessionId: string;
@@ -82,61 +83,118 @@ export default function StudyNotesView({ sessionId, pendingTopics, onBack, onSta
   const currentTopic = topics[currentIndex];
   const isLast = currentIndex === topics.length - 1;
 
+
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   return (
-    <div className="p-4 md:p-8 max-w-5xl mx-auto min-h-screen flex flex-col">
-      <div className="flex justify-between items-center mb-6">
-        <button onClick={onBack} className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors">
-          <ArrowLeft size={20} /> Back
-        </button>
-        <div className="text-sm font-medium text-gray-400">
-          Topic {currentIndex + 1} of {topics.length}
+    <div className="flex h-screen bg-black overflow-hidden relative">
+      {/* Mobile Sidebar Overlay */}
+      {sidebarOpen && (
+        <div className="md:hidden fixed inset-0 bg-black/80 z-20" onClick={() => setSidebarOpen(false)} />
+      )}
+
+      {/* Sidebar Component: Medical Topics */}
+      <div className={`fixed md:static inset-y-0 left-0 w-72 bg-gray-900 border-r border-gray-800 z-30 transform transition-transform duration-300 flex flex-col ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
+        <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-950">
+          <div className="flex items-center gap-2 text-brand-400 font-bold">
+            <BookOpen size={20} />
+            Medical Topics
+          </div>
+          <button className="md:hidden text-gray-400 hover:text-white" onClick={() => setSidebarOpen(false)}>
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          {topics.map((t, i) => (
+            <button
+              key={i}
+              onClick={() => {
+                setCurrentIndex(i);
+                setSidebarOpen(false);
+              }}
+              className={`w-full text-left px-4 py-3 rounded-xl text-sm transition-colors ${i === currentIndex ? 'bg-brand-600/20 text-brand-400 font-medium' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
+            >
+              <div className="truncate">{t.display_title || t.topic_name}</div>
+            </button>
+          ))}
+        </div>
+
+        <div className="p-4 border-t border-gray-800 bg-gray-950">
+          <button onClick={onBack} className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors text-sm">
+            <ArrowLeft size={16} /> Back to Hub
+          </button>
         </div>
       </div>
 
-      <div className="flex-1 bg-gray-900 border border-gray-700 rounded-2xl shadow-xl overflow-hidden flex flex-col">
-        <div className="bg-gray-800 p-6 border-b border-gray-700">
-          <h2 className="text-2xl font-bold text-gray-100">{currentTopic.display_title || currentTopic.topic_name}</h2>
-          <span className="inline-block mt-2 px-3 py-1 bg-brand-600/20 text-brand-400 text-xs rounded-full">
-            Clinical Synthesis
-          </span>
-        </div>
+      {/* Main View Component */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden">
+        {/* Header */}
+        <div className="h-16 flex items-center justify-between px-4 md:px-8 border-b border-gray-800 bg-gray-950">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setSidebarOpen(true)} className="md:hidden text-gray-400 hover:text-white">
+              <List size={24} />
+            </button>
+            <div className="text-sm font-medium text-gray-400 hidden md:block">
+              Topic {currentIndex + 1} of {topics.length}
+            </div>
+          </div>
 
-        <div className="p-6 overflow-y-auto flex-1 prose prose-invert prose-brand max-w-none prose-headings:text-gray-200 prose-a:text-brand-400">
-          {currentTopic.unified_article ? (
-            <div dangerouslySetInnerHTML={{ __html: currentTopic.unified_article }} />
-          ) : (
-             <div dangerouslySetInnerHTML={{ __html: currentTopic.enhanced_explanation || "No detailed notes available." }} />
+          {onStartQuiz && (
+            <button
+              onClick={onStartQuiz}
+              className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-500 transition-colors"
+            >
+              <Play size={16} /> Start Quiz
+            </button>
           )}
         </div>
-      </div>
 
-      <div className="mt-8 flex justify-between items-center">
-        <button
-          onClick={handlePrev}
-          disabled={currentIndex === 0}
-          className="flex items-center gap-2 px-5 py-3 rounded-xl bg-gray-800 text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-700 transition-colors"
-        >
-          <ChevronLeft size={20} /> Previous Topic
-        </button>
+        {/* Content Area */}
+        <div className="flex-1 overflow-y-auto p-4 md:p-8">
+          <div className="max-w-4xl mx-auto">
+            <div className="mb-6">
+              <h2 className="text-3xl font-bold text-gray-100">{currentTopic.display_title || currentTopic.topic_name}</h2>
+              <span className="inline-block mt-2 px-3 py-1 bg-brand-600/20 text-brand-400 text-xs rounded-full border border-brand-500/20">
+                Clinical Synthesis & Reference
+              </span>
+            </div>
 
-        {isLast && onStartQuiz ? (
-          <button
-            onClick={onStartQuiz}
-            className="flex items-center gap-2 px-8 py-3 rounded-xl bg-gradient-to-r from-brand-600 to-purple-600 text-white font-bold hover:from-brand-500 hover:to-purple-500 transition-all shadow-lg hover:shadow-brand-500/25 animate-fade-in"
-          >
-            Start Quiz <Play size={20} />
-          </button>
-        ) : (
-          <button
-            onClick={handleNext}
-            disabled={isLast}
-            className="flex items-center gap-2 px-5 py-3 rounded-xl bg-gray-800 text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-700 transition-colors"
-          >
-            Next Topic <ChevronRight size={20} />
-          </button>
-        )}
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl shadow-xl overflow-hidden mb-8">
+              <div className="p-6 md:p-8 prose prose-invert prose-brand max-w-none prose-headings:text-gray-200 prose-a:text-brand-400">
+                {currentTopic.unified_article ? (
+                  <div dangerouslySetInnerHTML={{ __html: currentTopic.unified_article }} />
+                ) : (
+                   <div dangerouslySetInnerHTML={{ __html: currentTopic.enhanced_explanation || "No detailed notes available." }} />
+                )}
+              </div>
+            </div>
+
+            {/* References Section */}
+            <ReferenceRenderer references={currentTopic.top_references} correctTopics={[currentTopic.topic_name]} />
+
+            {/* Navigation Footer */}
+            <div className="mt-8 pt-6 border-t border-gray-800 flex justify-between items-center mb-8">
+              <button
+                onClick={handlePrev}
+                disabled={currentIndex === 0}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-900 text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-800 transition-colors border border-gray-800"
+              >
+                <ChevronLeft size={20} /> Previous
+              </button>
+
+              <div className="text-xs text-gray-500 hidden md:block">Use Left/Right arrow keys to navigate</div>
+
+              <button
+                onClick={handleNext}
+                disabled={isLast}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-900 text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-800 transition-colors border border-gray-800"
+              >
+                Next <ChevronRight size={20} />
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
-      <p className="text-center text-xs text-gray-600 mt-4">Use Left/Right arrow keys to navigate</p>
     </div>
   );
-}

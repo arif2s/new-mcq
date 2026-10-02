@@ -60,7 +60,20 @@ class AsyncPriorityQueueWorker:
                     search_results = await asyncio.to_thread(search_index, topic, limit_per_source=3)
 
                     # Multi-pass clinical synthesis
-                    synthesis_output = await run_tema_q_synthesis(topic, search_results, mcq_context)
+                    # Multi-pass clinical synthesis
+                    skip_lm = False
+                    with get_db_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT value FROM user_state WHERE key = 'app_persistence'")
+                        row = cursor.fetchone()
+                        if row:
+                            try:
+                                import json
+                                app_state = json.loads(row["value"])
+                                skip_lm = app_state.get('skipLMStudio', False)
+                            except:
+                                pass
+                    synthesis_output = await run_tema_q_synthesis(topic, search_results, mcq_context, skip_lm=skip_lm)
 
                     # Write reports & persistence in parallel worker threads
                     await asyncio.gather(
