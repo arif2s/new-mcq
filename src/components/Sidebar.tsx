@@ -1,7 +1,7 @@
 import { useState, useRef, useMemo, useEffect } from 'react';
 import {
   Upload, BookOpen, Brain, BarChart3, Calendar, Database,
-  Settings, ChevronDown, Play, Download, Trash2, FileText, CheckCircle, ClipboardList
+  Settings, ChevronDown, Play, Download, FileText, CheckCircle
 } from 'lucide-react';
 import type { QuizConfig, SubjectData, QuizQuestion } from '../types';
 import { parseCSV, generateSampleCSV } from '../csvParser';
@@ -9,7 +9,6 @@ import { parseCSV, generateSampleCSV } from '../csvParser';
 interface SidebarProps {
   subjects: SubjectData[];
   onAddSubject: (name: string, fileName: string, questions: QuizQuestion[]) => void;
-  onRemoveSubject: (name: string) => void;
   onStartQuiz: (config: QuizConfig) => void;
   onNavigate: (view: string) => void;
   currentView: string;
@@ -20,7 +19,6 @@ interface SidebarProps {
 export default function Sidebar({
   subjects,
   onAddSubject,
-  onRemoveSubject,
   onStartQuiz,
   onNavigate,
   currentView,
@@ -28,7 +26,7 @@ export default function Sidebar({
   onImportData,
 }: SidebarProps) {
   const [selectedSubject, setSelectedSubject] = useState('');
-  const [topicFilter, setTopicFilter] = useState('all');
+  const [topicFilter] = useState('all');
   const [questionOrder, setQuestionOrder] = useState<'sequential' | 'random'>('random');
   const [questionCount, setQuestionCount] = useState(10);
   const [timeLimitMinutes, setTimeLimitMinutes] = useState(0);
@@ -90,7 +88,7 @@ export default function Sidebar({
   const importInputRef = useRef<HTMLInputElement>(null);
 
   // Memoize heavy filtering to prevent re-execution when config sliders change
-  const { topics, maxQuestions } = useMemo(() => {
+  const { } = useMemo(() => {
     const subject = subjects.find(s => s.name === selectedSubject);
     const t = subject ? ['all', ...subject.topics] : ['all'];
     const maxQ = subject
@@ -147,7 +145,7 @@ export default function Sidebar({
     }
   };
 
-  const handleStart = async (isRemote: boolean = true) => {
+  const handleStart = async ( ) => {
     if (!dbExists) {
       alert("Database not found! Please go to the Settings tab to build and index the database before searching.");
       onNavigate('settings');

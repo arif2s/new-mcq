@@ -3,13 +3,22 @@ import os
 from config import DB_PATH
 
 def get_db_connection():
-    """Yields a connection configured for concurrent async access."""
+    """Yields a connection configured for concurrent async access and optimized for Windows."""
     conn = sqlite3.connect(DB_PATH, timeout=20.0)
     conn.row_factory = sqlite3.Row
 
-    # Apply performance PRAGMAs to EVERY connection, not just initialization
+    # Enforce foreign key constraints (REQUIRED for cascading deletes to work)
+    conn.execute("PRAGMA foreign_keys = ON;")
+
+    # Performance PRAGMAs for every connection
     conn.execute("PRAGMA synchronous = NORMAL;")
     conn.execute("PRAGMA busy_timeout = 20000;")
+
+    # Windows/NTFS Specific Optimizations
+    conn.execute("PRAGMA mmap_size = 2147483648;")  # Use memory-mapped I/O (up to 2GB) for faster reads
+    conn.execute("PRAGMA temp_store = MEMORY;")     # Store temp tables/indices in RAM instead of disk
+    conn.execute("PRAGMA cache_size = -64000;")     # 64MB cache size per connection
+
     return conn
 
 def initialize_database():
@@ -27,15 +36,24 @@ def initialize_database():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS mcq_bank (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_file TEXT NOT NULL, source_tag TEXT DEFAULT 'General',
-                question TEXT NOT NULL, opt_a TEXT NOT NULL, opt_b TEXT NOT NULL,
-                opt_c TEXT NOT NULL, opt_d TEXT NOT NULL,
+                source_file TEXT NOT NULL,
+                source_tag TEXT DEFAULT 'General',
+                question TEXT NOT NULL,
+                opt_a TEXT NOT NULL,
+                opt_b TEXT NOT NULL,
+                opt_c TEXT NOT NULL,
+                opt_d TEXT NOT NULL,
                 correct_opt TEXT NOT NULL CHECK(correct_opt IN ('A', 'B', 'C', 'D')),
-                csv_explanation TEXT, image_path TEXT,
-                state INTEGER DEFAULT 0, difficulty REAL DEFAULT 0.0,
-                stability REAL DEFAULT 0.0, reps INTEGER DEFAULT 0,
-                lapses INTEGER DEFAULT 0, last_review REAL,
-                due_timestamp REAL DEFAULT 0.0, created_at REAL DEFAULT (unixepoch('now'))
+                csv_explanation TEXT,
+                image_path TEXT,
+                state INTEGER DEFAULT 0,
+                difficulty REAL DEFAULT 0.0,
+                stability REAL DEFAULT 0.0,
+                reps INTEGER DEFAULT 0,
+                lapses INTEGER DEFAULT 0,
+                last_review REAL,
+                due_timestamp REAL DEFAULT 0.0,
+                created_at REAL DEFAULT (unixepoch('now'))
             )
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_mcq_due ON mcq_bank (due_timestamp, state);")
@@ -74,7 +92,6 @@ def initialize_database():
             )
         """)
 
-
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS knowledge_sources (
                 id TEXT PRIMARY KEY,
@@ -104,7 +121,6 @@ def initialize_database():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_csv_topic ON csv_questions(topic_name);")
 
         # FTS5 Virtual Table for fast keyword searching
-        # We index question and options, but explicitly NOT explanation
         cursor.execute('''
             CREATE VIRTUAL TABLE IF NOT EXISTS csv_questions_fts USING fts5(
                 id UNINDEXED,
@@ -138,6 +154,7 @@ def initialize_database():
                 created_at REAL DEFAULT (unixepoch('now'))
             )
         """)
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS session_questions (
                 session_id TEXT NOT NULL,

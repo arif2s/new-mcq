@@ -14,7 +14,7 @@ import KnowledgeHub from './components/KnowledgeHub';
 import StudyNotesView from './components/StudyNotesView';
 import PreQuizModal from './components/PreQuizModal';
 import SessionReviewView from './components/SessionReviewView';
-import { fetchState, saveState, saveSession, fetchSessionHistory } from './api';
+import { fetchState, saveState, saveSession } from './api';
 import {
   loadPersistence,
   savePersistence,
@@ -24,9 +24,6 @@ import {
   updateTopicExpertise,
   exportPersistenceJSON,
   addToReviewQueue,
-  markReviewItemDone,
-  removeReviewItem,
-  clearAllReviewQueue,
 } from './storage';
 import type {
   AppPersistence,
@@ -99,22 +96,6 @@ export default function App() {
     });
   }, []);
 
-  const handleRemoveSubject = useCallback((name: string) => {
-    setPersistence(prev => {
-      const newExpertise = { ...prev.topicExpertise };
-      for (const key of Object.keys(newExpertise)) {
-        if (newExpertise[key].subject === name) {
-          delete newExpertise[key];
-        }
-      }
-      return {
-        ...prev,
-        subjects: prev.subjects.filter(s => s.name !== name),
-        ankiCards: prev.ankiCards.filter(c => c.subjectName !== name),
-        topicExpertise: newExpertise,
-      };
-    });
-  }, []);
 
   const handleStartQuiz = useCallback((config: QuizConfig) => {
     setPersistence(prev => {
@@ -446,10 +427,6 @@ export default function App() {
     setLastResult(null);
   }, []);
 
-  const handleMarkReviewed = useCallback((itemId: string) => setPersistence(prev => markReviewItemDone(prev, itemId)), []);
-  const handleRemoveReviewItem = useCallback((itemId: string) => setPersistence(prev => removeReviewItem(prev, itemId)), []);
-  const handleClearReviewQueue = useCallback(() => setPersistence(prev => clearAllReviewQueue(prev)), []);
-  const handleUpdateReviewLimit = useCallback((limit: number) => setPersistence(prev => ({ ...prev, reviewQueueLimit: limit })), []);
   const handleUpdateTargets = useCallback((targets: DailyTargets) => setPersistence(prev => ({ ...prev, dailyTargets: targets })), []);
   const handleUpdateRankConfigs = useCallback((configs: RankSimConfig[]) => setPersistence(prev => ({ ...prev, rankSimConfigs: configs })), []);
 
@@ -593,7 +570,7 @@ export default function App() {
         <Sidebar
           subjects={persistence.subjects}
           onAddSubject={handleAddSubject}
-          onRemoveSubject={handleRemoveSubject}
+
           onStartQuiz={(config) => {
             handleStartQuiz(config);
             setSidebarOpen(false);

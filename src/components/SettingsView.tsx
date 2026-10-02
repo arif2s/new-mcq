@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import SourceManager from './SourceManager';
 import { Database, Server, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
 

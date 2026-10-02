@@ -5,9 +5,13 @@ export type ExpertiseLevel = 'beginner' | 'intermediate' | 'advanced' | 'expert'
 export type ExpertiseTrend = 'improving' | 'stable' | 'declining';
 export type AnkiStatus = 'new' | 'learning' | 'review' | 'mastered';
 
+// Semantic Aliases for improved readability and intent
+export type DateString = string; // Format: YYYY-MM-DD
+export type ISOString = string;  // Format: Full ISO 8601 Timestamp
+
 // Core question from CSV
 export interface QuizQuestion {
-  id: string;
+  readonly id: string;
   topic_name: string;
   question: string;
   option_a: string;
@@ -20,20 +24,20 @@ export interface QuizQuestion {
 
 // Answer record
 export interface AnswerRecord {
-  questionId: string;
+  readonly questionId: string;
   selected: OptionKey | ''; // Empty string accounts for timeouts
   isCorrect: boolean;
-  timestamp: number;
+  readonly timestamp: number;
   timeSpentMs: number;
   timedOut: boolean;
 }
 
 // Test session result
 export interface TestResult {
-  id: string;
+  readonly id: string;
   subjectName: string;
-  date: string;
-  timestamp: number;
+  readonly date: ISOString;
+  readonly timestamp: number;
   topics: string[];
   totalQuestions: number;
   correctAnswers: number;
@@ -50,14 +54,14 @@ export interface TestResult {
 
 // Spaced repetition data per question
 export interface AnkiCard {
-  questionId: string;
+  readonly questionId: string;
   subjectName: string;
   topic: string;
   interval: number;
   easeFactor: number;
   repetitions: number;
-  nextReviewDate: string; // YYYY-MM-DD
-  lastReviewDate: string; // YYYY-MM-DD
+  nextReviewDate: DateString;
+  lastReviewDate: DateString;
   totalAttempts: number;
   correctAttempts: number;
   status: AnkiStatus;
@@ -69,14 +73,14 @@ export interface SubjectData {
   fileName: string;
   questions: QuizQuestion[];
   topics: string[];
-  dateAdded: string;
-  lastAccessed: string;
+  dateAdded: ISOString;
+  lastAccessed: ISOString;
   totalAttempts: number;
 }
 
 // Habit tracker entry
 export interface HabitEntry {
-  date: string; // YYYY-MM-DD
+  readonly date: DateString;
   questionsAnswered: number;
   correctAnswers: number;
   subjects: string[];
@@ -87,7 +91,7 @@ export interface HabitEntry {
 
 // Hourly breakdown
 export interface HourlyStats {
-  hour: number; // 0-23
+  readonly hour: number; // 0-23
   questionsAnswered: number;
   correctAnswers: number;
   timeSpentSeconds: number;
@@ -95,17 +99,17 @@ export interface HourlyStats {
 
 // Review queue item
 export interface ReviewQueueItem {
-  id: string;
-  questionId: string;
+  readonly id: string;
+  readonly questionId: string;
   subjectName: string;
   topic: string;
   question: string;
   correctAnswer: OptionKey;
   userAnswer: OptionKey | '';
   explanation: string;
-  options: { a: string; b: string; c: string; d: string };
-  dateAdded: string; // ISO string for UI display
-  addedTimestamp: number; // Integer for fast O(1) mathematical sorting
+  options: Record<Lowercase<OptionKey>, string>;
+  readonly dateAdded: ISOString;
+  readonly addedTimestamp: number;
   reviewed: boolean;
 }
 
@@ -119,18 +123,18 @@ export interface DailyTargets {
 
 // Rank simulation data point
 export interface RankDataPoint {
-  marks: number;
-  rank: number;
+  readonly marks: number;
+  readonly rank: number;
 }
 
 // Marks range band
 export interface RankBand {
-  marksMin: number;
-  marksMax: number;
-  rankMin: number;
-  rankMax: number;
-  label: string;
-  outlook: string;
+  readonly marksMin: number;
+  readonly marksMax: number;
+  readonly rankMin: number;
+  readonly rankMax: number;
+  readonly label: string;
+  readonly outlook: string;
 }
 
 // Rank simulation config per exam
@@ -166,7 +170,7 @@ export interface TopicExpertise {
   accuracy: number;
   level: ExpertiseLevel;
   trend: ExpertiseTrend;
-  lastAttemptDate: string;
+  lastAttemptDate: DateString;
 }
 
 // Overall app state persisted in JSON
@@ -183,7 +187,7 @@ export interface AppPersistence {
   longestStreak: number;
   totalQuestionsEver: number;
   totalReviewedEver: number;
-  lastActiveDate: string;
+  lastActiveDate: DateString;
   reviewQueueLimit: number;
 }
 
@@ -205,7 +209,7 @@ export interface ActiveQuiz {
   questions: QuizQuestion[];
   currentIndex: number;
   answers: Record<string, AnswerRecord>;
-  startTime: number;
+  readonly startTime: number;
   questionStartTime: number;
   timeRemainingSeconds: number | null;
   questionTimeRemainingSeconds: number | null;

@@ -1,5 +1,6 @@
-from fastapi import WebSocket, WebSocketDisconnect
-from typing import Set
+import asyncio
+from fastapi import WebSocket
+from typing import Set, Dict, Any
 import json
 import logging
 
@@ -16,28 +17,41 @@ class ConnectionManager:
     def disconnect(self, websocket: WebSocket):
         self.active_connections.discard(websocket)
 
+    async def _broadcast(self, payload: Dict[str, Any]):
+        """Internal helper to broadcast a message concurrently to all active clients."""
+        if not self.active_connections:
+            return
+
+        message = json.dumps(payload)
+
+        # Take a snapshot of the set to prevent RuntimeError if the set mutates during execution
+        connections = list(self.active_connections)
+
+        # Execute all socket transmissions concurrently rather than sequentially
+        results = await asyncio.gather(
+            *(conn.send_text(message) for conn in connections),
+            return_exceptions=True
+        )
+
+        # Batch cleanup of dead or dropped connections
+        for conn, result in zip(connections, results):
+            if isinstance(result, Exception):
+                logger.error(f"Failed to send WS message: {result}")
+                self.disconnect(conn)
+
     async def broadcast_task_update(self, task_id: int, status: str, topic: str):
-        message = json.dumps({"event": "TASK_UPDATE", "task_id": task_id, "status": status, "topic": topic})
-        dead_connections = set()
-        for connection in list(self.active_connections):
-            try:
-                await connection.send_text(message)
-            except Exception as e:
-                logger.error(f"Failed to send WS message: {e}")
-                dead_connections.add(connection)
-        for connection in dead_connections:
-            self.disconnect(connection)
+        await self._broadcast({
+            "event": "TASK_UPDATE",
+            "task_id": task_id,
+            "status": status,
+            "topic": topic
+        })
 
     async def broadcast_indexing_progress(self, progress: int, message_str: str):
-        message = json.dumps({"event": "INDEXING_PROGRESS", "progress": progress, "message": message_str})
-        dead_connections = set()
-        for connection in list(self.active_connections):
-            try:
-                await connection.send_text(message)
-            except Exception as e:
-                logger.error(f"Failed to send WS message: {e}")
-                dead_connections.add(connection)
-        for connection in dead_connections:
-            self.disconnect(connection)
+        await self._broadcast({
+            "event": "INDEXING_PROGRESS",
+            "progress": progress,
+            "message": message_str
+        })
 
 ws_manager = ConnectionManager()

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict
+from collections import defaultdict
 import json
 from core.database import get_db_connection
 
@@ -51,25 +52,32 @@ def save_session(session: SessionCreate):
             session.timeLimitSeconds, session.timeUsedSeconds, session.mode
         ))
 
-        # Save individual questions and their answers
+        # Batch prepare individual questions and their answers
         q_dict = {q["id"]: q for q in session.questions}
+        question_params = []
+
         for ans in session.answers:
             q = q_dict.get(ans.questionId)
-            if not q: continue
+            if not q:
+                continue
 
-            cursor.execute("""
-                INSERT OR REPLACE INTO session_questions (
-                    session_id, question_id, selected_option, is_correct, timed_out,
-                    time_spent_ms, timestamp, question_text, opt_a, opt_b, opt_c, opt_d,
-                    correct_answer, explanation, topic
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
+            question_params.append((
                 session.id, ans.questionId, ans.selected, 1 if ans.isCorrect else 0,
                 1 if ans.timedOut else 0, ans.timeSpentMs, ans.timestamp,
                 q.get("question"), q.get("option_a"), q.get("option_b"),
                 q.get("option_c"), q.get("option_d"), q.get("correct_answer"),
                 q.get("explanation"), q.get("topic_name")
             ))
+
+        # Execute all question inserts in a single C-level transaction
+        if question_params:
+            cursor.executemany("""
+                INSERT OR REPLACE INTO session_questions (
+                    session_id, question_id, selected_option, is_correct, timed_out,
+                    time_spent_ms, timestamp, question_text, opt_a, opt_b, opt_c, opt_d,
+                    correct_answer, explanation, topic
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, question_params)
 
         # Add to queue for background processing
         cursor.execute("SELECT 1 FROM task_queue WHERE task_type = 'SESSION_PROCESSING' AND payload LIKE ?", (f'%"{session.id}"%',))
@@ -86,6 +94,8 @@ def save_session(session: SessionCreate):
 def get_session_history():
     with get_db_connection() as conn:
         cursor = conn.cursor()
+
+        # 1. Fetch all base sessions
         cursor.execute("""
             SELECT id, subject_name, date, timestamp, total_questions, correct_answers,
                    wrong_answers, unanswered, score, max_score, accuracy, time_limit_seconds,
@@ -95,9 +105,21 @@ def get_session_history():
         """)
         sessions = [dict(row) for row in cursor.fetchall()]
 
-        for s in sessions:
-            cursor.execute("SELECT DISTINCT topic FROM session_questions WHERE session_id = ?", (s["id"],))
-            s["topics"] = [row["topic"] for row in cursor.fetchall() if row["topic"]]
+        if sessions:
+            # 2. Fetch all unique topics across all sessions in a single query
+            cursor.execute("""
+                SELECT DISTINCT session_id, topic
+                FROM session_questions
+                WHERE topic IS NOT NULL AND topic != ''
+            """)
+
+            # 3. Map topics to their respective sessions in O(N) memory time
+            topics_by_session = defaultdict(list)
+            for row in cursor.fetchall():
+                topics_by_session[row["session_id"]].append(row["topic"])
+
+            for s in sessions:
+                s["topics"] = topics_by_session.get(s["id"], [])
 
         return sessions
 

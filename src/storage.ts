@@ -67,7 +67,6 @@ export function loadPersistence(): AppPersistence {
     if (!raw) return getDefaultPersistence();
     const data = JSON.parse(raw) as AppPersistence;
 
-    // Migration: convert array topicExpertise to Record
     if (Array.isArray(data.topicExpertise)) {
       const migratedExpertise: Record<string, TopicExpertise> = {};
       for (const exp of data.topicExpertise) {
@@ -91,8 +90,7 @@ export function savePersistence(data: AppPersistence): void {
 }
 
 export function exportPersistenceJSON(): string {
-  const data = loadPersistence();
-  return JSON.stringify(data, null, 2);
+  return JSON.stringify(loadPersistence(), null, 2);
 }
 
 export function importPersistenceJSON(json: string): AppPersistence | null {
@@ -106,13 +104,16 @@ export function importPersistenceJSON(json: string): AppPersistence | null {
 }
 
 export function getTodayString(): string {
-  return new Date().toISOString().split('T')[0];
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().split('T')[0];
 }
 
 export function getYesterdayString(): string {
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  return yesterday.toISOString().split('T')[0];
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().split('T')[0];
 }
 
 export function getCurrentHour(): number {
@@ -135,9 +136,11 @@ export function updateHabitLog(
     const existing = { ...newHabitLog[existingIdx] };
     existing.questionsAnswered += questionsAnswered;
     existing.correctAnswers += correctAnswers;
+
     if (!existing.subjects.includes(subject)) {
       existing.subjects = [...existing.subjects, subject];
     }
+
     existing.sessionsCount += 1;
     existing.timeSpentSeconds += timeSpent;
 
@@ -172,7 +175,6 @@ export function updateHabitLog(
     });
   }
 
-  // O(1) Streak Calculation (avoids parsing/sorting all 365 dates on every answer)
   let newStreak = persistence.streakDays;
   if (persistence.lastActiveDate !== today) {
     if (persistence.lastActiveDate === getYesterdayString() || !persistence.lastActiveDate) {
@@ -204,7 +206,7 @@ export function addToReviewQueue(
   const now = Date.now();
   const newItem: ReviewQueueItem = {
     ...item,
-    id: `review_${now}_${Math.random().toString(36).substring(2, 11)}`,
+    id: crypto?.randomUUID ? crypto.randomUUID() : `review_${now}_${Math.random().toString(36).substring(2, 11)}`,
     dateAdded: new Date(now).toISOString(),
     addedTimestamp: now,
     reviewed: false,
@@ -212,7 +214,6 @@ export function addToReviewQueue(
 
   const newQueue = [...persistence.reviewQueue, newItem];
 
-  // O(N) Eviction: Find first reviewed to remove, otherwise remove oldest unreviewed
   if (newQueue.length > persistence.reviewQueueLimit) {
     const firstReviewedIdx = newQueue.findIndex(r => r.reviewed);
     if (firstReviewedIdx !== -1) {
@@ -303,6 +304,7 @@ export function updateAnkiCard(
 
   const nextDate = new Date();
   nextDate.setDate(nextDate.getDate() + card.interval);
+  nextDate.setMinutes(nextDate.getMinutes() - nextDate.getTimezoneOffset());
   card.nextReviewDate = nextDate.toISOString().split('T')[0];
 
   if (cardIdx === -1) newAnkiCards.push(card);
@@ -403,7 +405,6 @@ function findBand(config: RankSimConfig, projectedMarks: number) {
   const bands = config.bands || [];
   const currentBand = bands.find(b => projectedMarks >= b.marksMin && projectedMarks <= b.marksMax) ?? null;
 
-  // Linear scan (O(N) where N < 20) instead of re-sorting arrays on every call
   let nextBand: typeof currentBand = null;
   let minDiff = Infinity;
   for (const b of bands) {
@@ -434,7 +435,6 @@ export function simulateRank(
     return { projectedMarks, estimatedRank: 0, percentile: '-', nearestAbove: null, nearestBelow: null, ...baseSim };
   }
 
-  // Assuming dataPoints is stored pre-sorted descending by the RankConfigEditor UI
   const topRankValue = dps[dps.length - 1].rank;
 
   const exact = dps.find(d => d.marks === projectedMarks);
@@ -443,13 +443,16 @@ export function simulateRank(
     return { projectedMarks, estimatedRank: exact.rank, percentile, nearestAbove: null, nearestBelow: null, ...baseSim };
   }
 
-  const above = dps.find(d => d.marks >= projectedMarks) ?? null;
-
+  let above = null;
   let below = null;
-  for (let i = dps.length - 1; i >= 0; i--) {
-    if (dps[i].marks <= projectedMarks) {
+
+  // Single O(N) scan accurately assigns tightest bounds in a descending array
+  for (let i = 0; i < dps.length; i++) {
+    if (dps[i].marks >= projectedMarks) {
+      above = dps[i];
+    }
+    if (dps[i].marks <= projectedMarks && !below) {
       below = dps[i];
-      break;
     }
   }
 
@@ -459,6 +462,7 @@ export function simulateRank(
     const percentile = topRankValue > 0 ? (((topRankValue - estRank) / topRankValue) * 100).toFixed(1) : '-';
     return { projectedMarks, estimatedRank: estRank, percentile, nearestAbove: null, nearestBelow: best, ...baseSim };
   }
+
   if (!below) {
     const worst = dps[dps.length - 1];
     return { projectedMarks, estimatedRank: worst.rank + 10000, percentile: '0.0', nearestAbove: worst, nearestBelow: null, ...baseSim };

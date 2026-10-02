@@ -42,16 +42,17 @@ class AsyncPriorityQueueWorker:
         while self.running:
             task_id = None
             try:
-                task_data = await asyncio.to_thread(self._fetch_highest_priority_task)
+                # Atomically fetch and claim the task to prevent race conditions
+                task_data = await asyncio.to_thread(self._claim_highest_priority_task)
                 if not task_data:
                     await asyncio.sleep(1.0)
                     continue
 
                 task_id, task_type, priority, mcq_id, payload_str = task_data
                 payload = json.loads(payload_str)
-                await asyncio.to_thread(self._update_task_status, task_id, "PROCESSING")
 
-                if task_type in ("SESSION_EXPLAIN", "BATCH_PRECOMPUTE"):
+                # Consolidated synthesis logic (DRY principle)
+                if task_type in ("SESSION_EXPLAIN", "BATCH_PRECOMPUTE", "synthesis"):
                     topic = payload.get("topic", "")
                     mcq_context = payload.get("mcq_context", None)
 
@@ -66,20 +67,13 @@ class AsyncPriorityQueueWorker:
                         asyncio.to_thread(generate_topic_report, topic, search_results, synthesis_output),
                         asyncio.to_thread(self._persist_cached_synthesis, topic, synthesis_output, search_results),
                     )
+
                 elif task_type == "SESSION_PROCESSING":
+                    # Deferred import to avoid circular dependencies at startup
                     from agents.tema_q.session_processor import process_session_questions
                     session_id = payload.get("session_id", "")
                     if session_id:
                         await process_session_questions(session_id)
-                elif task_type == "synthesis":
-                    topic = payload.get("topic", "")
-                    mcq_context = payload.get("mcq_context", None)
-                    search_results = await asyncio.to_thread(search_index, topic, limit_per_source=3)
-                    synthesis_output = await run_tema_q_synthesis(topic, search_results, mcq_context)
-                    await asyncio.gather(
-                        asyncio.to_thread(generate_topic_report, topic, search_results, synthesis_output),
-                        asyncio.to_thread(self._persist_cached_synthesis, topic, synthesis_output, search_results),
-                    )
 
                 await asyncio.to_thread(self._update_task_status, task_id, "COMPLETED")
 
@@ -113,12 +107,22 @@ class AsyncPriorityQueueWorker:
             )
             conn.commit()
 
-    def _fetch_highest_priority_task(self) -> Optional[Tuple]:
+    def _claim_highest_priority_task(self) -> Optional[Tuple]:
+        """Atomically claims the highest priority pending task using SQLite RETURNING."""
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT task_id, task_type, priority, mcq_id, payload FROM task_queue WHERE status = 'PENDING' ORDER BY priority ASC, task_id ASC LIMIT 1"
-            )
+            cursor.execute("""
+                UPDATE task_queue
+                SET status = 'PROCESSING', updated_at = unixepoch('now')
+                WHERE task_id = (
+                    SELECT task_id FROM task_queue
+                    WHERE status = 'PENDING'
+                    ORDER BY priority ASC, task_id ASC
+                    LIMIT 1
+                )
+                RETURNING task_id, task_type, priority, mcq_id, payload
+            """)
+            conn.commit()
             return cursor.fetchone()
 
     def _update_task_status(self, task_id: int, status: str, error_message: str = None):

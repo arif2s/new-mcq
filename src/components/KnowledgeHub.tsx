@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { BookOpen, CheckCircle, RotateCcw, Play, Clock, ArrowRight } from 'lucide-react';
+import { BookOpen, CheckCircle, RotateCcw, Clock, } from 'lucide-react';
 import { AppPersistence } from '../types';
 import { fetchSessionHistory } from '../api';
 
@@ -11,7 +11,7 @@ interface KnowledgeHubProps {
   onRetakeSet: (session: any) => void;
 }
 
-export default function KnowledgeHub({ persistence, onNavigate, onStudyTopics, onReviewExplanations, onRetakeSet }: KnowledgeHubProps) {
+export default function KnowledgeHub({ onStudyTopics, onReviewExplanations, onRetakeSet }: KnowledgeHubProps) {
   const [sessions, setSessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
