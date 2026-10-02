@@ -75,7 +75,7 @@ async def run_indexing():
             await ws_manager.broadcast_indexing_progress(100, "No enabled sources to index.")
             return
 
-        index, reader = get_index()
+        index = get_index()
         writer = index.writer()
         writer.delete_all_documents()
         writer.commit()

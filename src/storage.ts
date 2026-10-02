@@ -58,6 +58,7 @@ export function getDefaultPersistence(): AppPersistence {
       },
     ],
     reviewQueueLimit: 50,
+    processingQueueLimit: 10,
   };
 }
 
@@ -75,6 +76,7 @@ export function loadPersistence(): AppPersistence {
       data.topicExpertise = migratedExpertise;
     }
 
+    if (data.processingQueueLimit === undefined) data.processingQueueLimit = 10;
     return { ...getDefaultPersistence(), ...data };
   } catch {
     return getDefaultPersistence();

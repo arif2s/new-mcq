@@ -90,6 +90,25 @@ def save_session(session: SessionCreate):
         conn.commit()
     return {"status": "success", "session_id": session.id}
 
+class DeleteSessionsRequest(BaseModel):
+    session_ids: List[str]
+
+@router.post("/delete")
+def delete_sessions(req: DeleteSessionsRequest):
+    if not req.session_ids:
+        return {"status": "success"}
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        placeholders = ",".join("?" * len(req.session_ids))
+
+        # Delete related questions first (if cascade isn't set)
+        cursor.execute(f"DELETE FROM session_questions WHERE session_id IN ({placeholders})", req.session_ids)
+        # Delete the sessions
+        cursor.execute(f"DELETE FROM quiz_sessions WHERE id IN ({placeholders})", req.session_ids)
+
+        conn.commit()
+    return {"status": "success"}
+
 @router.get("/history")
 def get_session_history():
     with get_db_connection() as conn:

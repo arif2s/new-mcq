@@ -5,7 +5,6 @@ from config import INDEX_PATH
 
 _schema = None
 _index = None
-_reader = None
 
 def get_schema():
     global _schema
@@ -21,17 +20,16 @@ def get_schema():
     return _schema
 
 def get_index():
-    global _index, _reader
+    global _index
     if _index is None:
         os.makedirs(INDEX_PATH, exist_ok=True)
         _index = tantivy.Index(get_schema(), path=str(INDEX_PATH))
-        _reader = _index.reader()
-    return _index, _reader
+    return _index
 
 def search_index(query_str: str, limit_per_source: int = 3) -> dict:
-    index, reader = get_index()
-    reader.reload()
-    searcher = reader.searcher()
+    index = get_index()
+    index.reload()
+    searcher = index.searcher()
 
     # Fallback for complex characters breaking the query parser
     try:

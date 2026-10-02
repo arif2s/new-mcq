@@ -50,6 +50,18 @@ export async function fetchSessionHistory(): Promise<any[]> {
   }
 }
 
+export async function deleteSessions(sessionIds: string[]): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/sessions/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_ids: sessionIds }),
+    });
+  } catch (e) {
+    console.error('Failed to delete sessions', e);
+  }
+}
+
 export async function fetchSessionQuestions(sessionId: string): Promise<any[]> {
   try {
     const res = await fetch(`${API_BASE}/sessions/${sessionId}/questions`);

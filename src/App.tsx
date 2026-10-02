@@ -1,5 +1,5 @@
 import SettingsView from "./components/SettingsView";
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Menu, X, HelpCircle } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import HomeView from './components/HomeView';
@@ -431,6 +431,13 @@ export default function App() {
   const handleUpdateRankConfigs = useCallback((configs: RankSimConfig[]) => setPersistence(prev => ({ ...prev, rankSimConfigs: configs })), []);
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const mainScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (mainScrollRef.current) {
+      mainScrollRef.current.scrollTop = 0;
+    }
+  }, [currentView, activeQuiz?.currentIndex, activeSessionId, lastResult]);
 
   const renderContent = () => {
     if (currentView === 'study-notes' && pendingQuiz) {
@@ -501,7 +508,10 @@ export default function App() {
     }
     if (currentView === 'dashboard') return <Dashboard persistence={persistence} onUpdateRankConfigs={handleUpdateRankConfigs} />;
     if (currentView === 'habits') return <HabitTracker persistence={persistence} />;
-    if (currentView === 'queue') return <QueueStatus />;
+    if (currentView === 'queue') return <QueueStatus
+      persistence={persistence}
+      onUpdateLimit={(limit) => setPersistence(prev => ({ ...prev, processingQueueLimit: limit }))}
+    />;
     if (currentView === 'expertise') return <ExpertiseMap persistence={persistence} />;
     if (currentView === 'settings') return <SettingsView />;
     if (currentView === 'knowledge') {
@@ -536,7 +546,7 @@ export default function App() {
   };
 
   return (
-    <div className="flex min-h-screen bg-gray-950">
+    <div className="flex h-screen bg-gray-950 overflow-hidden">
       {pendingQuiz && currentView !== 'study-notes' && (
         <PreQuizModal
           config={pendingQuiz.config}
@@ -566,11 +576,11 @@ export default function App() {
         <div className="lg:hidden fixed inset-0 bg-black/60 z-30" onClick={() => setSidebarOpen(false)} />
       )}
 
-      <div className={`fixed lg:static z-40 transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+      <div className={`fixed lg:static h-full z-40 transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         <Sidebar
           subjects={persistence.subjects}
           onAddSubject={handleAddSubject}
-
+          processingQueueLimit={persistence.processingQueueLimit}
           onStartQuiz={(config) => {
             handleStartQuiz(config);
             setSidebarOpen(false);
@@ -585,7 +595,7 @@ export default function App() {
         />
       </div>
 
-      <main className="flex-1 overflow-y-auto min-h-screen lg:ml-0">
+      <main ref={mainScrollRef} className="flex-1 overflow-y-auto h-full lg:ml-0">
         {renderContent()}
       </main>
     </div>

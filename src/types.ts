@@ -189,6 +189,7 @@ export interface AppPersistence {
   totalReviewedEver: number;
   lastActiveDate: DateString;
   reviewQueueLimit: number;
+  processingQueueLimit: number;
 }
 
 // Quiz configuration for a session

@@ -8,6 +8,7 @@ import { parseCSV, generateSampleCSV } from '../csvParser';
 
 interface SidebarProps {
   subjects: SubjectData[];
+  processingQueueLimit?: number;
   onAddSubject: (name: string, fileName: string, questions: QuizQuestion[]) => void;
   onStartQuiz: (config: QuizConfig) => void;
   onNavigate: (view: string) => void;
@@ -18,6 +19,7 @@ interface SidebarProps {
 
 export default function Sidebar({
   subjects,
+  processingQueueLimit = 10,
   onAddSubject,
   onStartQuiz,
   onNavigate,
@@ -207,6 +209,12 @@ export default function Sidebar({
   };
 
   const handleProcessRemote = async () => {
+    if (questionCount > processingQueueLimit) {
+      if (!confirm(`Warning: You are about to add ${questionCount} topics to the queue, which exceeds the configured limit of ${processingQueueLimit}.\n\nThis may crash the LM Studio backend if it runs out of memory or times out.\n\nAre you sure you want to proceed?`)) {
+        return;
+      }
+    }
+
     try {
       const res = await fetch('/api/mcq/generate_set', {
         method: 'POST',
@@ -258,7 +266,7 @@ export default function Sidebar({
   ];
 
   return (
-    <div className="w-80 min-h-screen bg-gray-900 border-r border-gray-700 flex flex-col overflow-y-auto">
+    <div className="w-80 h-full bg-gray-900 border-r border-gray-700 flex flex-col overflow-y-auto">
       {/* Logo */}
       <div className="p-5 border-b border-gray-700">
         <h1 className="text-2xl font-bold text-brand-400 flex items-center gap-2">
