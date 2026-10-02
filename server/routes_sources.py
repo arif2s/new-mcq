@@ -69,7 +69,7 @@ async def run_indexing():
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM knowledge_sources WHERE enabled = 1")
-            sources = cursor.fetchall()
+            sources = [dict(r) for r in cursor.fetchall()]
 
         if not sources:
             await ws_manager.broadcast_indexing_progress(100, "No enabled sources to index.")
@@ -133,13 +133,13 @@ async def run_indexing():
                         writer.add_document(doc)
                         item_count += 1
 
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
+            with get_db_connection() as update_conn:
+                update_cursor = update_conn.cursor()
+                update_cursor.execute(
                     "UPDATE knowledge_sources SET itemCount = ?, lastIndexed = ? WHERE id = ?",
                     (item_count, "Just now", src["id"])
                 )
-                conn.commit()
+                update_conn.commit()
 
         writer.commit()
         await ws_manager.broadcast_indexing_progress(100, "Indexing Complete! All local knowledge material ready for AI RAG.")
