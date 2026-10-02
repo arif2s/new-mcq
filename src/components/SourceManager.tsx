@@ -41,7 +41,7 @@ export default function SourceManager() {
       const res = await fetch('/api/sources');
       if (res.ok) {
         const data = await res.json();
-        setSources(data.sources || []);
+        setSources(Array.isArray(data) ? data : (data.sources || []));
       } else {
         throw new Error("Fallback to mock data");
       }
