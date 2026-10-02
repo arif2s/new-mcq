@@ -12,7 +12,8 @@ export default function SettingsView() {
       const res = await fetch('/api/mcq/build_db', { method: 'POST' });
       const data = await res.json();
       if (data.status === 'success') {
-        setDbStatus('Database generation started in background.');
+        setDbStatus('Database built successfully!');
+        window.dispatchEvent(new Event('db_updated'));
       } else {
         setDbStatus('Error: ' + data.message);
       }

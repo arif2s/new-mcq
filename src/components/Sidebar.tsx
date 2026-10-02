@@ -62,8 +62,28 @@ export default function Sidebar({
   }, []);
 
   useEffect(() => {
-    fetch('/api/mcq/subjects').then(res => res.json()).then(data => setRemoteSubjects(data)).catch(console.error);
-    fetch('/api/mcq/topics').then(res => res.json()).then(data => setRemoteTopics(data)).catch(console.error);
+    const fetchData = () => {
+      fetch('/api/mcq/subjects').then(res => res.json()).then(data => setRemoteSubjects(data)).catch(console.error);
+      fetch('/api/mcq/topics').then(res => res.json()).then(data => setRemoteTopics(data)).catch(console.error);
+      fetch('/api/mcq/db_status')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'success') {
+            setDbExists(data.exists);
+          } else {
+            setDbExists(false);
+          }
+        })
+        .catch((error) => {
+          console.error(error);
+          setDbExists(false);
+        });
+    };
+
+    fetchData();
+
+    window.addEventListener('db_updated', fetchData);
+    return () => window.removeEventListener('db_updated', fetchData);
   }, []);
 
   useEffect(() => {
@@ -266,34 +286,36 @@ export default function Sidebar({
       </nav>
 
       {/* Upload Section */}
-      <div className="p-4 border-b border-gray-700">
-        <h3 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
-          <Upload size={16} />
-          Upload Quiz CSV
-        </h3>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".csv"
-          onChange={handleFileUpload}
-          className="hidden"
-        />
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="w-full py-2.5 border-2 border-dashed border-gray-600 rounded-lg text-gray-400 hover:border-brand-500 hover:text-brand-400 transition-all text-sm"
-        >
-          📁 Choose CSV File
-        </button>
-        {uploadError && (
-          <p className="text-danger-500 text-xs mt-2">{uploadError}</p>
-        )}
-        <button
-          onClick={handleDownloadSample}
-          className="w-full mt-2 py-1.5 text-xs text-gray-500 hover:text-brand-400 transition-colors flex items-center justify-center gap-1"
-        >
-          <Download size={12} /> Download Sample CSV
-        </button>
-      </div>
+      {!dbExists && (
+        <div className="p-4 border-b border-gray-700">
+          <h3 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
+            <Upload size={16} />
+            Upload Quiz CSV
+          </h3>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full py-2.5 border-2 border-dashed border-gray-600 rounded-lg text-gray-400 hover:border-brand-500 hover:text-brand-400 transition-all text-sm"
+          >
+            📁 Choose CSV File
+          </button>
+          {uploadError && (
+            <p className="text-danger-500 text-xs mt-2">{uploadError}</p>
+          )}
+          <button
+            onClick={handleDownloadSample}
+            className="w-full mt-2 py-1.5 text-xs text-gray-500 hover:text-brand-400 transition-colors flex items-center justify-center gap-1"
+          >
+            <Download size={12} /> Download Sample CSV
+          </button>
+        </div>
+      )}
 
       {/* Search & Quiz Config */}
       <div className="p-4 border-b border-gray-700 flex-1 overflow-y-auto">
@@ -353,61 +375,6 @@ export default function Sidebar({
             placeholder="e.g. potassium, insulin..."
             className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 mb-2 focus:ring-brand-500 focus:border-brand-500"
           />
-
-          {/* Status Indicator */}
-          {matchedCount !== null && (
-            <div className="flex items-center gap-2 mt-1">
-              <span className="flex w-2 h-2 rounded-full bg-brand-500"></span>
-              <span className="text-xs text-brand-300">
-                {matchedCount} matching questions found
-              </span>
-            </div>
-          )}
-        </div>
-          <div className="mb-4 p-3 bg-gray-800 rounded-lg border border-brand-500/30">
-            <h4 className="text-xs font-semibold text-brand-400 mb-2">Global Knowledge Search</h4>
-
-            {/* Remote Subjects Filter */}
-            <label className="block text-xs text-gray-400 mb-1">Subject Filters</label>
-            <div className="relative mb-2">
-              <select
-                value={selectedRemoteSubjects.includes('all') ? 'all' : selectedRemoteSubjects[0] || ''}
-                onChange={e => setSelectedRemoteSubjects(e.target.value === 'all' ? ['all'] : [e.target.value])}
-                className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 appearance-none pr-8"
-              >
-                <option value="all">📋 Select All Subjects</option>
-                {remoteSubjects.map(s => (
-                  <option key={s.subject} value={s.subject}>{s.subject} ({s.count})</option>
-                ))}
-              </select>
-              <ChevronDown size={14} className="absolute right-2 top-3 text-gray-400 pointer-events-none" />
-            </div>
-
-            {/* Remote Topics Filter */}
-            <label className="block text-xs text-gray-400 mb-1">Topic Filters</label>
-            <div className="relative mb-2">
-              <select
-                value={selectedRemoteTopics.includes('all') ? 'all' : selectedRemoteTopics[0] || ''}
-                onChange={e => setSelectedRemoteTopics(e.target.value === 'all' ? ['all'] : [e.target.value])}
-                className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 appearance-none pr-8"
-              >
-                <option value="all">📋 All Topics</option>
-                {remoteTopics.map(t => (
-                  <option key={t.topic} value={t.topic}>{t.topic} ({t.count})</option>
-                ))}
-              </select>
-              <ChevronDown size={14} className="absolute right-2 top-3 text-gray-400 pointer-events-none" />
-            </div>
-
-            {/* Custom Keyword Search */}
-            <label className="block text-xs text-gray-400 mb-1">Custom Keyword Search</label>
-            <input
-              type="text"
-              value={keyword}
-              onChange={e => setKeyword(e.target.value)}
-              placeholder="e.g. potassium, insulin..."
-              className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 mb-2 focus:ring-brand-500 focus:border-brand-500"
-            />
 
           {/* Status Indicator */}
           {matchedCount !== null && (
