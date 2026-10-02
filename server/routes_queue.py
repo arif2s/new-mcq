@@ -44,13 +44,16 @@ def prepare_questions(req: PrepareRequest):
             mcq_id = existing_mcqs.get(q.question)
 
             if not mcq_id:
+                corr = q.correct_answer.strip().upper()
+                if corr not in ('A', 'B', 'C', 'D'):
+                    corr = 'A' # Fallback to avoid constraint error
                 cursor.execute("""
                     INSERT INTO mcq_bank (source_file, source_tag, question, opt_a, opt_b, opt_c, opt_d, correct_opt, csv_explanation)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     "remote_csv", q.topic_name, q.question,
                     q.option_a, q.option_b, q.option_c, q.option_d,
-                    q.correct_answer, q.explanation
+                    corr, q.explanation
                 ))
                 mcq_id = cursor.lastrowid
 

@@ -117,21 +117,28 @@ async def run_indexing():
                     # Consolidate branching logic: treat a single file as a list of 1
                     pdf_files = source_path.rglob("*.pdf") if source_path.is_dir() else [source_path] if source_path.suffix.lower() == ".pdf" else []
 
+                    import fitz
                     for file_path in pdf_files:
                         await asyncio.sleep(0)
+                        try:
+                            with fitz.open(str(file_path)) as pdf_doc:
+                                for page_num in range(pdf_doc.page_count):
+                                    await asyncio.sleep(0)
+                                    page = pdf_doc.load_page(page_num)
+                                    text = page.get_text("text")
 
-                        doc = tantivy.Document()
-                        doc.add_text("doc_id", str(file_path))
-                        doc.add_text("source_type", "pdf")
-                        doc.add_text("file_path", str(file_path))
-                        doc.add_integer("page_number", 1)
-                        doc.add_text("title", file_path.name)
+                                    doc = tantivy.Document()
+                                    doc.add_text("doc_id", f"{file_path}_{page_num}")
+                                    doc.add_text("source_type", "pdf")
+                                    doc.add_text("file_path", str(file_path))
+                                    doc.add_integer("page_number", page_num + 1)
+                                    doc.add_text("title", file_path.name)
+                                    doc.add_text("body", text)
 
-                        # Body left intact as requested; structure is ready for PyMuPDF/Docling extraction logic
-                        doc.add_text("body", f"PDF content for {file_path.name}")
-
-                        writer.add_document(doc)
-                        item_count += 1
+                                    writer.add_document(doc)
+                                    item_count += 1
+                        except Exception:
+                            continue
 
             with get_db_connection() as update_conn:
                 update_cursor = update_conn.cursor()
