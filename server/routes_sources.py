@@ -167,10 +167,19 @@ class OpenPdfPayload(BaseModel):
 def open_pdf(payload: OpenPdfPayload):
     import subprocess
     import sys
+    import os
+    from pathlib import Path
+
+    if sys.platform != 'win32':
+        return {"status": "error", "message": "PDF deep-linking via SumatraPDF is only supported on Windows."}
+
     try:
+        # Sanitize path by resolving to an absolute, real path to prevent directory traversal
+        sanitized_path = Path(payload.file_path).resolve()
+
         # We need to construct the SumatraPDF command correctly
-        # Passing flags and values properly separated: subprocess.run(["SumatraPDF", "-page", str(payload.page), payload.file_path])
-        subprocess.Popen(["SumatraPDF", "-page", str(payload.page), payload.file_path], shell=False)
+        # Passing flags and values properly separated
+        subprocess.Popen(["SumatraPDF", "-page", str(payload.page), str(sanitized_path)], shell=False)
         return {"status": "success"}
     except Exception as e:
         return {"status": "error", "message": str(e)}

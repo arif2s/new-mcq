@@ -3,6 +3,9 @@ import { BookOpen, FileText, Database, ExternalLink, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import remarkGfm from 'remark-gfm';
+import 'katex/dist/katex.min.css';
 
 interface ReferenceRendererProps {
   references: any;
@@ -117,8 +120,8 @@ export default function ReferenceRenderer({ references, correctTopics }: Referen
             </div>
             <div className="p-6 overflow-y-auto flex-1 prose prose-invert prose-brand max-w-none">
               <ReactMarkdown
-                rehypePlugins={[rehypeRaw]}
-                remarkPlugins={[remarkMath]}
+                rehypePlugins={[rehypeRaw, rehypeKatex]}
+                remarkPlugins={[remarkMath, remarkGfm]}
               >
                 {activeRef.content || "Content loaded by backend..."}
               </ReactMarkdown>

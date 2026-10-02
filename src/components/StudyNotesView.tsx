@@ -198,3 +198,4 @@ export default function StudyNotesView({ sessionId, pendingTopics, onBack, onSta
       </div>
     </div>
   );
+}
