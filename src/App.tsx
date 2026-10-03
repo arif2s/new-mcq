@@ -65,11 +65,21 @@ export default function App() {
     });
   }, []);
 
+  // OPTIMIZATION: Debounced persistence saving to prevent Windows SQLite I/O thrashing
   useEffect(() => {
-    if (isStateLoaded) {
+    if (!isStateLoaded) return;
+
+    const timeoutId = setTimeout(() => {
       savePersistence(persistence);
       saveState(persistence);
-    }
+    }, 1000); // 1-second debounce window
+
+    return () => {
+      clearTimeout(timeoutId);
+      // Flush pending save on unmount
+      savePersistence(persistence);
+      saveState(persistence);
+    };
   }, [persistence, isStateLoaded]);
 
   const handleAddSubject = useCallback((name: string, fileName: string, questions: QuizQuestion[]) => {
@@ -95,7 +105,6 @@ export default function App() {
       return updated;
     });
   }, []);
-
 
   const handleStartQuiz = useCallback((config: QuizConfig) => {
     setPersistence(prev => {
@@ -127,7 +136,6 @@ export default function App() {
         pool = pool.slice(0, config.questionCount);
       }
 
-
       if (pool.length > 0) {
         const now = Date.now();
         const newQuiz = {
@@ -148,7 +156,6 @@ export default function App() {
           targetCorrect: config.mode === 'target' ? config.questionCount : null,
         };
 
-        // Immediately persist the pending session
         const initialResult = {
           id: newQuiz.id,
           subjectName: config.subjectName,
@@ -167,8 +174,9 @@ export default function App() {
           answers: [],
           mode: config.mode,
         };
-        saveSession(initialResult, pool);
 
+        // Catch promise rejection to prevent silent crashes if backend is busy
+        saveSession(initialResult, pool).catch(console.error);
         setPendingQuiz(newQuiz);
       }
 
@@ -306,11 +314,14 @@ export default function App() {
       updated = updateHabitLog(updated, validAnswers.length, correctAnswers, prevQuiz.config.subjectName, timeUsed);
 
       const topicGroups: Record<string, { total: number; attempted: number; correct: number }> = {};
+
+      // OPTIMIZATION: Extract subject lookup outside the question loop (O(1) instead of O(N))
+      const subject = prevPersist.subjects.find(s => s.name === prevQuiz.config.subjectName);
+      const subjectQuestions = subject ? subject.questions : [];
+
       for (const q of prevQuiz.questions) {
         if (!topicGroups[q.topic_name]) {
-          const allInTopic = prevPersist.subjects
-            .find(s => s.name === prevQuiz.config.subjectName)
-            ?.questions.filter(qq => qq.topic_name === q.topic_name).length || 0;
+          const allInTopic = subjectQuestions.filter(qq => qq.topic_name === q.topic_name).length;
           topicGroups[q.topic_name] = { total: allInTopic, attempted: 0, correct: 0 };
         }
         const ans = prevQuiz.answers[q.id];
@@ -346,7 +357,7 @@ export default function App() {
       return updated;
     });
 
-    saveSession(result, prevQuiz.questions);
+    saveSession(result, prevQuiz.questions).catch(console.error);
     setLastResult(result);
     setLastQuizQuestions(prevQuiz.questions);
     setCurrentView('results');
@@ -466,10 +477,10 @@ export default function App() {
 
   const renderContent = () => {
     if (currentView === 'study-notes' && pendingQuiz) {
-      // Show notes for pending quiz topics
       return (
         <StudyNotesView
-          sessionId=""
+          // FIX: Pass the newly generated pendingQuiz.id so the frontend can poll the backend for Tantivy topics
+          sessionId={pendingQuiz.id!}
           pendingTopics={pendingQuiz.questions.map(q => q.topic_name)}
           onBack={() => setPendingQuiz(null)}
           onStartQuiz={handleStartPendingQuiz}

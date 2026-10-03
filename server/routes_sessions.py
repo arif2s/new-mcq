@@ -3,6 +3,8 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict
 from collections import defaultdict
 import json
+from contextlib import closing
+
 from core.database import get_db_connection
 from parsers.tantivy_engine import search_index
 
@@ -36,7 +38,7 @@ class SessionCreate(BaseModel):
 
 @router.post("/save")
 def save_session(session: SessionCreate):
-    with get_db_connection() as conn:
+    with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
 
         # Save session metadata
@@ -55,9 +57,7 @@ def save_session(session: SessionCreate):
         ))
 
         # Batch prepare individual questions and their answers
-        q_dict = {q["id"]: q for q in session.questions} # session.questions is List[Dict]
-
-        # Build answer map
+        q_dict = {q["id"]: q for q in session.questions}
         ans_dict = {ans.questionId: ans for ans in session.answers}
 
         question_params = []
@@ -79,7 +79,6 @@ def save_session(session: SessionCreate):
                 q.get("explanation"), q.get("topic_name")
             ))
 
-        # Execute all question inserts in a single C-level transaction
         if question_params:
             cursor.executemany("""
                 INSERT OR REPLACE INTO session_questions (
@@ -88,7 +87,8 @@ def save_session(session: SessionCreate):
                     correct_answer, explanation, topic
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, question_params)
-        # Immediate Topic Derivation and Local Reference Fetching for Progressive Rendering
+
+        # Immediate Topic Derivation and Local Reference Fetching
         topics_to_process = set()
         for q in session.questions:
             topic_name = q.get("topic_name", "General").strip()
@@ -96,27 +96,25 @@ def save_session(session: SessionCreate):
                 topic_name = "General"
             topics_to_process.add(topic_name)
 
-            # Immediately persist topic association if not exists
             cursor.execute("""
                 INSERT OR IGNORE INTO extracted_topics (question_id, topic_name, is_main_topic)
                 VALUES (?, ?, 1)
             """, (q["id"], topic_name))
 
-        # Run Tantivy search for each topic to enable immediate offline references
         for topic in topics_to_process:
             topic_key = topic.lower().replace(' ', '-')
-            # Only run if not already cached to save time
-            cursor.execute("SELECT topic_key FROM cached_syntheses WHERE topic_key = ?", (topic_key,))
+
+            cursor.execute("SELECT 1 FROM cached_syntheses WHERE topic_key = ?", (topic_key,))
             if not cursor.fetchone():
                 search_results = search_index(topic, limit_per_source=3)
 
-                # Check match types
-                has_obsidian = int(any(r.get('source_type') == 'obsidian' for r in search_results))
-                has_pdf = int(any(r.get('source_type') == 'pdf' for r in search_results))
-                has_zim = int(any(r.get('source_type') == 'zim' for r in search_results))
+                # Properly parse the Tantivy dictionary response format
+                has_obsidian = 1 if search_results.get('obsidian') else 0
+                has_pdf = 1 if search_results.get('pdf') else 0
+                has_zim = 1 if search_results.get('zim') else 0
 
                 cursor.execute("""
-                    INSERT INTO cached_syntheses (
+                    INSERT OR IGNORE INTO cached_syntheses (
                         topic_key, display_title, top_references,
                         has_obsidian_note, has_pdf_match, has_zim_match
                     ) VALUES (?, ?, ?, ?, ?, ?)
@@ -125,7 +123,6 @@ def save_session(session: SessionCreate):
                     has_obsidian, has_pdf, has_zim
                 ))
 
-                # Enqueue the individual heavy synthesis task so it starts immediately
                 cursor.execute("SELECT 1 FROM task_queue WHERE task_type = 'synthesis' AND payload LIKE ?", (f'%"{topic}"%',))
                 if not cursor.fetchone():
                     cursor.execute("""
@@ -133,8 +130,6 @@ def save_session(session: SessionCreate):
                         VALUES (?, ?)
                     """, ("synthesis", json.dumps({"topic": topic})))
 
-
-        # Add to queue for background processing
         cursor.execute("SELECT 1 FROM task_queue WHERE task_type = 'SESSION_PROCESSING' AND payload LIKE ?", (f'%"{session.id}"%',))
         if not cursor.fetchone():
             cursor.execute("""
@@ -152,13 +147,11 @@ class DeleteSessionsRequest(BaseModel):
 def delete_sessions(req: DeleteSessionsRequest):
     if not req.session_ids:
         return {"status": "success"}
-    with get_db_connection() as conn:
+    with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
         placeholders = ",".join("?" * len(req.session_ids))
 
-        # Delete related questions first (if cascade isn't set)
         cursor.execute(f"DELETE FROM session_questions WHERE session_id IN ({placeholders})", req.session_ids)
-        # Delete the sessions
         cursor.execute(f"DELETE FROM quiz_sessions WHERE id IN ({placeholders})", req.session_ids)
 
         conn.commit()
@@ -166,10 +159,9 @@ def delete_sessions(req: DeleteSessionsRequest):
 
 @router.get("/history")
 def get_session_history():
-    with get_db_connection() as conn:
+    with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
 
-        # 1. Fetch all base sessions
         cursor.execute("""
             SELECT id, subject_name, date, timestamp, total_questions, correct_answers,
                    wrong_answers, unanswered, score, max_score, accuracy, time_limit_seconds,
@@ -180,14 +172,12 @@ def get_session_history():
         sessions = [dict(row) for row in cursor.fetchall()]
 
         if sessions:
-            # 2. Fetch all unique topics across all sessions in a single query
             cursor.execute("""
                 SELECT DISTINCT session_id, topic
                 FROM session_questions
                 WHERE topic IS NOT NULL AND topic != ''
             """)
 
-            # 3. Map topics to their respective sessions in O(N) memory time
             topics_by_session = defaultdict(list)
             for row in cursor.fetchall():
                 topics_by_session[row["session_id"]].append(row["topic"])
@@ -199,7 +189,7 @@ def get_session_history():
 
 @router.get("/{session_id}/questions")
 def get_session_questions(session_id: str):
-    with get_db_connection() as conn:
+    with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT sq.question_id, sq.selected_option, sq.is_correct, sq.timed_out, sq.time_spent_ms,
@@ -214,7 +204,7 @@ def get_session_questions(session_id: str):
 
 @router.get("/{session_id}/topics")
 def get_session_topics_and_notes(session_id: str):
-    with get_db_connection() as conn:
+    with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT DISTINCT e.topic_name, c.display_title, c.enhanced_explanation, c.unified_article, c.top_references,

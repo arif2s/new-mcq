@@ -1,16 +1,23 @@
 import re
 import html
 import logging
+import functools
 
 logger = logging.getLogger(__name__)
 
-_archive_cache = {}
+# Pre-compile regex patterns at module load to avoid recompiling on every extraction
+_SCRIPT_STYLE_PATTERN = re.compile(r'<(script|style)[^>]*>.*?</\1>', flags=re.IGNORECASE | re.DOTALL)
+_HTML_TAG_PATTERN = re.compile(r'<[^>]+>')
+_WHITESPACE_PATTERN = re.compile(r'\s+')
 
+@functools.lru_cache(maxsize=4)
 def get_archive(zim_path: str):
-    if zim_path not in _archive_cache:
-        import libzim
-        _archive_cache[zim_path] = libzim.Archive(zim_path)
-    return _archive_cache[zim_path]
+    """
+    Loads and caches ZIM archives.
+    LRU cache prevents unbounded open file handles from locking up the Windows filesystem.
+    """
+    import libzim
+    return libzim.Archive(zim_path)
 
 def get_zim_article(zim_path: str, title: str) -> str:
     try:
@@ -25,12 +32,18 @@ def get_zim_article(zim_path: str, title: str) -> str:
 
         raw_html = bytes(entry.get_item().content).decode("utf-8", errors="ignore")
 
-        # Remove script and style blocks before stripping tags
-        no_scripts = re.sub(r'<(script|style)[^>]*>.*?</\1>', ' ', raw_html, flags=re.IGNORECASE | re.DOTALL)
-        clean_text = re.sub(r"<[^>]+>", " ", no_scripts)
+        # Fast C-level regex substitution
+        no_scripts = _SCRIPT_STYLE_PATTERN.sub(' ', raw_html)
+        clean_text = _HTML_TAG_PATTERN.sub(' ', no_scripts)
+
+        # Unescape entities (e.g., &amp; -> &)
         clean_text = html.unescape(clean_text)
 
-        return " ".join(clean_text.split())[:3000]
+        # Collapse whitespace quickly using pre-compiled regex
+        clean_text = _WHITESPACE_PATTERN.sub(' ', clean_text).strip()
+
+        return clean_text[:3000]
+
     except Exception as e:
         logger.warning(f"Failed to extract from ZIM {zim_path}: {e}")
         return ""

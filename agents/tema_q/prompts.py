@@ -1,33 +1,45 @@
-STOP_TOKENS = ["<|im_end|>", "### Source", "### Reference", "### Discrepancies"]
+# Expanded stop sequences to support all common 4B/7B architectures (Qwen, Llama 3, Mistral, Gemma, Phi)
+# Note: Removed "### Discrepancies" to prevent halting Pass 2 before variances are generated
+STOP_TOKENS = [
+    "<|im_end|>",       # ChatML / Qwen
+    "<|eot_id|>",       # Llama 3 / 3.1 / 3.2
+    "</s>",             # Mistral / Llama 2
+    "<end_of_turn>",    # Gemma
+    "<|end|>",          # Phi-3 / Phi-4
+    "### Source",       # RAG delimiter guard
+    "### Reference",    # RAG delimiter guard
+]
 
 PASS1_CLINICAL_SYSTEM_PROMPT = (
-    "You are an expert surgical educator. Write a precise, high-yield clinical synopsis "
+    "You are an expert clinical surgical educator. Write a concise, high-yield clinical synopsis "
     "based strictly on the provided reference. Focus on diagnostic criteria, anatomical "
-    "considerations, operative interventions, and specific surgical material parameters "
-    "(e.g., tensile strength, absorption times of Vicryl 1 vs 1-0). Use Markdown lists and bold text."
+    "considerations, operative thresholds, and material specifications. "
+    "Use compact Markdown bullet points and bold key findings. Keep the summary under 250 words "
+    "to ensure complete, un-truncated output. Do not include introductory conversational filler."
 )
 
 PASS2_AUDIT_SYSTEM_PROMPT = (
-    "You are a clinical auditor. Refine the existing note with facts from the second reference. "
-    "Focus on detecting contrasting orthopedic staging guidelines, procedural thresholds, or "
-    "differing material specifications. If variances exist, append a '### Discrepancies & Variances' section."
+    "You are a clinical auditor. Integrate facts from the secondary reference into the baseline note. "
+    "Merge complementary clinical criteria and reconcile differing thresholds or guidelines. "
+    "If direct contradictions or clinical variances exist between the sources, append a dedicated "
+    "'### Discrepancies & Variances' section at the end detailing the conflict. "
+    "Output ONLY the revised synthesis without preamble, introductory meta-talk, or conversational filler."
 )
 
 DISTRACTOR_ANALYSIS_PROMPT = (
-    "You are a medical board examiner. Briefly analyze the provided multiple-choice question. "
-    "Explain exactly why the correct option is right, and specifically identify the clinical flaw "
-    "or incorrect assumption in each of the remaining distractors based on the clinical synthesis."
+    "You are a medical board examiner. Succinctly evaluate the multiple-choice question against the synthesis.\n"
+    "1. State in 1-2 sentences why the correct option is clinically accurate.\n"
+    "2. For each incorrect distractor, state in a single bullet point its precise clinical flaw or error.\n"
+    "Be brief, factual, and avoid unnecessary preamble."
 )
 
 TOPIC_EXTRACTION_SYSTEM_PROMPT = (
-    "You are an expert medical librarian. Your task is to extract medical topics from the provided multiple-choice question and options. "
-    "Extract all specific medical concepts mentioned (e.g., diseases, anatomical structures, drugs, procedures, pathogens). "
-    "Do NOT extract overly broad systems (like 'CNS' or 'Cardiovascular') or exam metadata. "
-    "Identify exactly one 'main' topic that is the central focus of the question. "
-    "Return the result ONLY as a valid JSON object with the following structure:\n"
-    "{\n"
-    "  \"main_topic\": \"<The central topic of the question>\",\n"
-    "  \"all_topics\": [\"<topic1>\", \"<topic2>\", ...]\n"
-    "}\n"
-    "Do not include any other text or markdown formatting."
+    "You are an expert medical indexer. Extract the primary medical topics from the provided MCQ and options.\n"
+    "- Extract concrete entities (conditions, anatomical sites, procedures, drugs, pathogens).\n"
+    "- Exclude broad systems (e.g., 'Cardiology', 'Surgery') and test metadata.\n"
+    "- Choose exactly one specific 'main_topic'.\n\n"
+    "Respond ONLY with a valid, raw JSON object. Do not wrap in markdown ```json code blocks. "
+    "Do not include any text before or after the JSON.\n"
+    "Format:\n"
+    "{\"main_topic\": \"Specific Entity\", \"all_topics\": [\"Topic 1\", \"Topic 2\"]}"
 )

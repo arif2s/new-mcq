@@ -17,13 +17,45 @@ export default function StudyNotesView({ sessionId, pendingTopics, onBack, onSta
 
   useEffect(() => {
     let mounted = true;
+    let intervalId: NodeJS.Timeout;
+
+    const startPolling = () => {
+      intervalId = setInterval(async () => {
+        if (!sessionId) return;
+        try {
+          const data = await fetchSessionTopics(sessionId);
+          if (mounted && data.length > 0) {
+            setTopics(data);
+
+            // OPTIMIZATION: Stop polling once LM Studio has finished processing all topics
+            const allCompleted = data.every((t: any) => t.llm_status !== 'pending');
+            if (allCompleted) {
+              clearInterval(intervalId);
+            }
+          }
+        } catch (error) {
+          console.error("Failed to poll session topics:", error);
+        }
+      }, 3000);
+    };
 
     const loadTopics = async () => {
       if (sessionId) {
-        const data = await fetchSessionTopics(sessionId);
-        if (mounted) {
-          setTopics(data);
-          setLoading(false);
+        try {
+          const data = await fetchSessionTopics(sessionId);
+          if (mounted) {
+            setTopics(data);
+            setLoading(false);
+
+            // OPTIMIZATION: Only start the polling interval if there is actual pending work
+            const hasPending = data.some((t: any) => t.llm_status === 'pending');
+            if (hasPending) {
+              startPolling();
+            }
+          }
+        } catch (error) {
+          console.error("Failed to load initial topics:", error);
+          if (mounted) setLoading(false);
         }
       } else if (pendingTopics && pendingTopics.length > 0) {
         const uniqueTopics = [...new Set(pendingTopics)];
@@ -36,18 +68,11 @@ export default function StudyNotesView({ sessionId, pendingTopics, onBack, onSta
 
     loadTopics();
 
-    // Poll for progressive updates if any topics are pending
-    const interval = setInterval(async () => {
-        if (!sessionId) return;
-        const data = await fetchSessionTopics(sessionId);
-        if (mounted && data.length > 0) {
-            setTopics(data);
-        }
-    }, 3000);
-
     return () => {
         mounted = false;
-        clearInterval(interval);
+        if (intervalId) {
+          clearInterval(intervalId);
+        }
     };
   }, [sessionId, pendingTopics]);
 
@@ -98,7 +123,6 @@ export default function StudyNotesView({ sessionId, pendingTopics, onBack, onSta
 
   const currentTopic = topics[currentIndex];
   const isLast = currentIndex === topics.length - 1;
-
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
