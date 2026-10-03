@@ -106,10 +106,10 @@ def _extract_pdf_sync(file_path: str, page: int) -> str:
     else:
         return extract_page_slice(file_path, page)
 
-async def extract_topics_from_mcq(question: str, options: dict, skip_lm: bool = False, extractor_strategy: str = 'regex') -> dict:
+async def extract_topics_from_mcq(question: str, options: dict, explanation: str = '', skip_lm: bool = False, extractor_strategy: str = 'regex') -> dict:
     if skip_lm:
         from agents.tema_q.topic_extractor import extract_topics_local
-        return extract_topics_local(question, options, extractor_strategy)
+        return extract_topics_local(question, options, explanation, extractor_strategy)
 
     user_msg = (
         f"Question: {question}\n"
@@ -118,6 +118,7 @@ async def extract_topics_from_mcq(question: str, options: dict, skip_lm: bool = 
         f"(B) {options.get('B', '')}\n"
         f"(C) {options.get('C', '')}\n"
         f"(D) {options.get('D', '')}\n"
+        f"Explanation: {explanation}\n"
     )
 
     try:

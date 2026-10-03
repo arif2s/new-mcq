@@ -22,7 +22,7 @@ async def process_session_questions(session_id: str):
             cursor = conn.cursor()
 
             # Fetch all questions at once
-            cursor.execute("SELECT question_id, question_text, opt_a, opt_b, opt_c, opt_d FROM session_questions WHERE session_id = ?", (session_id,))
+            cursor.execute("SELECT question_id, question_text, opt_a, opt_b, opt_c, opt_d, explanation FROM session_questions WHERE session_id = ?", (session_id,))
             qs = cursor.fetchall()
 
             # Fetch persistence state exactly once
@@ -51,6 +51,7 @@ async def process_session_questions(session_id: str):
         # Gracefully handle both raw tuples and sqlite3.Row objects
         q_id = q[0] if isinstance(q, tuple) else q["question_id"]
         q_text = q[1] if isinstance(q, tuple) else q["question_text"]
+        explanation = q[6] if isinstance(q, tuple) else (q["explanation"] if "explanation" in q.keys() else "")
         options = {
             "A": q[2] if isinstance(q, tuple) else q["opt_a"],
             "B": q[3] if isinstance(q, tuple) else q["opt_b"],
@@ -58,7 +59,7 @@ async def process_session_questions(session_id: str):
             "D": q[5] if isinstance(q, tuple) else q["opt_d"]
         }
 
-        topics_data = await extract_topics_from_mcq(q_text, options, skip_lm, extractor_strategy)
+        topics_data = await extract_topics_from_mcq(q_text, options, explanation, skip_lm, extractor_strategy)
 
         main_topic = topics_data.get("main_topic", "")
         all_topics = topics_data.get("all_topics", [])

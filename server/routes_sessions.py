@@ -7,6 +7,7 @@ from contextlib import closing
 
 from core.database import get_db_connection
 from parsers.tantivy_engine import search_index
+from agents.tema_q.topic_extractor import extract_topics_local
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -88,18 +89,52 @@ def save_session(session: SessionCreate):
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, question_params)
 
+        # Fetch extractor strategy
+        cursor.execute("SELECT value FROM user_state WHERE key = 'app_persistence'")
+        row = cursor.fetchone()
+        extractor_strategy = 'regex'
+        if row:
+            try:
+                app_state = json.loads(row[0] if isinstance(row, tuple) else row["value"])
+                extractor_strategy = app_state.get('extractorStrategy', 'regex')
+            except Exception:
+                pass
+
         # Immediate Topic Derivation and Local Reference Fetching
         topics_to_process = set()
         for q in session.questions:
-            topic_name = q.get("topic_name", "General").strip()
-            if not topic_name:
-                topic_name = "General"
-            topics_to_process.add(topic_name)
+            options = {
+                "A": q.get("option_a", ""),
+                "B": q.get("option_b", ""),
+                "C": q.get("option_c", ""),
+                "D": q.get("option_d", "")
+            }
+            extracted_data = extract_topics_local(
+                q.get("question", ""),
+                options,
+                q.get("explanation", ""),
+                extractor_strategy
+            )
 
-            cursor.execute("""
-                INSERT OR IGNORE INTO extracted_topics (question_id, topic_name, is_main_topic)
-                VALUES (?, ?, 1)
-            """, (q["id"], topic_name))
+            main_topic = extracted_data.get("main_topic", "General Medical Concept")
+            all_topics = extracted_data.get("all_topics", [])
+
+            if main_topic and main_topic not in all_topics:
+                all_topics.append(main_topic)
+
+            if not all_topics:
+                all_topics = ["General Medical Concept"]
+                main_topic = "General Medical Concept"
+
+            # Update the session_questions topic to the dynamically extracted main topic
+            cursor.execute("UPDATE session_questions SET topic = ? WHERE session_id = ? AND question_id = ?", (main_topic, session.id, q["id"]))
+
+            for topic in all_topics:
+                topics_to_process.add(topic)
+                cursor.execute("""
+                    INSERT OR IGNORE INTO extracted_topics (question_id, topic_name, is_main_topic)
+                    VALUES (?, ?, ?)
+                """, (q["id"], topic, 1 if topic == main_topic else 0))
 
         for topic in topics_to_process:
             topic_key = topic.lower().replace(' ', '-')

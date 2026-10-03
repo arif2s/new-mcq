@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import List
 import json
 from core.database import get_db_connection
+from agents.tema_q.topic_extractor import extract_topics_local
 
 router = APIRouter(prefix="/api/queue", tags=["queue"])
 
@@ -37,11 +38,39 @@ def prepare_questions(req: PrepareRequest):
 
         mcq_ids_for_tasks = []
 
+        # Fetch extractor strategy
+        cursor.execute("SELECT value FROM user_state WHERE key = 'app_persistence'")
+        row = cursor.fetchone()
+        extractor_strategy = 'regex'
+        if row:
+            try:
+                app_state = json.loads(row[0] if isinstance(row, tuple) else row["value"])
+                extractor_strategy = app_state.get('extractorStrategy', 'regex')
+            except Exception:
+                pass
+
         for q in req.questions:
             if not q.question.strip():
                 continue
 
             mcq_id = existing_mcqs.get(q.question)
+
+            options = {
+                "A": q.option_a,
+                "B": q.option_b,
+                "C": q.option_c,
+                "D": q.option_d
+            }
+            extracted_data = extract_topics_local(q.question, options, q.explanation, extractor_strategy)
+            all_topics = extracted_data.get("all_topics", [])
+            main_topic = extracted_data.get("main_topic", "General Medical Concept")
+
+            if main_topic and main_topic not in all_topics:
+                all_topics.append(main_topic)
+
+            if not all_topics:
+                all_topics = ["General Medical Concept"]
+                main_topic = "General Medical Concept"
 
             if not mcq_id:
                 corr = q.correct_answer.strip().upper()
@@ -51,13 +80,14 @@ def prepare_questions(req: PrepareRequest):
                     INSERT INTO mcq_bank (source_file, source_tag, question, opt_a, opt_b, opt_c, opt_d, correct_opt, csv_explanation)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    "remote_csv", q.topic_name, q.question,
+                    "remote_csv", main_topic, q.question,
                     q.option_a, q.option_b, q.option_c, q.option_d,
                     corr, q.explanation
                 ))
                 mcq_id = cursor.lastrowid
 
-            mcq_ids_for_tasks.append((mcq_id, q.topic_name))
+            for topic in all_topics:
+                mcq_ids_for_tasks.append((mcq_id, topic))
 
         # 3. Bulk fetch existing tasks and batch insert the new ones
         if mcq_ids_for_tasks:

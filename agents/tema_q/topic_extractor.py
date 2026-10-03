@@ -35,11 +35,11 @@ def get_medspacy_model():
 
     return _medspacy_nlp
 
-def extract_topics_local(question: str, options: dict, strategy: str = 'regex') -> dict:
+def extract_topics_local(question: str, options: dict, explanation: str = '', strategy: str = 'regex') -> dict:
     if strategy == 'medspacy':
         nlp = get_medspacy_model()
         if nlp:
-            combined_text = f"{question} " + " ".join(options.values())
+            combined_text = f"{question} " + " ".join(options.values()) + f" {explanation}"
             doc = nlp(combined_text)
 
             # Extract un-negated entities
@@ -56,7 +56,7 @@ def extract_topics_local(question: str, options: dict, strategy: str = 'regex') 
 
     if strategy == 'regex':
         # Single concatenation avoids multiple regex engine calls
-        combined_text = f"{question} " + " ".join(options.values())
+        combined_text = f"{question} " + " ".join(options.values()) + f" {explanation}"
         raw_matches = _MEDICAL_REGEX.findall(combined_text)
 
         seen = set()
