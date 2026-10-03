@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from typing import Optional, Tuple
+from contextlib import closing
 
 from core.database import get_db_connection
 from parsers.tantivy_engine import search_index
@@ -68,17 +69,18 @@ class AsyncPriorityQueueWorker:
                     if not is_processed:
                         # Multi-pass clinical synthesis
                         skip_lm = False
-                        with get_db_connection() as conn:
+
+                        # Use closing to prevent connection leaks
+                        with closing(get_db_connection()) as conn:
                             cursor = conn.cursor()
                             cursor.execute("SELECT value FROM user_state WHERE key = 'app_persistence'")
                             row = cursor.fetchone()
                             if row:
                                 try:
-                                    import json
-                                    app_state = json.loads(row["value"])
+                                    app_state = json.loads(row[0] if isinstance(row, tuple) else row["value"])
                                     skip_lm = app_state.get('skipLMStudio', False)
-                                except:
-                                    pass
+                                except Exception as e:
+                                    logger.warning(f"Failed to parse app_persistence for LM Studio state: {e}")
 
                         # Phase 2: Deferred/Slow LM Studio Synthesis
                         synthesis_output = await run_tema_q_synthesis(topic, search_results, mcq_context, skip_lm=skip_lm)
@@ -121,7 +123,7 @@ class AsyncPriorityQueueWorker:
                 logger.error(f"Error pruning task queue: {e}")
 
     def _execute_prune_query(self):
-        with get_db_connection() as conn:
+        with closing(get_db_connection()) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "DELETE FROM task_queue WHERE status IN ('COMPLETED', 'FAILED') AND updated_at < unixepoch('now', '-48 hours')"
@@ -129,8 +131,7 @@ class AsyncPriorityQueueWorker:
             conn.commit()
 
     def _claim_highest_priority_task(self) -> Optional[Tuple]:
-        """Atomically claims the highest priority pending task using SQLite RETURNING."""
-        with get_db_connection() as conn:
+        with closing(get_db_connection()) as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE task_queue
@@ -148,7 +149,7 @@ class AsyncPriorityQueueWorker:
             return result
 
     def _update_task_status(self, task_id: int, status: str, error_message: str = None):
-        with get_db_connection() as conn:
+        with closing(get_db_connection()) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "UPDATE task_queue SET status = ?, error_message = ?, updated_at = unixepoch('now') WHERE task_id = ?",
@@ -157,52 +158,45 @@ class AsyncPriorityQueueWorker:
             conn.commit()
 
     def _persist_initial_references(self, topic: str, results: dict):
-        with get_db_connection() as conn:
+        with closing(get_db_connection()) as conn:
             cursor = conn.cursor()
             topic_key = topic.lower().replace(" ", "-")
 
-            cursor.execute("SELECT 1 FROM cached_syntheses WHERE topic_key = ?", (topic_key,))
-            if cursor.fetchone():
-                cursor.execute("""
-                    UPDATE cached_syntheses
-                    SET top_references = ?, has_obsidian_note = ?, has_pdf_match = ?, has_zim_match = ?, updated_at = unixepoch('now')
-                    WHERE topic_key = ?
-                """, (
-                    json.dumps(results),
-                    1 if results.get("obsidian") else 0,
-                    1 if results.get("pdf") else 0,
-                    1 if results.get("zim") else 0,
-                    topic_key
-                ))
-            else:
-                cursor.execute("""
-                    INSERT INTO cached_syntheses (
-                        topic_key, display_title, enhanced_explanation, distractor_analysis,
-                        unified_article, top_references, has_obsidian_note, has_pdf_match, has_zim_match, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))
-                """, (
-                    topic_key, topic, "", "", "",
-                    json.dumps(results),
-                    1 if results.get("obsidian") else 0,
-                    1 if results.get("pdf") else 0,
-                    1 if results.get("zim") else 0
-                ))
+            # Optimized to a single UPSERT query instead of SELECT then UPDATE/INSERT
+            cursor.execute("""
+                INSERT INTO cached_syntheses (
+                    topic_key, display_title, enhanced_explanation, distractor_analysis,
+                    unified_article, top_references, has_obsidian_note, has_pdf_match, has_zim_match, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))
+                ON CONFLICT(topic_key) DO UPDATE SET
+                    top_references = excluded.top_references,
+                    has_obsidian_note = excluded.has_obsidian_note,
+                    has_pdf_match = excluded.has_pdf_match,
+                    has_zim_match = excluded.has_zim_match,
+                    updated_at = unixepoch('now')
+            """, (
+                topic_key, topic, "", "", "",
+                json.dumps(results),
+                1 if results.get("obsidian") else 0,
+                1 if results.get("pdf") else 0,
+                1 if results.get("zim") else 0
+            ))
             conn.commit()
 
     def _is_topic_fully_processed(self, topic: str) -> bool:
-        with get_db_connection() as conn:
+        with closing(get_db_connection()) as conn:
             cursor = conn.cursor()
             topic_key = topic.lower().replace(" ", "-")
             cursor.execute("SELECT unified_article FROM cached_syntheses WHERE topic_key = ?", (topic_key,))
             row = cursor.fetchone()
             if row:
-                article = row["unified_article"]
+                article = row[0] if isinstance(row, tuple) else row["unified_article"]
                 if article and "Skipped LM Studio processing" not in article and "Please add reference material" not in article:
                     return True
             return False
 
     def _persist_cached_synthesis(self, topic: str, synthesis: dict, results: dict):
-        with get_db_connection() as conn:
+        with closing(get_db_connection()) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
