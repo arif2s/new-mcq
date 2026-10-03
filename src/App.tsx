@@ -127,9 +127,11 @@ export default function App() {
         pool = pool.slice(0, config.questionCount);
       }
 
+
       if (pool.length > 0) {
         const now = Date.now();
         const newQuiz = {
+          id: `session_${now}_${Math.random().toString(36).substr(2, 5)}`,
           config,
           questions: pool,
           currentIndex: 0,
@@ -145,8 +147,31 @@ export default function App() {
           wrongCount: 0,
           targetCorrect: config.mode === 'target' ? config.questionCount : null,
         };
+
+        // Immediately persist the pending session
+        const initialResult = {
+          id: newQuiz.id,
+          subjectName: config.subjectName,
+          date: new Date(now).toISOString(),
+          timestamp: now,
+          topics: [...new Set(pool.map(q => q.topic_name))],
+          totalQuestions: pool.length,
+          correctAnswers: 0,
+          wrongAnswers: 0,
+          unanswered: pool.length,
+          score: 0,
+          maxScore: pool.length,
+          accuracy: 0,
+          timeLimitSeconds: newQuiz.timeRemainingSeconds,
+          timeUsedSeconds: 0,
+          answers: [],
+          mode: config.mode,
+        };
+        saveSession(initialResult, pool);
+
         setPendingQuiz(newQuiz);
       }
+
       return prev;
     });
   }, []);
@@ -258,7 +283,7 @@ export default function App() {
     const accuracy = validAnswers.length > 0 ? (correctAnswers / validAnswers.length) * 100 : 0;
 
     const result: TestResult = {
-      id: `test_${Date.now()}`,
+      id: prevQuiz.id || `test_${Date.now()}`,
       subjectName: prevQuiz.config.subjectName,
       date: new Date().toISOString(),
       timestamp: Date.now(),

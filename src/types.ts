@@ -205,6 +205,7 @@ export interface QuizConfig {
 
 // Active quiz state
 export interface ActiveQuiz {
+  id?: string;
   config: QuizConfig;
   questions: QuizQuestion[];
   currentIndex: number;

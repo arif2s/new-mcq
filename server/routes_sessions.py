@@ -4,6 +4,7 @@ from typing import List, Optional, Dict
 from collections import defaultdict
 import json
 from core.database import get_db_connection
+from parsers.tantivy_engine import search_index
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -44,26 +45,35 @@ def save_session(session: SessionCreate):
                 id, subject_name, date, timestamp, total_questions, correct_answers,
                 wrong_answers, unanswered, score, max_score, accuracy, time_limit_seconds,
                 time_used_seconds, mode, is_completed
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             session.id, session.subjectName, session.date, session.timestamp,
             session.totalQuestions, session.correctAnswers, session.wrongAnswers,
             session.unanswered, session.score, session.maxScore, session.accuracy,
-            session.timeLimitSeconds, session.timeUsedSeconds, session.mode
+            session.timeLimitSeconds, session.timeUsedSeconds, session.mode,
+            1 if len(session.answers) == session.totalQuestions and session.totalQuestions > 0 else 0
         ))
 
         # Batch prepare individual questions and their answers
-        q_dict = {q["id"]: q for q in session.questions}
+        q_dict = {q["id"]: q for q in session.questions} # session.questions is List[Dict]
+
+        # Build answer map
+        ans_dict = {ans.questionId: ans for ans in session.answers}
+
         question_params = []
 
-        for ans in session.answers:
-            q = q_dict.get(ans.questionId)
-            if not q:
-                continue
+        for q_id, q in q_dict.items():
+            ans = ans_dict.get(q_id)
+
+            selected = ans.selected if ans else None
+            is_correct = (1 if ans.isCorrect else 0) if ans else 0
+            timed_out = (1 if ans.timedOut else 0) if ans else 0
+            time_spent = ans.timeSpentMs if ans else 0
+            ts = ans.timestamp if ans else session.timestamp
 
             question_params.append((
-                session.id, ans.questionId, ans.selected, 1 if ans.isCorrect else 0,
-                1 if ans.timedOut else 0, ans.timeSpentMs, ans.timestamp,
+                session.id, q_id, selected, is_correct,
+                timed_out, time_spent, ts,
                 q.get("question"), q.get("option_a"), q.get("option_b"),
                 q.get("option_c"), q.get("option_d"), q.get("correct_answer"),
                 q.get("explanation"), q.get("topic_name")
@@ -78,6 +88,51 @@ def save_session(session: SessionCreate):
                     correct_answer, explanation, topic
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, question_params)
+        # Immediate Topic Derivation and Local Reference Fetching for Progressive Rendering
+        topics_to_process = set()
+        for q in session.questions:
+            topic_name = q.get("topic_name", "General").strip()
+            if not topic_name:
+                topic_name = "General"
+            topics_to_process.add(topic_name)
+
+            # Immediately persist topic association if not exists
+            cursor.execute("""
+                INSERT OR IGNORE INTO extracted_topics (question_id, topic_name, is_main_topic)
+                VALUES (?, ?, 1)
+            """, (q["id"], topic_name))
+
+        # Run Tantivy search for each topic to enable immediate offline references
+        for topic in topics_to_process:
+            topic_key = topic.lower().replace(' ', '-')
+            # Only run if not already cached to save time
+            cursor.execute("SELECT topic_key FROM cached_syntheses WHERE topic_key = ?", (topic_key,))
+            if not cursor.fetchone():
+                search_results = search_index(topic, limit_per_source=3)
+
+                # Check match types
+                has_obsidian = int(any(r.get('source_type') == 'obsidian' for r in search_results))
+                has_pdf = int(any(r.get('source_type') == 'pdf' for r in search_results))
+                has_zim = int(any(r.get('source_type') == 'zim' for r in search_results))
+
+                cursor.execute("""
+                    INSERT INTO cached_syntheses (
+                        topic_key, display_title, top_references,
+                        has_obsidian_note, has_pdf_match, has_zim_match
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    topic_key, topic, json.dumps(search_results),
+                    has_obsidian, has_pdf, has_zim
+                ))
+
+                # Enqueue the individual heavy synthesis task so it starts immediately
+                cursor.execute("SELECT 1 FROM task_queue WHERE task_type = 'synthesis' AND payload LIKE ?", (f'%"{topic}"%',))
+                if not cursor.fetchone():
+                    cursor.execute("""
+                        INSERT INTO task_queue (task_type, payload)
+                        VALUES (?, ?)
+                    """, ("synthesis", json.dumps({"topic": topic})))
+
 
         # Add to queue for background processing
         cursor.execute("SELECT 1 FROM task_queue WHERE task_type = 'SESSION_PROCESSING' AND payload LIKE ?", (f'%"{session.id}"%',))

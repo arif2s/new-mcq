@@ -17,22 +17,38 @@ export default function StudyNotesView({ sessionId, pendingTopics, onBack, onSta
 
   useEffect(() => {
     let mounted = true;
-    if (sessionId) {
-      fetchSessionTopics(sessionId).then(data => {
+
+    const loadTopics = async () => {
+      if (sessionId) {
+        const data = await fetchSessionTopics(sessionId);
         if (mounted) {
           setTopics(data);
           setLoading(false);
         }
-      });
-    } else if (pendingTopics && pendingTopics.length > 0) {
-      // Mocking fetch logic for pending quiz (normally we'd hit an API with topic names to fetch notes, doing simplified version)
-      const uniqueTopics = [...new Set(pendingTopics)];
-      setTopics(uniqueTopics.map(t => ({ topic_name: t, display_title: t, unified_article: "<p>Note generation in progress. Start quiz.</p>" })));
-      setLoading(false);
-    } else {
-       setLoading(false);
-    }
-    return () => { mounted = false; };
+      } else if (pendingTopics && pendingTopics.length > 0) {
+        const uniqueTopics = [...new Set(pendingTopics)];
+        setTopics(uniqueTopics.map(t => ({ topic_name: t, display_title: t, llm_status: 'pending' })));
+        setLoading(false);
+      } else {
+         setLoading(false);
+      }
+    };
+
+    loadTopics();
+
+    // Poll for progressive updates if any topics are pending
+    const interval = setInterval(async () => {
+        if (!sessionId) return;
+        const data = await fetchSessionTopics(sessionId);
+        if (mounted && data.length > 0) {
+            setTopics(data);
+        }
+    }, 3000);
+
+    return () => {
+        mounted = false;
+        clearInterval(interval);
+    };
   }, [sessionId, pendingTopics]);
 
   const handleNext = useCallback(() => {
