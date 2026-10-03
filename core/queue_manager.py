@@ -143,8 +143,9 @@ class AsyncPriorityQueueWorker:
                 )
                 RETURNING task_id, task_type, priority, mcq_id, payload
             """)
+            result = cursor.fetchone()
             conn.commit()
-            return cursor.fetchone()
+            return result
 
     def _update_task_status(self, task_id: int, status: str, error_message: str = None):
         with get_db_connection() as conn:
