@@ -1,0 +1,28 @@
+# Python version recommendation: Python 3.10 or 3.11 is highly recommended
+# due to compatibility with scientific libraries like medspacy, docling, and libzim on Windows.
+# Ensure you are using a 64-bit version of Python.
+
+# Core FastAPI & Web Server
+fastapi
+uvicorn
+httpx
+jinja2
+pydantic
+
+# Document Parsers & Data Extraction
+docling
+pymupdf
+libzim
+
+# LLM & Text Processing / NLP
+tiktoken
+medspacy
+
+# Search & Indexing Engine
+tantivy>=0.22
+
+# Browser Automation (for frontend verification/testing)
+playwright
+
+# Testing
+pytest
