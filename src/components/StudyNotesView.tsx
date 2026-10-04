@@ -24,13 +24,18 @@ export default function StudyNotesView({ sessionId, pendingTopics, onBack, onSta
         if (!sessionId) return;
         try {
           const data = await fetchSessionTopics(sessionId);
-          if (mounted && data.length > 0) {
-            setTopics(data);
+          if (mounted) {
+            if (data.length > 0) {
+              setTopics(data);
+            }
 
-            // OPTIMIZATION: Stop polling once LM Studio has finished processing all topics
-            const allCompleted = data.every((t: any) => t.llm_status !== 'pending');
-            if (allCompleted) {
-              clearInterval(intervalId);
+            // OPTIMIZATION: Stop polling once LM Studio has finished processing all topics,
+            // but ensure we don't stop if data is empty (still extracting)
+            if (data.length > 0) {
+              const allCompleted = data.every((t: any) => t.llm_status !== 'pending');
+              if (allCompleted) {
+                clearInterval(intervalId);
+              }
             }
           }
         } catch (error) {
@@ -47,8 +52,8 @@ export default function StudyNotesView({ sessionId, pendingTopics, onBack, onSta
             setTopics(data);
             setLoading(false);
 
-            // OPTIMIZATION: Only start the polling interval if there is actual pending work
-            const hasPending = data.some((t: any) => t.llm_status === 'pending');
+            // OPTIMIZATION: Only start the polling interval if there is actual pending work or no data yet
+            const hasPending = data.length === 0 || data.some((t: any) => t.llm_status === 'pending');
             if (hasPending) {
               startPolling();
             }

@@ -116,6 +116,22 @@ def prepare_questions(req: PrepareRequest):
         conn.commit()
     return {"status": "success"}
 
+@router.post("/clear_failed")
+def clear_failed_tasks():
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM task_queue WHERE status = 'FAILED'")
+        conn.commit()
+    return {"status": "success"}
+
+@router.post("/retry_failed")
+def retry_failed_tasks():
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE task_queue SET status = 'PENDING', error_message = NULL, updated_at = unixepoch('now') WHERE status = 'FAILED'")
+        conn.commit()
+    return {"status": "success"}
+
 @router.get("/status")
 def get_queue_status():
     with get_db_connection() as conn:

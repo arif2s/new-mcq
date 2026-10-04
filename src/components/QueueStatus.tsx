@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Database, RefreshCw, CheckCircle, Clock, Settings } from 'lucide-react';
+import { Database, RefreshCw, CheckCircle, Clock, Settings, Trash2, RotateCcw } from 'lucide-react';
 import { AppPersistence } from '../types';
 
 interface QueueStatusProps {
@@ -24,6 +24,26 @@ export default function QueueStatus({ persistence, onUpdatePersistence }: QueueS
     return () => clearInterval(int);
   }, []);
 
+  const handleClearFailed = async () => {
+    try {
+      await fetch('/api/queue/clear_failed', { method: 'POST' });
+      fetchStatus();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleRetryFailed = async () => {
+    try {
+      await fetch('/api/queue/retry_failed', { method: 'POST' });
+      fetchStatus();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const hasFailedTasks = tasks.some(t => t.status === 'FAILED');
+
   return (
     <div className="max-w-5xl mx-auto p-6 animate-fade-in">
       <div className="flex items-center justify-between mb-6">
@@ -37,10 +57,20 @@ export default function QueueStatus({ persistence, onUpdatePersistence }: QueueS
           </p>
         </div>
         <div className="flex items-center gap-3 relative">
-          <button onClick={fetchStatus} className="p-2 bg-gray-800 text-gray-300 rounded hover:bg-gray-700">
+          {hasFailedTasks && (
+            <>
+              <button onClick={handleRetryFailed} title="Retry Failed Tasks" className="p-2 bg-brand-600/20 text-brand-400 rounded hover:bg-brand-600/30">
+                <RotateCcw size={20} />
+              </button>
+              <button onClick={handleClearFailed} title="Clear Failed Tasks" className="p-2 bg-red-900/20 text-red-400 rounded hover:bg-red-900/30">
+                <Trash2 size={20} />
+              </button>
+            </>
+          )}
+          <button onClick={fetchStatus} title="Refresh Status" className="p-2 bg-gray-800 text-gray-300 rounded hover:bg-gray-700">
             <RefreshCw size={20} />
           </button>
-          <button onClick={() => setShowSettings(!showSettings)} className="p-2 bg-gray-800 text-gray-300 rounded hover:bg-gray-700">
+          <button onClick={() => setShowSettings(!showSettings)} title="Queue Settings" className="p-2 bg-gray-800 text-gray-300 rounded hover:bg-gray-700">
             <Settings size={20} />
           </button>
 

@@ -1,5 +1,5 @@
 import asyncio
-import json
+import json as json_lib
 import logging
 from typing import Optional, Tuple
 from contextlib import closing
@@ -50,7 +50,7 @@ class AsyncPriorityQueueWorker:
                     continue
 
                 task_id, task_type, priority, mcq_id, payload_str = task_data
-                payload = json.loads(payload_str)
+                payload = json_lib.loads(payload_str)
 
                 # Consolidated synthesis logic (DRY principle)
                 if task_type in ("SESSION_EXPLAIN", "BATCH_PRECOMPUTE", "synthesis"):
@@ -77,7 +77,7 @@ class AsyncPriorityQueueWorker:
                             row = cursor.fetchone()
                             if row:
                                 try:
-                                    app_state = json.loads(row[0] if isinstance(row, tuple) else row["value"])
+                                    app_state = json_lib.loads(row[0] if isinstance(row, tuple) else row["value"])
                                     skip_lm = app_state.get('skipLMStudio', False)
                                 except Exception as e:
                                     logger.warning(f"Failed to parse app_persistence for LM Studio state: {e}")
@@ -176,7 +176,7 @@ class AsyncPriorityQueueWorker:
                     updated_at = unixepoch('now')
             """, (
                 topic_key, topic, "", "", "",
-                json.dumps(results),
+                json_lib.dumps(results),
                 1 if results.get("obsidian") else 0,
                 1 if results.get("pdf") else 0,
                 1 if results.get("zim") else 0
@@ -211,7 +211,7 @@ class AsyncPriorityQueueWorker:
                     synthesis.get("enhanced_explanation", ""),
                     synthesis.get("distractor_analysis", ""),
                     synthesis.get("unified_article", ""),
-                    json.dumps(results),
+                    json_lib.dumps(results),
                     1 if results.get("obsidian") else 0,
                     1 if results.get("pdf") else 0,
                     1 if results.get("zim") else 0,

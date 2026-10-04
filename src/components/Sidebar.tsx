@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import type { QuizConfig, SubjectData, QuizQuestion } from '../types';
 import { parseCSV, generateSampleCSV } from '../csvParser';
+import { saveSession } from '../api';
 
 interface SidebarProps {
   subjects: SubjectData[];
@@ -228,13 +229,34 @@ export default function Sidebar({
       });
       const data = await res.json();
       if (data.status === 'success' && data.questions.length > 0) {
+        const sessionId = `prep-${Date.now()}`;
+        const dummyResult = {
+          id: sessionId,
+          subjectName: 'Offline Prep: ' + (selectedRemoteSubjects.length ? selectedRemoteSubjects.join(', ') : 'All'),
+          date: new Date().toISOString(),
+          timestamp: Date.now(),
+          topics: selectedRemoteTopics.length ? selectedRemoteTopics : ['Various'],
+          totalQuestions: data.questions.length,
+          correctAnswers: 0,
+          wrongAnswers: 0,
+          unanswered: data.questions.length,
+          score: 0,
+          maxScore: data.questions.length,
+          accuracy: 0,
+          mode: 'offline_prep',
+          timeLimitSeconds: 0,
+          timeUsedSeconds: 0,
+          answers: []
+        };
+        await saveSession(dummyResult as any, data.questions);
+
         const prepRes = await fetch('/api/queue/prepare', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({questions: data.questions})
         });
         if (prepRes.ok) {
-          alert('Questions queued for preparation!');
+          alert('Questions queued for preparation and added to Knowledge Hub!');
         }
       } else {
          alert('No matching questions to process.');
