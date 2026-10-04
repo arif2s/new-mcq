@@ -64,8 +64,8 @@ def search_index(query_str: str, limit_per_source: int = 3) -> dict:
         doc = searcher.doc(doc_address)
 
         # Safe extraction: Tantivy returns stored fields as lists.
-        # Using .get() prevents IndexError if a field is missing (e.g. Obsidian notes lack page_numbers)
-        source_list = doc.get("source_type")
+        # Dictionary access [] prevents IndexError if a field is missing (e.g. Obsidian notes lack page_numbers), returning an empty list
+        source_list = doc["source_type"]
         if not source_list:
             continue
 
@@ -75,10 +75,10 @@ def search_index(query_str: str, limit_per_source: int = 3) -> dict:
             results[source] = []
 
         if len(results[source]) < limit_per_source:
-            file_path_list = doc.get("file_path")
-            doc_id_list = doc.get("doc_id")
-            title_list = doc.get("title")
-            page_list = doc.get("page_number")
+            file_path_list = doc["file_path"]
+            doc_id_list = doc["doc_id"]
+            title_list = doc["title"]
+            page_list = doc["page_number"]
 
             results[source].append({
                 "doc_id": doc_id_list[0] if doc_id_list else "",
