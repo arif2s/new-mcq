@@ -183,3 +183,39 @@ def open_pdf(payload: OpenPdfPayload):
         return {"status": "success"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+@router.get("/asset")
+def get_asset(path: str):
+    from fastapi.responses import FileResponse
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT path FROM knowledge_sources WHERE type = 'obsidian' AND enabled = 1")
+        sources = cursor.fetchall()
+
+    # Sanitize path to prevent directory traversal attacks
+    target_name = Path(path).name
+
+    for source in sources:
+        vault_path = Path(source["path"])
+        if vault_path.exists():
+            # Attempt to resolve directly if it is a relative path within the vault
+            try:
+                # Resolve removes symlinks and ..
+                # This ensures the resulting path is strictly under the vault_path
+                direct_path = (vault_path / path).resolve()
+                if direct_path.is_relative_to(vault_path.resolve()) and direct_path.is_file():
+                     return FileResponse(direct_path)
+            except Exception:
+                pass
+
+            # Fallback for when obsidian links are just the filename
+            # Use os.walk which is generally faster than rglob for simple filename matching
+            import os
+            for root, _, files in os.walk(vault_path):
+                if target_name in files:
+                    found_path = Path(root) / target_name
+                    if found_path.is_file():
+                        return FileResponse(found_path)
+
+    raise HTTPException(status_code=404, detail="Asset not found")

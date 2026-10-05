@@ -76,8 +76,12 @@ export default function InspectorPanel({ topic, mcqContext }: InspectorPanelProp
   }, [topic, mcqContext]); // mcqContext included so changes to the question trigger a fresh distractor analysis
 
   const handleOpenPdf = (filePath: string, page: number) => {
-    fetch(`/api/docs/open_pdf?path=${encodeURIComponent(filePath)}&page=${page}`, { method: 'POST' }).catch(() => {
-      alert(`Opening SumatraPDF at ${filePath} page ${page}`);
+    fetch('/api/sources/open_pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_path: filePath, page: page }),
+    }).catch(() => {
+      alert(`Failed to open SumatraPDF at ${filePath} page ${page}`);
     });
   };
 
