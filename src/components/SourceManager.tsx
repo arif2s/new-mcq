@@ -11,6 +11,7 @@ export interface RagSource {
   enabled: boolean;
   itemCount?: number;
   lastIndexed?: string;
+  pdfEngine?: string;
 }
 
 export default function SourceManager() {
@@ -18,6 +19,7 @@ export default function SourceManager() {
   const [newPath, setNewPath] = useState('');
   const [newName, setNewName] = useState('');
   const [newType, setNewType] = useState<SourceType>('obsidian');
+  const [newPdfEngine, setNewPdfEngine] = useState<string>('fitz');
   const [isIndexing, setIsIndexing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [statusMessage, setStatusMessage] = useState('');
@@ -64,11 +66,15 @@ export default function SourceManager() {
       enabled: true,
       itemCount: 0,
       lastIndexed: 'Never',
+      pdfEngine: newType === 'pdf' ? newPdfEngine : undefined,
     };
 
     setSources(prev => [...prev, sourceObj]);
     setNewPath('');
     setNewName('');
+    if (newType === 'pdf') {
+      setNewPdfEngine('fitz');
+    }
 
     try {
       await fetch('/api/sources', {
@@ -244,6 +250,43 @@ export default function SourceManager() {
             </div>
           </div>
         </div>
+
+        {newType === 'pdf' && (
+          <div className="mt-4 pt-4 border-t border-gray-700/50">
+            <label className="text-sm font-medium text-gray-200 block mb-2">PDF Extraction Engine</label>
+            <div className="flex flex-col sm:flex-row gap-4">
+              <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${newPdfEngine === 'fitz' ? 'bg-brand-600/10 border-brand-500' : 'bg-gray-900/50 border-gray-700 hover:bg-gray-800'}`}>
+                <input
+                  type="radio"
+                  name="pdfEngine"
+                  value="fitz"
+                  checked={newPdfEngine === 'fitz'}
+                  onChange={() => setNewPdfEngine('fitz')}
+                  className="mt-1 text-brand-500 bg-gray-800 border-gray-600 focus:ring-brand-500"
+                />
+                <div>
+                  <div className="font-medium text-gray-200 text-sm">PyMuPDF (Fitz)</div>
+                  <div className="text-xs text-gray-400 mt-1 leading-relaxed">Fast standard text extraction. Best for single-column text without complex tables.</div>
+                </div>
+              </label>
+
+              <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${newPdfEngine === 'docling' ? 'bg-brand-600/10 border-brand-500' : 'bg-gray-900/50 border-gray-700 hover:bg-gray-800'}`}>
+                <input
+                  type="radio"
+                  name="pdfEngine"
+                  value="docling"
+                  checked={newPdfEngine === 'docling'}
+                  onChange={() => setNewPdfEngine('docling')}
+                  className="mt-1 text-brand-500 bg-gray-800 border-gray-600 focus:ring-brand-500"
+                />
+                <div>
+                  <div className="font-medium text-gray-200 text-sm">Docling (ML)</div>
+                  <div className="text-xs text-gray-400 mt-1 leading-relaxed">Extracts layout, tables, headings, and multicolumn structure accurately. Slower but better quality.</div>
+                </div>
+              </label>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="bg-gray-800/60 rounded-2xl p-6 border border-gray-700">
@@ -267,7 +310,7 @@ export default function SourceManager() {
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-semibold text-gray-200">{src.name}</p>
                       <span className="text-xs px-2 py-0.5 rounded bg-gray-800 text-gray-400 uppercase font-mono">
-                        {src.type}
+                        {src.type === 'pdf' && src.pdfEngine ? `${src.type} (${src.pdfEngine})` : src.type}
                       </span>
                     </div>
                     <p className="text-xs font-mono text-gray-400 truncate mt-0.5">{src.path}</p>

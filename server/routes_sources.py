@@ -18,6 +18,7 @@ class SourcePayload(BaseModel):
     enabled: bool = True
     itemCount: int = 0
     lastIndexed: str = "Never"
+    pdfEngine: str = "fitz"
 
 @router.get("")
 def get_sources():
@@ -28,7 +29,8 @@ def get_sources():
             {
                 "id": r["id"], "name": r["name"], "type": r["type"],
                 "path": r["path"], "enabled": bool(r["enabled"]),
-                "itemCount": r["itemCount"], "lastIndexed": r["lastIndexed"]
+                "itemCount": r["itemCount"], "lastIndexed": r["lastIndexed"],
+                "pdfEngine": r["pdfEngine"] if "pdfEngine" in r.keys() else "fitz"
             }
             for r in cursor.fetchall()
         ]
@@ -38,11 +40,11 @@ def add_source(payload: SourcePayload):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO knowledge_sources (id, name, type, path, enabled, itemCount, lastIndexed)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO knowledge_sources (id, name, type, path, enabled, itemCount, lastIndexed, pdfEngine)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             payload.id, payload.name, payload.type, payload.path,
-            int(payload.enabled), payload.itemCount, payload.lastIndexed
+            int(payload.enabled), payload.itemCount, payload.lastIndexed, payload.pdfEngine
         ))
         conn.commit()
     return {"status": "success"}
@@ -122,7 +124,12 @@ async def run_indexing():
                     pdf_files = list(source_path.rglob("*.pdf")) if source_path.is_dir() else [source_path] if source_path.suffix.lower() == ".pdf" else []
                     total_files = len(pdf_files)
 
+                    pdf_engine = src.get("pdfEngine", "fitz")
+
                     import fitz
+                    if pdf_engine == "docling":
+                        from parsers.docling_parser import extract_structured_layout
+
                     for file_idx, file_path in enumerate(pdf_files):
                         await asyncio.sleep(0)
                         try:
@@ -132,8 +139,20 @@ async def run_indexing():
                                     await asyncio.sleep(0)
                                     if page_num % 5 == 0:
                                         await ws_manager.broadcast_indexing_progress(progress, f"Indexing {src['name']} - file {file_idx+1}/{total_files} page {page_num+1}/{total_pages}: {file_path.name}")
-                                    page = pdf_doc.load_page(page_num)
-                                    text = page.get_text("text")
+
+                                    if pdf_engine == "docling":
+                                        # extract_structured_layout is 1-indexed for page_number
+                                        # page_num is 0-indexed here
+                                        # Actually docling_parser subtracts 1 from page_number, so we pass page_num + 1
+                                        # docling_parser: target_page_index = max(0, page_number - 1)
+                                        # fitz is 0 indexed.
+                                        text = await asyncio.to_thread(extract_structured_layout, str(file_path), page_num + 1)
+                                    else:
+                                        page = pdf_doc.load_page(page_num)
+                                        text = page.get_text("text")
+
+                                    if not text.strip():
+                                        continue
 
                                     doc = tantivy.Document()
                                     doc.add_text("doc_id", f"{file_path}_{page_num}")

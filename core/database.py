@@ -94,7 +94,8 @@ def initialize_database():
                 path TEXT NOT NULL,
                 enabled INTEGER DEFAULT 1,
                 itemCount INTEGER DEFAULT 0,
-                lastIndexed TEXT DEFAULT 'Never'
+                lastIndexed TEXT DEFAULT 'Never',
+                pdfEngine TEXT DEFAULT 'fitz'
             );
 
             CREATE TABLE IF NOT EXISTS csv_questions (
@@ -193,4 +194,10 @@ def initialize_database():
                 VALUES (new.rowid, new.id, new.question, new.opt_a, new.opt_b, new.opt_c, new.opt_d);
             END;
         """)
+
+        try:
+            conn.execute("ALTER TABLE knowledge_sources ADD COLUMN pdfEngine TEXT DEFAULT 'fitz'")
+        except sqlite3.OperationalError:
+            pass # Column likely already exists
+
         conn.commit()

@@ -64,7 +64,7 @@ export default function ReferenceRenderer({ references, correctTopics }: Referen
       const updatedRef = { ...ref };
       if (updatedRef.content) {
          // Replace Obsidian-style asset links ![[asset.ext]] with markdown image links ![asset.ext](/api/sources/asset?path=asset.ext)
-         updatedRef.content = updatedRef.content.replace(/!\[\[([^\]]+)\]\]/g, (match: string, p1: string) => {
+         updatedRef.content = updatedRef.content.replace(/!\[\[([^\]]+)\]\]/g, (_match: string, p1: string) => {
              return `![${p1}](/api/sources/asset?path=${encodeURIComponent(p1)})`;
          });
       }
