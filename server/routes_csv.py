@@ -41,7 +41,7 @@ def _build_mcq_query(req: GenerateSetRequest, is_count: bool = False) -> Tuple[s
         # fts5 MATCH syntax requires quotes for exact word match or phrase
         terms = [f'"{term}"*' for term in req.keyword.replace('"', '').split() if term]
         if terms:
-            params.append(" OR ".join(terms))
+            params.append(" AND ".join(terms))
         else:
             params.append(req.keyword.strip())
 

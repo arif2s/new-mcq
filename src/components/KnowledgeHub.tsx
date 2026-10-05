@@ -141,9 +141,9 @@ export default function KnowledgeHub({ onStudyTopics, onReviewExplanations, onRe
 
                 <h3 className="text-lg font-semibold text-gray-200 mb-2">Session {session.id.split('_').pop()?.substring(0,6)}</h3>
 
-                <div className="flex flex-wrap gap-1 mb-4">
+                <div className="flex flex-wrap gap-1 mb-4 h-[44px] overflow-hidden relative">
                   {session.topics && session.topics.map((t: string) => (
-                    <span key={t} className="text-[10px] px-2 py-0.5 bg-gray-700 text-gray-400 rounded-full">
+                    <span key={t} className="text-[10px] px-2 py-0.5 bg-gray-700 text-gray-400 rounded-full h-[18px]">
                       {t}
                     </span>
                   ))}
