@@ -1,0 +1,6 @@
+topic_name,question,option_a,option_b,option_c,option_d,correct_answer,explanation
+Python Basics,What is the output of print(2 ** 3)?,6,8,9,12,B,"2 ** 3 means 2 raised to the power of 3, which equals 8."
+Python Basics,Which keyword is used to create a function?,function,def,func,define,B,"The ""def"" keyword is used to define functions in Python."
+Data Types,What data type is used for true/false values?,int,bool,str,float,B,The bool data type is used to represent true/false values.
+Data Types,Which of the following is a mutable data type?,tuple,string,list,int,C,"Lists are mutable, meaning their elements can be changed after creation."
+Control Flow,"What does the ""break"" statement do in a loop?",Skips to the next iteration,Exits the loop immediately,Restarts the loop,Does nothing,B,The break statement terminates the loop entirely and continues with the next statement after the loop.

@@ -161,3 +161,25 @@ def check_lm_studio():
             return {"status": "error", "message": f"LM Studio returned status {response.status}."}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+class TopicsStatusRequest(BaseModel):
+    topics: List[str]
+
+@router.post("/topics_status")
+def topics_status(req: TopicsStatusRequest):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        existing = []
+        if req.topics:
+            placeholders = ",".join("?" * len(req.topics))
+            topic_keys = [t.lower().replace(' ', '-') for t in req.topics]
+            # Avoid SQL syntax error if no topics
+            if topic_keys:
+                cursor.execute(f"SELECT topic_key FROM cached_syntheses WHERE topic_key IN ({placeholders})", topic_keys)
+                existing_keys = {row["topic_key"] for row in cursor.fetchall()}
+
+                for t in req.topics:
+                    if t.lower().replace(' ', '-') in existing_keys:
+                        existing.append(t)
+
+        return {"status": "success", "existing_topics": list(set(existing))}
