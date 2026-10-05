@@ -128,42 +128,49 @@ async def run_indexing():
 
                     import fitz
                     if pdf_engine == "docling":
-                        from parsers.docling_parser import extract_structured_layout
+                        from parsers.docling_parser import extract_pdf_structure
 
                     for file_idx, file_path in enumerate(pdf_files):
                         await asyncio.sleep(0)
                         try:
-                            with fitz.open(str(file_path)) as pdf_doc:
-                                total_pages = pdf_doc.page_count
-                                for page_num in range(total_pages):
-                                    await asyncio.sleep(0)
-                                    if page_num % 5 == 0:
-                                        await ws_manager.broadcast_indexing_progress(progress, f"Indexing {src['name']} - file {file_idx+1}/{total_files} page {page_num+1}/{total_pages}: {file_path.name}")
-
-                                    if pdf_engine == "docling":
-                                        # extract_structured_layout is 1-indexed for page_number
-                                        # page_num is 0-indexed here
-                                        # Actually docling_parser subtracts 1 from page_number, so we pass page_num + 1
-                                        # docling_parser: target_page_index = max(0, page_number - 1)
-                                        # fitz is 0 indexed.
-                                        text = await asyncio.to_thread(extract_structured_layout, str(file_path), page_num + 1)
-                                    else:
-                                        page = pdf_doc.load_page(page_num)
-                                        text = page.get_text("text")
-
-                                    if not text.strip():
-                                        continue
-
+                            if pdf_engine == "docling":
+                                await ws_manager.broadcast_indexing_progress(progress, f"Indexing {src['name']} - file {file_idx+1}/{total_files}: {file_path.name} (Docling)")
+                                sections = await asyncio.to_thread(extract_pdf_structure, str(file_path))
+                                for section_idx, section in enumerate(sections):
                                     doc = tantivy.Document()
-                                    doc.add_text("doc_id", f"{file_path}_{page_num}")
+                                    doc.add_text("doc_id", f"{file_path}_{section['page']}_{section_idx}")
                                     doc.add_text("source_type", "pdf")
                                     doc.add_text("file_path", str(file_path))
-                                    doc.add_integer("page_number", page_num + 1)
-                                    doc.add_text("title", file_path.name)
-                                    doc.add_text("body", text)
+                                    doc.add_integer("page_number", section["page"])
+                                    doc.add_text("title", section["heading"])
+                                    doc.add_text("body", section["text"])
 
                                     writer.add_document(doc)
                                     item_count += 1
+                            else:
+                                with fitz.open(str(file_path)) as pdf_doc:
+                                    total_pages = pdf_doc.page_count
+                                    for page_num in range(total_pages):
+                                        await asyncio.sleep(0)
+                                        if page_num % 5 == 0:
+                                            await ws_manager.broadcast_indexing_progress(progress, f"Indexing {src['name']} - file {file_idx+1}/{total_files} page {page_num+1}/{total_pages}: {file_path.name}")
+
+                                        page = pdf_doc.load_page(page_num)
+                                        text = page.get_text("text")
+
+                                        if not text.strip():
+                                            continue
+
+                                        doc = tantivy.Document()
+                                        doc.add_text("doc_id", f"{file_path}_{page_num}")
+                                        doc.add_text("source_type", "pdf")
+                                        doc.add_text("file_path", str(file_path))
+                                        doc.add_integer("page_number", page_num + 1)
+                                        doc.add_text("title", file_path.name)
+                                        doc.add_text("body", text)
+
+                                        writer.add_document(doc)
+                                        item_count += 1
                         except Exception:
                             continue
 
