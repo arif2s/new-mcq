@@ -92,11 +92,15 @@ async def run_indexing():
             if source_path.exists():
                 if src["type"] == "obsidian":
                     # rglob iteratively yields paths, bypassing the memory overhead of os.walk
-                    for file_path in source_path.rglob("*.md"):
+                    files = list(source_path.rglob("*.md"))
+                    total_files = len(files)
+                    for file_idx, file_path in enumerate(files):
                         try:
                             # Yield control back to the event loop. This prevents large Obsidian vaults
                             # from locking up the thread and freezing WebSocket broadcasts.
                             await asyncio.sleep(0)
+                            if file_idx % 10 == 0:
+                                await ws_manager.broadcast_indexing_progress(progress, f"Indexing {src['name']} - file {file_idx+1}/{total_files}: {file_path.name}")
 
                             content = file_path.read_text(encoding="utf-8", errors="ignore")
 
@@ -115,15 +119,19 @@ async def run_indexing():
 
                 elif src["type"] == "pdf":
                     # Consolidate branching logic: treat a single file as a list of 1
-                    pdf_files = source_path.rglob("*.pdf") if source_path.is_dir() else [source_path] if source_path.suffix.lower() == ".pdf" else []
+                    pdf_files = list(source_path.rglob("*.pdf")) if source_path.is_dir() else [source_path] if source_path.suffix.lower() == ".pdf" else []
+                    total_files = len(pdf_files)
 
                     import fitz
-                    for file_path in pdf_files:
+                    for file_idx, file_path in enumerate(pdf_files):
                         await asyncio.sleep(0)
                         try:
                             with fitz.open(str(file_path)) as pdf_doc:
-                                for page_num in range(pdf_doc.page_count):
+                                total_pages = pdf_doc.page_count
+                                for page_num in range(total_pages):
                                     await asyncio.sleep(0)
+                                    if page_num % 5 == 0:
+                                        await ws_manager.broadcast_indexing_progress(progress, f"Indexing {src['name']} - file {file_idx+1}/{total_files} page {page_num+1}/{total_pages}: {file_path.name}")
                                     page = pdf_doc.load_page(page_num)
                                     text = page.get_text("text")
 

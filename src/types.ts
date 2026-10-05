@@ -186,6 +186,7 @@ export interface AppPersistence {
   lastActiveDate: string;
   reviewQueueLimit: number;
   processingQueueLimit?: number;
+  processingQueueHardLimit?: number;
   pdfParser?: string;
   extractorStrategy?: string;
   skipLMStudio?: boolean;

@@ -9,12 +9,18 @@ interface QueueStatusProps {
 
 export default function QueueStatus({ persistence, onUpdatePersistence }: QueueStatusProps) {
   const [tasks, setTasks] = useState<any[]>([]);
+  const [totalTasks, setTotalTasks] = useState(0);
+  const [completedTasks, setCompletedTasks] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
 
   const fetchStatus = () => {
     fetch('/api/queue/status')
       .then(res => res.json())
-      .then(data => setTasks(data))
+      .then(data => {
+        setTasks(data.tasks || []);
+        setTotalTasks(data.total_tasks || 0);
+        setCompletedTasks(data.completed_tasks || 0);
+      })
       .catch(console.error);
   };
 
@@ -52,7 +58,10 @@ export default function QueueStatus({ persistence, onUpdatePersistence }: QueueS
             <Database size={32} className="text-brand-400" />
             Background Processing Queue
           </h1>
-          <p className="text-gray-400 mt-1">
+          <p className="text-brand-400 font-mono mt-2 bg-brand-900/20 inline-block px-3 py-1 rounded-lg border border-brand-500/20">
+            {completedTasks} / {totalTasks} Completed
+          </p>
+          <p className="text-gray-400 mt-2">
             Status of MCQs being synthesized by local LLMs with detailed explanations and notes.
           </p>
         </div>
@@ -84,6 +93,16 @@ export default function QueueStatus({ persistence, onUpdatePersistence }: QueueS
                 max="500"
                 value={persistence.processingQueueLimit || 10}
                 onChange={(e) => onUpdatePersistence({ processingQueueLimit: Math.max(1, parseInt(e.target.value) || 10) })}
+                className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 mb-3"
+              />
+
+              <label className="block text-xs text-gray-400 mb-1">Queue Hard Limit</label>
+              <input
+                type="number"
+                min="1"
+                max="5000"
+                value={persistence.processingQueueHardLimit || 100}
+                onChange={(e) => onUpdatePersistence({ processingQueueHardLimit: Math.max(1, parseInt(e.target.value) || 100) })}
                 className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 mb-3"
               />
 
@@ -131,7 +150,7 @@ export default function QueueStatus({ persistence, onUpdatePersistence }: QueueS
         {tasks.length === 0 ? (
           <p className="text-gray-500">Queue is empty.</p>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">
             {tasks.map(t => (
               <div key={t.id} className="p-4 rounded-xl border bg-gray-900/60 border-gray-700 flex justify-between items-center">
                 <div className="flex-1 truncate pr-4">

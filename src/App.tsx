@@ -615,6 +615,7 @@ export default function App() {
       <div className={`fixed lg:static h-full z-40 transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         <Sidebar
           subjects={persistence.subjects}
+          processingQueueHardLimit={persistence.processingQueueHardLimit}
           onAddSubject={handleAddSubject}
           processingQueueLimit={persistence.processingQueueLimit}
           onStartQuiz={(config) => {

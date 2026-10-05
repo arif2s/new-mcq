@@ -10,6 +10,7 @@ import { saveSession } from '../api';
 interface SidebarProps {
   subjects: SubjectData[];
   processingQueueLimit?: number;
+  processingQueueHardLimit?: number;
   onAddSubject: (name: string, fileName: string, questions: QuizQuestion[]) => void;
   onStartQuiz: (config: QuizConfig) => void;
   onNavigate: (view: string) => void;
@@ -21,6 +22,7 @@ interface SidebarProps {
 export default function Sidebar({
   subjects,
   processingQueueLimit = 10,
+  processingQueueHardLimit = 100,
   onAddSubject,
   onStartQuiz,
   onNavigate,
@@ -210,8 +212,22 @@ export default function Sidebar({
   };
 
   const handleProcessRemote = async () => {
+    try {
+      // First, get the current queue status to see how many items are currently in the queue
+      const queueRes = await fetch('/api/queue/status');
+      const queueData = await queueRes.json();
+      const currentQueueSize = queueData.total_tasks || 0;
+
+      if (currentQueueSize + questionCount > processingQueueHardLimit) {
+        alert(`Queue is full! You are trying to add ${questionCount} items, but there are already ${currentQueueSize} items in the queue (Limit: ${processingQueueHardLimit}).\n\nPlease wait till space is available to add more mcqs for LM studio processing. You can proceed with reference links obtained from the Tantivy index in the meantime.`);
+        return;
+      }
+    } catch (e) {
+      console.error("Could not fetch queue status", e);
+    }
+
     if (questionCount > processingQueueLimit) {
-      if (!confirm(`Warning: You are about to add ${questionCount} topics to the queue, which exceeds the configured limit of ${processingQueueLimit}.\n\nThis may crash the LM Studio backend if it runs out of memory or times out.\n\nAre you sure you want to proceed?`)) {
+      if (!confirm(`Warning: You are about to add ${questionCount} topics to the queue, which exceeds the configured batch limit of ${processingQueueLimit}.\n\nThis may crash the LM Studio backend if it runs out of memory or times out.\n\nAre you sure you want to proceed?`)) {
         return;
       }
     }

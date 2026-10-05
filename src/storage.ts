@@ -59,6 +59,7 @@ export function getDefaultPersistence(): AppPersistence {
     ],
     reviewQueueLimit: 50,
     processingQueueLimit: 10,
+    processingQueueHardLimit: 100,
     pdfParser: 'fitz',
     extractorStrategy: 'regex',
     skipLMStudio: false,
@@ -80,6 +81,7 @@ export function loadPersistence(): AppPersistence {
     }
 
     if (data.processingQueueLimit === undefined) data.processingQueueLimit = 10;
+    if (data.processingQueueHardLimit === undefined) data.processingQueueHardLimit = 100;
     if (data.pdfParser === undefined) data.pdfParser = 'fitz';
     if (data.extractorStrategy === undefined) data.extractorStrategy = 'regex';
     if (data.skipLMStudio === undefined) data.skipLMStudio = false;
