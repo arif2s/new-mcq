@@ -50,6 +50,8 @@ export default function Sidebar({
   const [selectedRemoteSubjects, setSelectedRemoteSubjects] = useState<string[]>(['all']);
   const [selectedRemoteTopics, setSelectedRemoteTopics] = useState<string[]>(['all']);
   const [keyword, setKeyword] = useState('');
+  const [useZimRefinement, setUseZimRefinement] = useState(false);
+  const [useTantivyRefinement, setUseTantivyRefinement] = useState(false);
   const [matchedCount, setMatchedCount] = useState<number | null>(null);
 
   const [extractedTopicsData, setExtractedTopicsData] = useState<any[] | null>(null);
@@ -255,7 +257,7 @@ export default function Sidebar({
         const extractRes = await fetch('/api/queue/extract_topics', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ questions: data.questions })
+          body: JSON.stringify({ questions: data.questions, use_zim_refinement: useZimRefinement, use_tantivy_refinement: useTantivyRefinement })
         });
         const extractData = await extractRes.json();
 
@@ -610,6 +612,32 @@ export default function Sidebar({
             <Play size={18} />
             Start Learning
           </button>
+
+
+          <div className="mb-4 space-y-2">
+            <label className="flex items-center gap-2 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={useZimRefinement}
+                onChange={e => setUseZimRefinement(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-brand-500 focus:ring-brand-500"
+              />
+              <span className="text-xs text-gray-300 group-hover:text-white transition-colors">
+                Refine topics using Offline Medical Wiki (.zim)
+              </span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={useTantivyRefinement}
+                onChange={e => setUseTantivyRefinement(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-brand-500 focus:ring-brand-500"
+              />
+              <span className="text-xs text-gray-300 group-hover:text-white transition-colors">
+                Refine topics using Local Study Materials (Tantivy PDF Index)
+              </span>
+            </label>
+          </div>
 
           {/* Process Offline Button */}
           <button

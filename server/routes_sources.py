@@ -253,3 +253,42 @@ def get_asset(path: str):
                         return FileResponse(found_path)
 
     raise HTTPException(status_code=404, detail="Asset not found")
+
+@router.post("/build_zim_dict")
+async def build_zim_dict():
+    # Attempt to build the local zim dict by finding zim files and indexing their titles
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT path FROM knowledge_sources WHERE type = 'zim' AND enabled = 1")
+            zim_files = [row["path"] for row in cursor.fetchall()]
+
+            if not zim_files:
+                return {"status": "error", "message": "No enabled ZIM files found in sources."}
+
+            cursor.execute("CREATE TABLE IF NOT EXISTS zim_titles (title TEXT PRIMARY KEY)")
+            cursor.execute("DELETE FROM zim_titles")
+
+            import libzim
+            titles = []
+
+            for zim_path in zim_files:
+                try:
+                    archive = libzim.Archive(zim_path)
+
+                    # Read entries and get titles.
+                    for i in range(archive.all_entry_count):
+                        entry = archive._get_entry_by_id(i)
+                        title = entry.title
+                        if title:
+                            titles.append((title,))
+                except Exception as e:
+                    print(f"Failed reading ZIM for dictionary: {e}")
+
+            if titles:
+                cursor.executemany("INSERT OR IGNORE INTO zim_titles (title) VALUES (?)", titles)
+            conn.commit()
+
+        return {"status": "success"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}

@@ -163,6 +163,9 @@ def initialize_database():
             );
             CREATE INDEX IF NOT EXISTS idx_session_questions_sid ON session_questions (session_id);
 
+            CREATE TABLE IF NOT EXISTS zim_titles (
+                title TEXT PRIMARY KEY
+            );
             CREATE TABLE IF NOT EXISTS extracted_topics (
                 question_id TEXT NOT NULL,
                 topic_name TEXT NOT NULL,

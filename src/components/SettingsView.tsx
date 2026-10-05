@@ -6,6 +6,24 @@ export default function SettingsView() {
   const [dbStatus, setDbStatus] = useState<string>('');
   const [lmStatus, setLmStatus] = useState<{ status: 'idle' | 'testing' | 'success' | 'error', message: string }>({ status: 'idle', message: '' });
 
+  const [zimStatus, setZimStatus] = useState<{ status: 'idle' | 'building' | 'success' | 'error', message: string }>({ status: 'idle', message: '' });
+
+  const handleBuildZimDb = async () => {
+    setZimStatus({ status: 'building', message: 'Building ZIM Reference Database (this may take a while)...' });
+    try {
+      const res = await fetch('/api/sources/build_zim_dict', { method: 'POST' });
+      const data = await res.json();
+      if (data.status === 'success') {
+        setZimStatus({ status: 'success', message: 'ZIM Reference Database built successfully!' });
+      } else {
+        setZimStatus({ status: 'error', message: 'Error: ' + data.message });
+      }
+    } catch (e) {
+      setZimStatus({ status: 'error', message: 'Error connecting to server.' });
+    }
+  };
+
+
   const handleBuildDb = async () => {
     setDbStatus('Building database...');
     try {
@@ -90,6 +108,38 @@ export default function SettingsView() {
 
       <div className="border-t border-gray-700 pt-8">
         <h3 className="text-lg font-semibold text-gray-200 mb-4">Knowledge Vault</h3>
+        </div>
+
+      <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
+        <h3 className="text-lg font-semibold text-gray-200 mb-4 flex items-center gap-2">
+          <Database size={20} className="text-brand-400" />
+          ZIM Reference Database
+        </h3>
+        <p className="text-sm text-gray-400 mb-4">
+          Create a reference database from your local Medical Wikipedia (.zim) files for faster offline medical topic extraction and refinement.
+        </p>
+        <button
+          onClick={handleBuildZimDb}
+          disabled={zimStatus.status === 'building'}
+          className="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-lg text-sm transition-colors flex items-center gap-2 disabled:opacity-50"
+        >
+          <RefreshCw size={16} className={zimStatus.status === 'building' ? 'animate-spin' : ''} />
+          Build ZIM Database
+        </button>
+        {zimStatus.status !== 'idle' && (
+          <div className={`mt-4 p-3 rounded-lg border flex items-center gap-2 ${
+            zimStatus.status === 'success' ? 'bg-success-500/10 border-success-500/30 text-success-400' :
+            zimStatus.status === 'error' ? 'bg-danger-500/10 border-danger-500/30 text-danger-400' :
+            'bg-gray-900 border-gray-600 text-gray-300'
+          }`}>
+            {zimStatus.status === 'success' && <CheckCircle size={16} />}
+            {zimStatus.status === 'error' && <XCircle size={16} />}
+            <p className="text-sm">{zimStatus.message}</p>
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-gray-700 pt-8">
         <SourceManager />
       </div>
     </div>

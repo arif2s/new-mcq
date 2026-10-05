@@ -20,6 +20,8 @@ class QuestionPayload(BaseModel):
 
 class PrepareRequest(BaseModel):
     questions: List[QuestionPayload]
+    use_zim_refinement: bool = False
+    use_tantivy_refinement: bool = False
 
 @router.post("/extract_topics")
 def extract_topics(req: PrepareRequest):
@@ -44,7 +46,7 @@ def extract_topics(req: PrepareRequest):
             "C": q.option_c,
             "D": q.option_d
         }
-        extracted_data = extract_topics_local(q.question, options, q.explanation, extractor_strategy)
+        extracted_data = extract_topics_local(q.question, options, q.explanation, extractor_strategy, req.use_zim_refinement, req.use_tantivy_refinement)
         all_topics = extracted_data.get("all_topics", [])
         main_topic = extracted_data.get("main_topic", "General Medical Concept")
 
