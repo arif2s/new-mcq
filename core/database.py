@@ -12,6 +12,7 @@ def get_db_connection():
 
     # Execute all performance PRAGMAs natively in C via executescript
     conn.executescript("""
+        PRAGMA journal_mode = WAL;
         PRAGMA busy_timeout = 20000;
         PRAGMA foreign_keys = ON;
     """)
@@ -202,5 +203,22 @@ def initialize_database():
             conn.execute("ALTER TABLE knowledge_sources ADD COLUMN pdfEngine TEXT DEFAULT 'fitz'")
         except sqlite3.OperationalError:
             pass # Column likely already exists
+
+        # Migrations for mcq_bank FSRS columns
+        for col, col_type in [
+            ("state", "INTEGER DEFAULT 0"),
+            ("difficulty", "REAL DEFAULT 0.0"),
+            ("stability", "REAL DEFAULT 0.0"),
+            ("reps", "INTEGER DEFAULT 0"),
+            ("lapses", "INTEGER DEFAULT 0"),
+            ("last_review", "REAL"),
+            ("due_timestamp", "REAL DEFAULT 0.0")
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE mcq_bank ADD COLUMN {col} {col_type}")
+            except sqlite3.OperationalError:
+                pass
+
+
 
         conn.commit()

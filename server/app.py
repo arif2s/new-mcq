@@ -1,3 +1,4 @@
+import json
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
@@ -11,6 +12,7 @@ from server.routes_queue import router as queue_router
 from server.routes_sessions import router as sessions_router
 from server.routes_state import router as state_router
 from server.ws_manager import ws_manager
+from core.database import initialize_database, get_db_connection
 from core.queue_manager import queue_worker
 from server.routes_csv_loader import load_csvs_background
 
@@ -18,11 +20,14 @@ from server.routes_csv_loader import load_csvs_background
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup execution
+    initialize_database()
     queue_worker.start()
-    load_csvs_background()
+    with get_db_connection() as conn:
+        conn.cursor().execute("INSERT INTO task_queue (task_type, priority, payload) VALUES (?, ?, ?)", ("BATCH_PRECOMPUTE", 3, json.dumps({"action": "load_csvs"})))
+        conn.commit()
     yield
     # Shutdown execution
-    await queue_worker.stop()
+    queue_worker.stop()
 
 app = FastAPI(title="Clinical MCQ Hub", lifespan=lifespan)
 

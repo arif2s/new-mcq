@@ -17,60 +17,70 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-class AsyncPriorityQueueWorker:
+
+import threading
+import time
+
+class PriorityQueueWorker:
     def __init__(self):
         self.running = False
-        self.process_task: Optional[asyncio.Task] = None
-        self.prune_task: Optional[asyncio.Task] = None
+        self.process_thread = None
+        self.prune_thread = None
+        self.main_loop = None
 
     def start(self):
         if not self.running:
             self.running = True
-            self.process_task = asyncio.create_task(self._process_loop())
-            self.prune_task = asyncio.create_task(self._prune_completed_tasks())
-            logger.info("AsyncPriorityQueueWorker started.")
+            try:
+                self.main_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self.main_loop = asyncio.get_event_loop()
 
-    async def stop(self):
+            self.process_thread = threading.Thread(target=self._process_loop, daemon=True)
+            self.prune_thread = threading.Thread(target=self._prune_completed_tasks, daemon=True)
+            self.process_thread.start()
+            self.prune_thread.start()
+            logger.info("PriorityQueueWorker started.")
+
+    def _run_async(self, coro):
+        if self.main_loop and self.main_loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(coro, self.main_loop)
+            return future.result()
+        else:
+            return asyncio.run(coro)
+
+    def stop(self):
         self.running = False
-        tasks = [t for t in (self.process_task, self.prune_task) if t is not None]
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        logger.info("AsyncPriorityQueueWorker stopped.")
+        logger.info("PriorityQueueWorker stopped.")
 
-    async def _process_loop(self):
+    def _process_loop(self):
         while self.running:
             task_id = None
             try:
-                # Atomically fetch and claim the task to prevent race conditions
-                task_data = await asyncio.to_thread(self._claim_highest_priority_task)
+                task_data = self._claim_highest_priority_task()
                 if not task_data:
-                    await asyncio.sleep(1.0)
+                    time.sleep(1.0)
                     continue
 
                 task_id, task_type, priority, mcq_id, payload_str = task_data
                 payload = json_lib.loads(payload_str)
 
-                # Consolidated synthesis logic (DRY principle)
-                if task_type in ("SESSION_EXPLAIN", "BATCH_PRECOMPUTE", "synthesis"):
+                if task_type == "BATCH_PRECOMPUTE" and payload.get("action") == "load_csvs":
+                    from server.routes_csv_loader import load_csvs_background
+                    load_csvs_background()
+                elif task_type in ("SESSION_EXPLAIN", "BATCH_PRECOMPUTE", "synthesis"):
                     topic = payload.get("topic", "")
                     mcq_context = payload.get("mcq_context", None)
 
-                    # Sub-millisecond BM25 index query
-                    search_results = await asyncio.to_thread(search_index, topic, limit_per_source=3)
+                    search_results = search_index(topic, limit_per_source=3)
 
-                    # Phase 1: Persist references immediately for progressive rendering
-                    await asyncio.to_thread(self._persist_initial_references, topic, search_results)
+                    self._persist_initial_references(topic, search_results)
 
-                    # Check if LM Studio output already exists to avoid redundant processing
-                    is_processed = await asyncio.to_thread(self._is_topic_fully_processed, topic)
+                    is_processed = self._is_topic_fully_processed(topic)
 
                     if not is_processed:
-                        # Multi-pass clinical synthesis
                         skip_lm = False
 
-                        # Use closing to prevent connection leaks
                         with closing(get_db_connection()) as conn:
                             cursor = conn.cursor()
                             cursor.execute("SELECT value FROM user_state WHERE key = 'app_persistence'")
@@ -82,43 +92,35 @@ class AsyncPriorityQueueWorker:
                                 except Exception as e:
                                     logger.warning(f"Failed to parse app_persistence for LM Studio state: {e}")
 
-                        # Phase 2: Deferred/Slow LM Studio Synthesis
-                        synthesis_output = await run_tema_q_synthesis(topic, search_results, mcq_context, skip_lm=skip_lm)
+                        # Run async function in sync wrapper
+                        synthesis_output = self._run_async(run_tema_q_synthesis(topic, search_results, mcq_context, skip_lm=skip_lm))
 
-                        # Write reports & persistence in parallel worker threads
-                        await asyncio.gather(
-                            asyncio.to_thread(generate_topic_report, topic, search_results, synthesis_output),
-                            asyncio.to_thread(self._persist_cached_synthesis, topic, synthesis_output, search_results),
-                        )
+                        generate_topic_report(topic, search_results, synthesis_output)
+                        self._persist_cached_synthesis(topic, synthesis_output, search_results)
 
                 elif task_type == "SESSION_PROCESSING":
-                    # Deferred import to avoid circular dependencies at startup
                     from agents.tema_q.session_processor import process_session_questions
                     session_id = payload.get("session_id", "")
                     if session_id:
-                        await process_session_questions(session_id)
+                        self._run_async(process_session_questions(session_id))
 
-                await asyncio.to_thread(self._update_task_status, task_id, "COMPLETED")
+                self._update_task_status(task_id, "COMPLETED")
 
                 if ws_manager:
-                    await ws_manager.broadcast_task_update(task_id, "COMPLETED", payload.get("topic", ""))
+                    self._run_async(ws_manager.broadcast_task_update(task_id, "COMPLETED", payload.get("topic", "")))
 
-            except asyncio.CancelledError:
-                break
             except Exception as e:
                 logger.error(f"Task {task_id} failed: {e}", exc_info=True)
                 if task_id is not None:
-                    await asyncio.to_thread(self._update_task_status, task_id, "FAILED", str(e))
+                    self._update_task_status(task_id, "FAILED", str(e))
                     if ws_manager:
-                        await ws_manager.broadcast_task_update(task_id, "FAILED", "")
+                        self._run_async(ws_manager.broadcast_task_update(task_id, "FAILED", ""))
 
-    async def _prune_completed_tasks(self):
+    def _prune_completed_tasks(self):
         while self.running:
             try:
-                await asyncio.sleep(3600)
-                await asyncio.to_thread(self._execute_prune_query)
-            except asyncio.CancelledError:
-                break
+                time.sleep(3600)
+                self._execute_prune_query()
             except Exception as e:
                 logger.error(f"Error pruning task queue: {e}")
 
@@ -162,7 +164,6 @@ class AsyncPriorityQueueWorker:
             cursor = conn.cursor()
             topic_key = topic.lower().replace(" ", "-")
 
-            # Optimized to a single UPSERT query instead of SELECT then UPDATE/INSERT
             cursor.execute("""
                 INSERT INTO cached_syntheses (
                     topic_key, display_title, enhanced_explanation, distractor_analysis,
@@ -219,4 +220,4 @@ class AsyncPriorityQueueWorker:
             )
             conn.commit()
 
-queue_worker = AsyncPriorityQueueWorker()
+queue_worker = PriorityQueueWorker()

@@ -142,10 +142,16 @@ def get_db_status():
     except Exception:
         return {"status": "success", "exists": False, "count": 0}
 
+import json
+
 @router.post("/build_db")
 def build_db():
-    load_csvs_background()
-    return {"status": "success", "message": "Database generation started."}
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO task_queue (task_type, priority, payload) VALUES (?, ?, ?)",
+                       ("BATCH_PRECOMPUTE", 3, json.dumps({"action": "load_csvs"})))
+        conn.commit()
+    return {"status": "success", "message": "Database generation queued."}
 
 @router.get("/diagnostics/lm_studio")
 def check_lm_studio():
