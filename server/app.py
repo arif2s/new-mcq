@@ -16,15 +16,24 @@ from core.database import initialize_database, get_db_connection
 from core.queue_manager import queue_worker
 from server.routes_csv_loader import load_csvs_background
 
+import asyncio
+
+def _init_db_and_enqueue():
+    initialize_database()
+    with get_db_connection() as conn:
+        conn.cursor().execute(
+            "INSERT INTO task_queue (task_type, priority, payload) VALUES (?, ?, ?)",
+            ("BATCH_PRECOMPUTE", 3, json.dumps({"action": "load_csvs"}))
+        )
+        conn.commit()
+
 # 1. Replace deprecated @app.on_event with modern async context manager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup execution
-    initialize_database()
+    await asyncio.to_thread(_init_db_and_enqueue)
+    queue_worker.main_loop = asyncio.get_running_loop()
     queue_worker.start()
-    with get_db_connection() as conn:
-        conn.cursor().execute("INSERT INTO task_queue (task_type, priority, payload) VALUES (?, ?, ?)", ("BATCH_PRECOMPUTE", 3, json.dumps({"action": "load_csvs"})))
-        conn.commit()
     yield
     # Shutdown execution
     queue_worker.stop()

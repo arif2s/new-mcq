@@ -31,10 +31,11 @@ class PriorityQueueWorker:
     def start(self):
         if not self.running:
             self.running = True
-            try:
-                self.main_loop = asyncio.get_running_loop()
-            except RuntimeError:
-                self.main_loop = asyncio.get_event_loop()
+            if self.main_loop is None:
+                try:
+                    self.main_loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    self.main_loop = asyncio.get_event_loop()
 
             self.process_thread = threading.Thread(target=self._process_loop, daemon=True)
             self.prune_thread = threading.Thread(target=self._prune_completed_tasks, daemon=True)
@@ -42,18 +43,14 @@ class PriorityQueueWorker:
             self.prune_thread.start()
             logger.info("PriorityQueueWorker started.")
 
-    def _run_async(self, coro):
-        if self.main_loop and self.main_loop.is_running():
-            future = asyncio.run_coroutine_threadsafe(coro, self.main_loop)
-            return future.result()
-        else:
-            return asyncio.run(coro)
-
     def stop(self):
         self.running = False
         logger.info("PriorityQueueWorker stopped.")
 
     def _process_loop(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
         while self.running:
             task_id = None
             try:
@@ -92,8 +89,10 @@ class PriorityQueueWorker:
                                 except Exception as e:
                                     logger.warning(f"Failed to parse app_persistence for LM Studio state: {e}")
 
-                        # Run async function in sync wrapper
-                        synthesis_output = self._run_async(run_tema_q_synthesis(topic, search_results, mcq_context, skip_lm=skip_lm))
+                        # Run async function using the thread's event loop
+                        synthesis_output = loop.run_until_complete(
+                            run_tema_q_synthesis(topic, search_results, mcq_context, skip_lm=skip_lm)
+                        )
 
                         generate_topic_report(topic, search_results, synthesis_output)
                         self._persist_cached_synthesis(topic, synthesis_output, search_results)
@@ -102,19 +101,26 @@ class PriorityQueueWorker:
                     from agents.tema_q.session_processor import process_session_questions
                     session_id = payload.get("session_id", "")
                     if session_id:
-                        self._run_async(process_session_questions(session_id))
+                        loop.run_until_complete(process_session_questions(session_id))
 
                 self._update_task_status(task_id, "COMPLETED")
 
-                if ws_manager:
-                    self._run_async(ws_manager.broadcast_task_update(task_id, "COMPLETED", payload.get("topic", "")))
+                if ws_manager and self.main_loop:
+                    asyncio.run_coroutine_threadsafe(
+                        ws_manager.broadcast_task_update(task_id, "COMPLETED", payload.get("topic", "")),
+                        self.main_loop
+                    )
 
             except Exception as e:
                 logger.error(f"Task {task_id} failed: {e}", exc_info=True)
                 if task_id is not None:
                     self._update_task_status(task_id, "FAILED", str(e))
-                    if ws_manager:
-                        self._run_async(ws_manager.broadcast_task_update(task_id, "FAILED", ""))
+                    if ws_manager and self.main_loop:
+                        asyncio.run_coroutine_threadsafe(
+                            ws_manager.broadcast_task_update(task_id, "FAILED", ""),
+                            self.main_loop
+                        )
+        loop.close()
 
     def _prune_completed_tasks(self):
         while self.running:
