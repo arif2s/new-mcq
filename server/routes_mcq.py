@@ -6,6 +6,22 @@ from core.scheduler import calculate_fsrs_next_interval
 
 router = APIRouter(prefix="/api/mcq", tags=["mcq"])
 
+from agents.topic_extractor import extract_topics
+
+class TopicExtractionPayload(BaseModel):
+    mcq_text: str
+    use_zim_refinement: bool = False
+    use_tantivy_refinement: bool = False
+
+@router.post("/topics/extract")
+def extract_mcq_topics(payload: TopicExtractionPayload):
+    topics = extract_topics(
+        text=payload.mcq_text,
+        use_zim_refinement=payload.use_zim_refinement,
+        use_tantivy_refinement=payload.use_tantivy_refinement
+    )
+    return {"topics": topics}
+
 class ScorePayload(BaseModel):
     mcq_id: int
     # 1. Enforce strict rating bounds at the API boundary to prevent FSRS lookup crashes
