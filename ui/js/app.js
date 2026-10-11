@@ -66,7 +66,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Add click interaction for validation
             chip.addEventListener('click', () => {
-                alert(`Selected topic: ${topic}`);
+                const inspectorContent = document.getElementById('inspector-content');
+                if (inspectorContent) {
+                    inspectorContent.textContent = `Selected topic: ${topic}\n\nYou can perform further actions on this entity here.`;
+                }
             });
 
             topicsContainer.appendChild(chip);

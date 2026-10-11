@@ -58,28 +58,8 @@ async def websocket_indexing(websocket: WebSocket):
         # 3. Catch general exceptions to prevent unhandled connection drops on Windows sockets
         ws_manager.disconnect(websocket)
 
-# 4. Pre-compute path resolution at module load rather than per-request
-dist_path = BASE_DIR / "dist"
-index_path = dist_path / "index.html"
+# 4. Mount the UI directory at the root to serve vanilla HTML/JS
+ui_path = BASE_DIR / "ui"
 
-# 5. Make the endpoint async to avoid FastAPI spinning up a separate thread just to check a path
-@app.get("/")
-async def serve_frontend():
-    if index_path.exists():
-        return FileResponse(index_path)
-    return HTMLResponse(
-        "<h1>Frontend not built</h1><p>Please run <code>npm install && npm run build</code>.</p>",
-        status_code=404
-    )
-
-
-@app.get("/ui/index.html")
-async def serve_ui():
-    return FileResponse(BASE_DIR / "ui" / "index.html")
-
-@app.get("/js/{filename}")
-async def serve_js(filename: str):
-    return FileResponse(BASE_DIR / "ui" / "js" / filename)
-
-if dist_path.exists():
-    app.mount("/", StaticFiles(directory=dist_path, html=True), name="static")
+if ui_path.exists():
+    app.mount("/", StaticFiles(directory=ui_path, html=True), name="static")
