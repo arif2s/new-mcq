@@ -137,3 +137,62 @@ def extract_pdf_structure(file_path: str) -> list:
     except Exception as e:
         logger.error(f"Full PDF Docling extraction failed for {file_path}: {e}")
         return []
+
+def ingest_to_lancedb(file_path: str, source_article: str, main_topic: str = ""):
+    """
+    Extracts PDF structure and ingests it into LanceDB, generating embeddings using the CPU engine.
+    The parent_content retains the full section text, and individual items are treated as child chunks.
+    """
+    import hashlib
+    from parsers.embedding_engine import CPUEmbeddingEngine
+    from parsers.lancedb_engine import LanceDBEngine
+
+    sections = extract_pdf_structure(file_path)
+    if not sections:
+        return 0
+
+    engine = LanceDBEngine()
+    embedder = CPUEmbeddingEngine()
+
+    records = []
+    chunk_index = 0
+
+    for section in sections:
+        page_num = section["page"]
+        heading = section["heading"]
+        parent_content = section["text"]
+
+        # Split parent text into child chunks based on double newlines
+        child_chunks = [chunk.strip() for chunk in parent_content.split("\n\n") if chunk.strip()]
+
+        # Determine subheading from the last part of the hierarchical heading
+        subheading = heading.split(" > ")[-1] if " > " in heading else heading
+
+        for child_content in child_chunks:
+            # We don't want to just embed the heading over and over as the child content if it's the only thing
+            if child_content.startswith("[") and child_content.endswith("]") and child_content[1:-1] == heading:
+                continue # Skip the injected heading chunk itself
+
+            vector = embedder.embed_single(child_content)
+            if not vector:
+                continue
+
+            chunk_id = hashlib.md5(f"{file_path}_{page_num}_{chunk_index}_{child_content[:50]}".encode()).hexdigest()
+
+            records.append({
+                "id": chunk_id,
+                "vector": vector,
+                "source_article": source_article,
+                "main_topic": main_topic,
+                "subheading": subheading,
+                "chunk_index": chunk_index,
+                "page_number": page_num,
+                "parent_content": parent_content,
+                "child_content": child_content
+            })
+            chunk_index += 1
+
+    if records:
+        engine.insert(records)
+
+    return len(records)
