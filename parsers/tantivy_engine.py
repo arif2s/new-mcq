@@ -19,7 +19,8 @@ def get_schema():
         builder.add_text_field("file_path", stored=True)
         builder.add_integer_field("page_number", stored=True)
         builder.add_text_field("title", stored=True)
-        builder.add_text_field("body", stored=False, tokenizer_name="en_stem")
+        builder.add_text_field("document_body", stored=False, tokenizer_name="en_stem")
+        builder.add_text_field("obsidian_body", stored=True, tokenizer_name="en_stem")
         _schema = builder.build()
     return _schema
 
@@ -52,13 +53,13 @@ def search_index(query_str: str, limit_per_source: int = 3) -> dict:
         if word_count <= 2:
             # For 1-2 word topics, strongly boost title and exact phrase matches in body
             # to prioritize pages actually about the topic versus mere mentions
-            boosted_query_str = f'title:"{safe_query}"^5 OR body:"{safe_query}"^2 OR {safe_query}'
-            query = index.parse_query(boosted_query_str, ["title", "body"])
+            boosted_query_str = f'title:"{safe_query}"^5 OR document_body:"{safe_query}"^2 OR obsidian_body:"{safe_query}"^2 OR {safe_query}'
+            query = index.parse_query(boosted_query_str, ["title", "document_body", "obsidian_body"])
         else:
-            query = index.parse_query(query_str, ["title", "body"])
+            query = index.parse_query(query_str, ["title", "document_body", "obsidian_body"])
     except ValueError:
         try:
-            query = index.parse_query(safe_query, ["title", "body"])
+            query = index.parse_query(safe_query, ["title", "document_body", "obsidian_body"])
         except ValueError as e:
             logger.error(f"Failed to parse fallback query '{safe_query}': {e}")
             return {"obsidian": [], "pdf": [], "zim": []}

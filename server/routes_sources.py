@@ -78,7 +78,7 @@ async def run_indexing():
             return
 
         index = get_index()
-        writer = index.writer()
+        writer = index.writer(50_000_000)
         writer.delete_all_documents()
         writer.commit()
 
@@ -112,7 +112,7 @@ async def run_indexing():
                             doc.add_text("file_path", str(file_path))
                             doc.add_integer("page_number", 1)
                             doc.add_text("title", file_path.name)
-                            doc.add_text("body", content)
+                            doc.add_text("obsidian_body", content)
 
                             writer.add_document(doc)
                             item_count += 1
@@ -143,7 +143,7 @@ async def run_indexing():
                                     doc.add_text("file_path", str(file_path))
                                     doc.add_integer("page_number", section["page"])
                                     doc.add_text("title", section["heading"])
-                                    doc.add_text("body", section["text"])
+                                    doc.add_text("document_body", section["text"])
 
                                     writer.add_document(doc)
                                     item_count += 1
@@ -167,7 +167,7 @@ async def run_indexing():
                                         doc.add_text("file_path", str(file_path))
                                         doc.add_integer("page_number", page_num + 1)
                                         doc.add_text("title", file_path.name)
-                                        doc.add_text("body", text)
+                                        doc.add_text("document_body", text)
 
                                         writer.add_document(doc)
                                         item_count += 1

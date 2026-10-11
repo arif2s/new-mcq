@@ -68,9 +68,15 @@ def extract_pdf_structure(file_path: str) -> list:
         conversion_result = converter.convert(file_path)
 
         sections = []
-        current_heading = "Untitled"
+        heading_stack = {}
         current_text = []
         current_page = 1
+
+        def get_current_heading():
+            if not heading_stack:
+                return "Untitled"
+            # Return headings sorted by level
+            return " > ".join([heading_stack[k] for k in sorted(heading_stack.keys())])
 
         def save_section(page_num):
             if current_text:
@@ -78,7 +84,7 @@ def extract_pdf_structure(file_path: str) -> list:
                 if text_content:
                     sections.append({
                         "page": page_num,
-                        "heading": current_heading,
+                        "heading": get_current_heading(),
                         "text": text_content
                     })
 
@@ -98,8 +104,22 @@ def extract_pdf_structure(file_path: str) -> list:
                 if isinstance(item, SectionHeaderItem) or getattr(item, 'label', None) in ['section_header', 'title', 'page_header']:
                     # New section starts, save the previous one
                     save_section(current_page)
-                    current_heading = item.text
-                    current_text = []
+                    # Update heading stack
+                    # Determine level (use getattr to be safe, fallback to 'level' from iterate_items if needed, or 1)
+                    item_level = getattr(item, 'level', 1)
+                    if item_level is None:
+                        item_level = 1
+
+                    # Remove any heading at this level or deeper
+                    keys_to_remove = [k for k in heading_stack.keys() if k >= item_level]
+                    for k in keys_to_remove:
+                        del heading_stack[k]
+
+                    heading_stack[item_level] = item.text.strip()
+
+
+                    # We inject the full hierarchy into the text output
+                    current_text = [f"[{get_current_heading()}]"]
                     current_page = item_page
                 elif item.text.strip():
                     current_text.append(item.text)
