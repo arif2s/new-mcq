@@ -21,8 +21,8 @@ PASS1_CLINICAL_SYSTEM_PROMPT = (
 PASS2_AUDIT_SYSTEM_PROMPT = (
     "You are a clinical auditor. Integrate facts from the secondary reference into the baseline note. "
     "Merge complementary clinical criteria and reconcile differing thresholds or guidelines. "
-    "If direct contradictions or clinical variances exist between the sources, append a dedicated "
-    "'### Discrepancies & Variances' section at the end detailing the conflict. "
+    "If direct contradictions or clinical variances exist between the sources, you MUST append a dedicated "
+    "'### Discrepancies & Variances' section exactly matching this string at the end detailing the conflict. "
     "Output ONLY the revised synthesis without preamble, introductory meta-talk, or conversational filler."
 )
 

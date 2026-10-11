@@ -4,11 +4,33 @@
  */
 
 document.addEventListener("DOMContentLoaded", () => {
+    // Scoped Mount Point to prevent destroying the React SPA layout
+    let mountPoint = document.getElementById("qa-mount-point");
+
+    // If not found, gracefully fallback by creating a new scoped container
+    // instead of appending to body directly which might push UI out of view
+    if (!mountPoint) {
+        mountPoint = document.createElement("div");
+        mountPoint.id = "qa-mount-point"; // Fixed ID to match search condition
+        // Create an overlay so it doesn't break SPA layout
+        mountPoint.style.position = "absolute";
+        mountPoint.style.top = "0";
+        mountPoint.style.right = "0";
+        mountPoint.style.bottom = "0";
+        mountPoint.style.width = "80vw"; // Keep left rail navigation visible
+        mountPoint.style.backgroundColor = "white";
+        mountPoint.style.zIndex = "1000";
+        document.body.appendChild(mountPoint);
+    } else {
+        // Clear previous instances if hot-reloading
+        mountPoint.innerHTML = '';
+    }
+
     const container = document.createElement("div");
     container.style.display = "flex";
     container.style.flexDirection = "row";
-    container.style.height = "100vh";
-    container.style.width = "100vw";
+    container.style.height = "100%";
+    container.style.width = "100%";
 
     // Left: Original PDF
     const leftPane = document.createElement("div");
@@ -36,9 +58,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     container.appendChild(leftPane);
     container.appendChild(rightPane);
-
-    // Instead of wiping body, append to a mount point or just append to body if it's the only thing
-    const mountPoint = document.getElementById("qa-mount-point") || document.body;
     mountPoint.appendChild(container);
 
     // native CSS highlights (via selection API or standard span tags)

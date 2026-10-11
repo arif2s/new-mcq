@@ -26,4 +26,3 @@ playwright
 
 # Testing
 pytest
-editdistance==0.8.1
