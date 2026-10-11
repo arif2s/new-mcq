@@ -12,6 +12,7 @@ from server.routes_queue import router as queue_router
 from server.routes_sessions import router as sessions_router
 from server.routes_state import router as state_router
 from server.routes_notes import router as notes_router
+from server.routes_search import router as search_router
 from server.ws_manager import ws_manager
 from core.database import initialize_database, get_db_connection
 from core.queue_manager import queue_worker
@@ -42,7 +43,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Clinical MCQ Hub", lifespan=lifespan)
 
 # 2. Consolidate router inclusions for cleaner initialization
-for router in (mcq_router, sources_router, csv_router, queue_router, sessions_router, state_router, notes_router):
+for router in (mcq_router, sources_router, csv_router, queue_router, sessions_router, state_router, notes_router, search_router):
     app.include_router(router)
 
 @app.websocket("/ws/indexing")
@@ -70,6 +71,15 @@ async def serve_frontend():
         "<h1>Frontend not built</h1><p>Please run <code>npm install && npm run build</code>.</p>",
         status_code=404
     )
+
+
+@app.get("/ui/index.html")
+async def serve_ui():
+    return FileResponse(BASE_DIR / "ui" / "index.html")
+
+@app.get("/js/{filename}")
+async def serve_js(filename: str):
+    return FileResponse(BASE_DIR / "ui" / "js" / filename)
 
 if dist_path.exists():
     app.mount("/", StaticFiles(directory=dist_path, html=True), name="static")
