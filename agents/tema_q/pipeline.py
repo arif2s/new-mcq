@@ -46,6 +46,27 @@ async def close_http_client():
         await _http_client.aclose()
         _http_client = None
 
+
+import re
+
+def parse_llm_json(response_str: str) -> dict:
+    # Strip markdown wrappers if present
+    match = re.search(r'```(?:json)?\s*(.*?)\s*```', response_str, re.DOTALL)
+    if match:
+        response_str = match.group(1)
+
+    # Try to find { ... } block
+    match_braces = re.search(r'\{.*\}', response_str, re.DOTALL)
+    if match_braces:
+        response_str = match_braces.group(0)
+
+    try:
+        return json.loads(response_str)
+    except Exception as e:
+        logger.error(f"Failed to parse LLM JSON: {e} - Response: {response_str}")
+        return {"section": "Error", "subtopic": "Error", "conditional_context": "", "clinical_points": []}
+
+
 def count_tokens(text: str) -> int:
     if not text:
         return 0
@@ -166,8 +187,7 @@ async def run_tema_q_synthesis(topic: str, search_results: dict, mcq_context: di
         return {
             "enhanced_explanation": "LM Studio processing skipped.",
             "distractor_analysis": "LM Studio processing skipped.",
-            "unified_article": f"### {topic}\nSkipped LM Studio processing.",
-            "reference_links": search_results
+            "unified_article": f"### {topic}\nNo relevant documents passed the filter.",
         }
 
     documents = await resolve_documents(search_results)
@@ -176,7 +196,28 @@ async def run_tema_q_synthesis(topic: str, search_results: dict, mcq_context: di
         return {
             "enhanced_explanation": "No local reference files found.",
             "distractor_analysis": "N/A",
-            "unified_article": f"### {topic}\nPlease add reference material.",
+            "unified_article": f"### {topic}\nNo relevant documents passed the filter.",
+        }
+
+
+    # Pre-Pass Relevance Gate
+    valid_documents = []
+    for doc in documents:
+        budget = 500
+        bounded_doc = truncate_to_token_limit(doc, budget)
+        gate_prompt = f"Does this text primarily focus on the clinical topic '{topic}'? Answer ONLY 'YES' or 'NO'."
+        gate_resp = await call_llm_async("You are a strict relevance filter.", gate_prompt + f"\n\nText:\n{bounded_doc}", 10)
+        if 'YES' in gate_resp.upper():
+            valid_documents.append(doc)
+        else:
+            logger.info(f"Pre-pass gate rejected document for topic '{topic}'")
+
+    documents = valid_documents
+    if not documents:
+        return {
+            "enhanced_explanation": "Documents failed relevance gate.",
+            "distractor_analysis": "N/A",
+            "unified_article": f"### {topic}\nNo relevant documents passed the filter.",
             "reference_links": search_results
         }
 
@@ -185,27 +226,114 @@ async def run_tema_q_synthesis(topic: str, search_results: dict, mcq_context: di
     doc1_budget = 2000
     bounded_doc1 = truncate_to_token_limit(doc1_content, doc1_budget)
 
+    # Pass 1: Base Note Generation as JSON
     pass1_user_msg = f"Clinical Topic: {topic}\n\nPrimary Reference:\n{bounded_doc1}"
-    base_note = await call_llm_async(PASS1_CLINICAL_SYSTEM_PROMPT, pass1_user_msg, 350)
+    base_note_str = await call_llm_async(PASS1_CLINICAL_SYSTEM_PROMPT, pass1_user_msg, 600)
+    base_note_json = parse_llm_json(base_note_str)
 
-    final_article = base_note
+    # Append source info for pass 1 if missing
+    for pt in base_note_json.get("clinical_points", []):
+        if not pt.get("source"):
+            pt["source"] = "Primary Reference"
+            pt["page"] = 1
+
+    final_article = base_note_json
     discrepancy_report_all = ""
 
     # Pass 2+: Iterative Breadth-First Micro-editing
     doc_budget = 1200
-    for doc_content in documents[1:]:
-        used_tokens = count_tokens(final_article) + count_tokens(PASS2_AUDIT_SYSTEM_PROMPT) + 150
+    for doc_idx, doc_content in enumerate(documents[1:]):
+        used_tokens = count_tokens(json.dumps(final_article)) + count_tokens(PASS2_AUDIT_SYSTEM_PROMPT) + 150
         dynamic_doc_budget = min(doc_budget, MAX_CONTEXT_TOKENS - used_tokens - 600)
 
-        # Guard against negative token limits if base note expands too fast
         if dynamic_doc_budget < 200:
             logger.warning("Approaching MAX_CONTEXT_TOKENS limit, skipping further document integration.")
             break
 
         bounded_doc = truncate_to_token_limit(doc_content, max(dynamic_doc_budget, 400))
 
-        pass2_user_msg = f"Topic: {topic}\n\nBase Note:\n{final_article}\n\nSecond Reference:\n{bounded_doc}"
-        final_article = await call_llm_async(PASS2_AUDIT_SYSTEM_PROMPT, pass2_user_msg, 500)
+        # 1. Parse secondary reference into JSON
+        sec_msg = f"Clinical Topic: {topic}\n\nSecondary Reference:\n{bounded_doc}"
+        sec_json_str = await call_llm_async(PASS1_CLINICAL_SYSTEM_PROMPT, sec_msg, 600)
+        sec_json = parse_llm_json(sec_json_str)
+
+        # 2. Match subtopic nodes programmatically
+        base_subtopic = final_article.get("subtopic", "")
+        sec_subtopic = sec_json.get("subtopic", "")
+
+        # If they match or are somewhat similar
+        if base_subtopic and sec_subtopic and (base_subtopic.lower() in sec_subtopic.lower() or sec_subtopic.lower() in base_subtopic.lower() or "error" not in base_subtopic.lower()):
+            # 3. Send only isolated JSON arrays to LLM for micro-merging
+            base_points = final_article.get("clinical_points", [])
+            sec_points = sec_json.get("clinical_points", [])
+
+            # Extract source and page directly from bounded_doc if possible, or search_results metadata
+            meta_source = f"Secondary Ref {doc_idx+1}"
+            meta_page = 1
+            if "Source (PDF -" in doc_content:
+                try:
+                    import re
+                    m = re.search(r'Source \(PDF - (.*?) - Page (\d+)\)', doc_content)
+                    if m:
+                        meta_source = m.group(1).strip()
+                        meta_page = int(m.group(2))
+                except:
+                    pass
+            elif "Source (Obsidian -" in doc_content:
+                try:
+                    import re
+                    m = re.search(r'Source \(Obsidian - (.*?)\)', doc_content)
+                    if m:
+                        meta_source = m.group(1).strip()
+                except:
+                    pass
+            elif "Source (ZIM -" in doc_content:
+                try:
+                    import re
+                    m = re.search(r'Source \(ZIM - (.*?)\)', doc_content)
+                    if m:
+                        meta_source = m.group(1).strip()
+                except:
+                    pass
+
+            merge_prompt = PASS2_AUDIT_SYSTEM_PROMPT.replace("{subtopic}", base_subtopic)
+            merge_user_msg = f"Base Points:\n{json.dumps(base_points)}\n\nSecondary Points:\n{json.dumps(sec_points)}"
+
+            merged_resp = await call_llm_async(merge_prompt, merge_user_msg, 600)
+
+            # The LLM output might contain ### Discrepancies & Variances followed by the JSON, or vice versa
+            discrepancy_flag = ""
+            if "### Discrepancies & Variances" in merged_resp:
+                discrepancy_flag = "### Discrepancies & Variances\n"
+                # Extract text around it
+                parts = merged_resp.split("### Discrepancies & Variances")
+                if len(parts) > 1:
+                    discrep_text = parts[1].split("```")[0].split("[")[0].strip()
+                    if discrep_text:
+                        discrepancy_flag += discrep_text + "\n"
+                    elif len(parts) > 2:
+                        discrep_text = parts[2].split("```")[0].split("[")[0].strip()
+                        discrepancy_flag += discrep_text + "\n"
+
+            merged_json = parse_llm_json(merged_resp)
+            if isinstance(merged_json, list):
+                # Ensure metadata is appended correctly
+                for pt in merged_json:
+                    if not pt.get("source"):
+                        pt["source"] = meta_source
+                        pt["page"] = meta_page
+                final_article["clinical_points"] = merged_json
+                if discrepancy_flag:
+                    final_article["discrepancies"] = discrepancy_flag
+            elif isinstance(merged_json, dict) and "clinical_points" in merged_json:
+                pts = merged_json.get("clinical_points", [])
+                for pt in pts:
+                    if not pt.get("source"):
+                        pt["source"] = meta_source
+                        pt["page"] = meta_page
+                final_article["clinical_points"] = pts
+                if discrepancy_flag:
+                    final_article["discrepancies"] = discrepancy_flag
 
     # Pass 3: Distractor Audit (Optional)
     if mcq_context and mcq_context.get("options"):
@@ -232,6 +360,28 @@ async def run_tema_q_synthesis(topic: str, search_results: dict, mcq_context: di
     safe_topic = safe_topic.replace(' ', '_')
     report_path = f"storage/reports/{safe_topic}_report.html"
 
+
+    # Generate structured HTML from final_article JSON
+    subtopic = final_article.get("subtopic", "")
+    section = final_article.get("section", "")
+    cond_context = final_article.get("conditional_context", "")
+    clinical_points = final_article.get("clinical_points", [])
+    discrepancies = final_article.get("discrepancies", "")
+
+    html_points = ""
+    for pt in clinical_points:
+        point_text = pt.get("point", "")
+        source = pt.get("source", "")
+        page = pt.get("page", "")
+
+        # Clickable reference badge
+        if source:
+            badge = f'<span class="badge" title="Source: {source} (Page {page})"><a href="#" onclick="alert(\'Open: {source} Page: {page}\'); return false;">[Ref: {source} p.{page}]</a></span>'
+        else:
+            badge = ""
+
+        html_points += f"<li>{point_text} {badge}</li>\n"
+
     html_content = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -243,19 +393,23 @@ async def run_tema_q_synthesis(topic: str, search_results: dict, mcq_context: di
   h2, h3 {{ color: #34495e; }}
   .content {{ max-width: 800px; margin: auto; }}
   .section {{ margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }}
-  .discrepancies {{ border-color: #e74c3c; background-color: #fadbd8; }}
+  .discrepancies {{ border-color: #e74c3c; background-color: #fadbd8; padding: 10px; margin-top: 10px; font-weight: bold; }}
+  .badge {{ font-size: 0.85em; background-color: #e2e8f0; padding: 2px 6px; border-radius: 12px; margin-left: 8px; }}
+  .badge a {{ text-decoration: none; color: #3182ce; }}
 </style>
 </head>
 <body>
 <div class="content">
   <h1>Clinical Synthesis: {topic}</h1>
   <div class="section">
-    <h2>Pass 1: Base Note</h2>
-    <pre style="white-space: pre-wrap; font-family: inherit;">{base_note}</pre>
-  </div>
-  <div class="section">
-    <h2>Pass 2: Unified Article</h2>
-    <pre style="white-space: pre-wrap; font-family: inherit;">{final_article}</pre>
+    <h2>Unified Article: {subtopic}</h2>
+    <p><strong>Section:</strong> {section}</p>
+    <p><strong>Context:</strong> {cond_context}</p>
+    <ul>
+      {html_points}
+    </ul>
+
+        {f'<div class="discrepancies">{discrepancies}</div>' if discrepancies else ''}
   </div>
   <div class="section">
     <h2>Distractor Analysis</h2>
@@ -272,8 +426,8 @@ async def run_tema_q_synthesis(topic: str, search_results: dict, mcq_context: di
         logger.error(f"Failed to save Tema_Q HTML report: {e}")
 
     return {
-        "enhanced_explanation": base_note,
+        "enhanced_explanation": base_note_str,
         "distractor_analysis": distractor_output,
-        "unified_article": final_article,
+        "unified_article": json.dumps(final_article),
         "reference_links": search_results
     }

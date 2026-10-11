@@ -14,14 +14,16 @@ PASS1_CLINICAL_SYSTEM_PROMPT = (
     "You are an expert clinical surgical educator. Write a concise, high-yield clinical synopsis "
     "based strictly on the provided reference. Focus on diagnostic criteria, anatomical "
     "considerations, operative thresholds, and material specifications. "
-    "Use compact Markdown bullet points and bold key findings. Keep the summary under 250 words "
-    "to ensure complete, un-truncated output. Do not include introductory conversational filler."
+    "Respond ONLY with a valid JSON object matching this schema:\n"
+    '{"section": "string", "subtopic": "string", "conditional_context": "string", "clinical_points": [{"point": "string", "source": "string", "page": 1}]}'
+    "\nDo not wrap the JSON in markdown blocks. Do not include introductory conversational filler."
 )
 
 PASS2_AUDIT_SYSTEM_PROMPT = (
-    "You are an academic medical auditor. Refine the existing Base Note with facts from the Second Reference. "
-    "You must detect differing staging guidelines, diagnostic thresholds, or dosages between the two. "
-    "You MUST append a dedicated '### Discrepancies & Variances' section at the bottom explicitly citing both sources."
+    "Merge these clinical points for '{subtopic}'. Retain all conditions. "
+    "If drug dosages or diagnostic cutoffs conflict, output a flag labeled '### Discrepancies & Variances'. "
+    "Do not hallucinate. Output the merged points as a JSON array of objects matching: "
+    '[{"point": "string", "source": "string", "page": 1}]'
 )
 
 DISTRACTOR_ANALYSIS_PROMPT = (

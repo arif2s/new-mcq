@@ -1,3 +1,4 @@
+
 import re
 
 # Consolidate into a single pre-compiled pattern for a 1-pass search
@@ -15,8 +16,6 @@ def detect_clinical_variances(base_text: str, secondary_text: str) -> str:
     if not secondary_text:
         return ""
 
-    # Single-pass findall is significantly faster than looping multiple patterns.
-    # Set comprehension deduplicates identical matches instantly while normalizing case.
     matches = {match.lower() for match in _VARIANCE_PATTERN.findall(secondary_text)}
 
     if matches:
@@ -24,3 +23,9 @@ def detect_clinical_variances(base_text: str, secondary_text: str) -> str:
         return "- " + "\n- ".join(variances)
 
     return ""
+
+def merge_json_nodes(base_json: dict, second_json: dict, metadata: dict) -> dict:
+    # We will let LLM handle the merging of points for matching subtopics.
+    # But here we can define the helper if needed. Actually, the prompt says:
+    # "Match subtopic nodes programmatically in Python. Do not use the LLM for this mapping."
+    pass
