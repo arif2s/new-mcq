@@ -98,7 +98,7 @@ export default function InspectorPanel({ topic, mcqContext }: InspectorPanelProp
   const varianceText = synthesis ? getVariances(synthesis.unified_article) : null;
 
   return (
-    <div className="w-96 bg-gray-900 border-l border-gray-700 flex flex-col h-full overflow-y-auto p-4 animate-fade-in text-gray-200">
+    <div id="right-inspector-pane" className="w-[450px] bg-gray-900 border-l border-gray-700 flex flex-col h-full overflow-y-auto p-4 animate-fade-in text-gray-200">
       <div className="flex items-center justify-between border-b border-gray-800 pb-3 mb-4">
         <h3 className="text-base font-bold text-brand-400 flex items-center gap-2">
           <Sparkles size={18} className="text-purple-400" />

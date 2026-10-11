@@ -12,23 +12,20 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!mountPoint) {
         mountPoint = document.createElement("div");
         mountPoint.id = "qa-mount-point"; // Fixed ID to match search condition
-        // Create an overlay so it doesn't break SPA layout
-        mountPoint.style.position = "absolute";
-        mountPoint.style.top = "0";
-        mountPoint.style.right = "0";
-        mountPoint.style.bottom = "0";
-        mountPoint.style.width = "80vw"; // Keep left rail navigation visible
-        mountPoint.style.backgroundColor = "white";
-        mountPoint.style.zIndex = "1000";
-        document.body.appendChild(mountPoint);
+
+        // Ensure the fallback qa-mount-point is appended to a Right Inspector pane if it exists
+        // The blueprint defines a 450px Right Inspector Pane.
+        const rightPane = document.getElementById("right-inspector-pane") || document.body;
+        rightPane.appendChild(mountPoint);
     } else {
         // Clear previous instances if hot-reloading
         mountPoint.innerHTML = '';
     }
 
+    // Use standard CSS flexbox/grid for native layout. Side-by-side = row.
     const container = document.createElement("div");
     container.style.display = "flex";
-    container.style.flexDirection = "row";
+    container.style.flexDirection = "row"; // Side-by-side
     container.style.height = "100%";
     container.style.width = "100%";
 
@@ -40,7 +37,7 @@ document.addEventListener("DOMContentLoaded", () => {
     leftPane.style.overflowY = "auto";
     leftPane.innerHTML = `
         <h2>Original PDF (Raw Text/Canvas)</h2>
-        <textarea id="qa-original-text" style="width:100%; height:80%; font-family:monospace; padding:10px;" placeholder="Paste original text here..."></textarea>
+        <textarea id="qa-original-text" style="width:100%; height:150px; font-family:monospace; padding:10px; box-sizing:border-box;" placeholder="Paste original text here..."></textarea>
     `;
 
     // Right: Parsed Markdown
@@ -51,7 +48,7 @@ document.addEventListener("DOMContentLoaded", () => {
     rightPane.style.position = "relative";
     rightPane.innerHTML = `
         <h2>Parsed Markdown</h2>
-        <textarea id="qa-parsed-text" style="width:100%; height:60%; font-family:monospace; padding:10px;" placeholder="Paste parsed text here..."></textarea>
+        <textarea id="qa-parsed-text" style="width:100%; height:150px; font-family:monospace; padding:10px; box-sizing:border-box;" placeholder="Paste parsed text here..."></textarea>
         <button id="qa-btn-metrics" style="margin-top:10px; padding:10px 20px; font-size:16px; cursor:pointer;">Calculate QA Metrics</button>
         <div id="qa-metrics-output" style="margin-top:20px; padding:10px; background-color:#f8f9fa; border:1px solid #ddd; min-height:80px;"></div>
     `;

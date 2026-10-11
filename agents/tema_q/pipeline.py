@@ -25,7 +25,6 @@ from agents.tema_q.prompts import (
     TOPIC_EXTRACTION_SYSTEM_PROMPT,
     STOP_TOKENS,
 )
-from agents.tema_q.auditor import detect_clinical_variances
 from core.database import get_db_connection
 
 logger = logging.getLogger(__name__)
@@ -205,17 +204,8 @@ async def run_tema_q_synthesis(topic: str, search_results: dict, mcq_context: di
 
         bounded_doc = truncate_to_token_limit(doc_content, max(dynamic_doc_budget, 400))
 
-        # We need to detect discrepancies before calling the LLM so we can pass them directly in Pass 2 prompt
-        discrepancy_report = detect_clinical_variances(base_note, bounded_doc)
-        if discrepancy_report:
-             discrepancy_report_all += f"\n{discrepancy_report}"
-
-        pass2_user_msg = f"Topic: {topic}\n\nBaseline Note:\n{final_article}\n\nSecondary Reference:\n{bounded_doc}\n\nIdentified Discrepancies:\n{discrepancy_report_all}"
+        pass2_user_msg = f"Topic: {topic}\n\nBase Note:\n{final_article}\n\nSecond Reference:\n{bounded_doc}"
         final_article = await call_llm_async(PASS2_AUDIT_SYSTEM_PROMPT, pass2_user_msg, 500)
-
-    # In case the LLM still fails to append the header, fallback to append it manually
-    if discrepancy_report_all and "### Discrepancies & Variances" not in final_article:
-        final_article += f"\n\n### Discrepancies & Variances\n{discrepancy_report_all}"
 
     # Pass 3: Distractor Audit (Optional)
     if mcq_context and mcq_context.get("options"):
