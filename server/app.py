@@ -11,6 +11,7 @@ from server.routes_csv import router as csv_router
 from server.routes_queue import router as queue_router
 from server.routes_sessions import router as sessions_router
 from server.routes_state import router as state_router
+from server.routes_notes import router as notes_router
 from server.ws_manager import ws_manager
 from core.database import initialize_database, get_db_connection
 from core.queue_manager import queue_worker
@@ -41,7 +42,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Clinical MCQ Hub", lifespan=lifespan)
 
 # 2. Consolidate router inclusions for cleaner initialization
-for router in (mcq_router, sources_router, csv_router, queue_router, sessions_router, state_router):
+for router in (mcq_router, sources_router, csv_router, queue_router, sessions_router, state_router, notes_router):
     app.include_router(router)
 
 @app.websocket("/ws/indexing")

@@ -233,6 +233,52 @@ async def run_tema_q_synthesis(topic: str, search_results: dict, mcq_context: di
     else:
         distractor_output = "Distractors audited against top clinical reference criteria."
 
+    # Save the output as HTML to storage/reports/{topic}_report.html
+    import os
+    os.makedirs("storage/reports", exist_ok=True)
+    safe_topic = "".join([c for c in topic if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+    safe_topic = safe_topic.replace(' ', '_')
+    report_path = f"storage/reports/{safe_topic}_report.html"
+
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Tema_Q Synthesis Report - {topic}</title>
+<style>
+  body {{ font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }}
+  h1 {{ color: #2c3e50; }}
+  h2, h3 {{ color: #34495e; }}
+  .content {{ max-width: 800px; margin: auto; }}
+  .section {{ margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }}
+  .discrepancies {{ border-color: #e74c3c; background-color: #fadbd8; }}
+</style>
+</head>
+<body>
+<div class="content">
+  <h1>Clinical Synthesis: {topic}</h1>
+  <div class="section">
+    <h2>Pass 1: Base Note</h2>
+    <pre style="white-space: pre-wrap; font-family: inherit;">{base_note}</pre>
+  </div>
+  <div class="section">
+    <h2>Pass 2: Unified Article</h2>
+    <pre style="white-space: pre-wrap; font-family: inherit;">{final_article}</pre>
+  </div>
+  <div class="section">
+    <h2>Distractor Analysis</h2>
+    <pre style="white-space: pre-wrap; font-family: inherit;">{distractor_output}</pre>
+  </div>
+</div>
+</body>
+</html>
+"""
+    try:
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+    except Exception as e:
+        logger.error(f"Failed to save Tema_Q HTML report: {e}")
+
     return {
         "enhanced_explanation": base_note,
         "distractor_analysis": distractor_output,
