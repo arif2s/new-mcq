@@ -1,4 +1,10 @@
-import os, sys, uvicorn
+import os
+import sys
+
+# Disable CUDA/GPU access for the FastAPI process to protect LM Studio VRAM
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+import uvicorn
 from config import SERVER_HOST, SERVER_PORT, APP_TITLE
 from core.database import initialize_database
 

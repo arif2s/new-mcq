@@ -47,3 +47,43 @@ def get_zim_article(zim_path: str, title: str) -> str:
     except Exception as e:
         logger.warning(f"Failed to extract from ZIM {zim_path}: {e}")
         return ""
+
+def expand_query_via_zim(query: str) -> str:
+    """
+    Expands 1-2 word queries using the lead definition from a local ZIM archive.
+    """
+    words = query.strip().split()
+    if len(words) > 2 or not words:
+        return query
+
+    try:
+        from core.database import get_db_connection
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT path FROM knowledge_sources WHERE type = 'zim' AND enabled = 1 LIMIT 1")
+            row = cursor.fetchone()
+
+        if not row:
+            return query
+
+        zim_path = row["path"]
+        article_text = get_zim_article(zim_path, query)
+
+        if not article_text:
+            return query
+
+        # Extract the first sentence or up to first 250 characters as lead definition
+        match = re.search(r'^(.*?\.)(?:\s|$)', article_text)
+        if match:
+            lead = match.group(1).strip()
+        else:
+            lead = article_text[:250].strip()
+
+        if lead:
+            # Prepend lead definition to the enriched search query
+            return f"{lead} {query}"
+
+    except Exception as e:
+        logger.warning(f"Failed to expand query via ZIM: {e}")
+
+    return query
