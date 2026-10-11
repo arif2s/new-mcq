@@ -30,6 +30,8 @@ def get_medspacy_model():
         try:
             import medspacy
             _medspacy_nlp = medspacy.load()
+            # Silence PyRuSH warnings as required by Memory guidelines
+            logging.getLogger("PyRuSH.PyRuSHSentencizer").setLevel(logging.WARNING)
         except ImportError:
             logger.warning("medspacy not installed, falling back to regex")
             _medspacy_available = False
@@ -50,6 +52,10 @@ def check_zim_refinement(topic: str) -> bool:
                 logger.warning("zim_titles table not found")
 
                 # Check directly in ZIM files if zim_titles doesn't exist
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_sources'")
+                if not cursor.fetchone():
+                     return False
+
                 cursor.execute("SELECT path FROM knowledge_sources WHERE type = 'zim' AND enabled = 1")
                 for row in cursor.fetchall():
                     zim_path = row['path']
@@ -109,3 +115,64 @@ def extract_topics_local(question: str, options: dict, explanation: str = '', st
         return {"main_topic": "General Medical Concept", "all_topics": ["General Medical Concept"]}
 
     return {"main_topic": unique_topics[0], "all_topics": unique_topics}
+
+def filter_sibling_topics(query: str, chunks: list[dict]) -> list[dict]:
+    # Extract topics from the query
+    query_topics = extract_topics_local(query, {}, strategy='medspacy').get("all_topics", [])
+    if not query_topics:
+        query_topics = [query]
+
+    query_topic_lower = set(t.lower() for t in query_topics)
+
+    filtered_chunks = []
+
+    nlp = get_medspacy_model()
+
+    for chunk in chunks:
+        # We need to cross reference extracted entities using MedSpacy
+        # and checking if the entity is an established differential diagnosis / sibling condition
+
+        # Consider the child_content or parent_content or title
+        chunk_text = chunk.get("child_content", "") or chunk.get("parent_content", "") or chunk.get("title", "")
+        if not chunk_text:
+            filtered_chunks.append(chunk)
+            continue
+
+        chunk_topics = []
+        if nlp:
+            doc = nlp(chunk_text)
+            chunk_topics = [ent.text for ent in doc.ents if not ent._.is_negated]
+        else:
+             chunk_topics = extract_topics_local(chunk_text, {}, strategy='regex').get("all_topics", [])
+
+        if not chunk_topics:
+             chunk_topics = [chunk.get("title", "")]
+
+        chunk_topic_lower = set(t.lower() for t in chunk_topics)
+
+        # Check if there is an overlap
+        has_overlap = False
+        for qt in query_topic_lower:
+            for ct in chunk_topic_lower:
+                if qt in ct or ct in qt:
+                    has_overlap = True
+                    break
+            if has_overlap:
+                break
+
+        if not has_overlap:
+            # If no overlap, check if primary entity is a sibling condition (e.g., via zim_titles check)
+            # If it is a recognized distinct condition, we drop it.
+            primary_entity = chunk_topics[0] if chunk_topics else ""
+            if primary_entity:
+                is_sibling = check_zim_refinement(primary_entity)
+                if not is_sibling:
+                     # It's just generic text that doesn't overlap but isn't a sibling condition
+                     filtered_chunks.append(chunk)
+                # Else: it's a distinct condition (sibling) that doesn't overlap, so we penalize/drop it (don't append)
+            else:
+                 filtered_chunks.append(chunk)
+        else:
+            filtered_chunks.append(chunk)
+
+    return filtered_chunks
