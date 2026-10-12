@@ -6,6 +6,9 @@
     <title>Medisearch AI</title>
     <link rel="stylesheet" href="/css/main.css" />
     <link rel="stylesheet" href="/css/animations.css" />
+    <!-- Safe Markdown and HTML Sanitization for LLM/CSV Outputs -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
   </head>
   <body class="light-theme">
     <div class="background-animation"></div>
@@ -32,6 +35,7 @@
           <li><button class="nav-btn" data-target="knowledge-hub-view">Knowledge Hub</button></li>
           <li><button class="nav-btn" data-target="rag-vault-view">RAG Vault</button></li>
           <li><button class="nav-btn" data-target="habit-tracker-view">Habit Tracker</button></li>
+          <li><button class="nav-btn" data-target="expertise-view">Expertise Map</button></li>
           <li><button class="nav-btn" data-target="queue-view">Processing Queue</button></li>
           <li><button class="nav-btn" data-target="settings-view">Settings</button></li>
         </ul>
@@ -54,82 +58,47 @@
       <!-- CENTER STAGE -->
       <main class="main-content relative-container">
 
-        <!-- HOME / MCQ VIEW -->
+        <!-- DASHBOARD VIEW -->
         <section id="dashboard-view" class="view-section active fade-enter-active">
-
           <header class="view-header">
-
             <h2>Dashboard</h2>
-
             <p class="subtitle">Overview of your learning progress and statistics.</p>
-
           </header>
 
-
-
           <div class="grid-2col mb-20">
-
             <div class="card glass-card">
-
               <h3>Daily Targets</h3>
-
               <div class="mt-15">
-
                 <div class="flex justify-between text-sm mb-5"><span>Questions Answered</span> <span id="ds-q-text">0 / 50</span></div>
-
                 <div class="progress-bar-bg"><div id="ds-q-prog" class="progress-bar-fill bg-brand-500" style="width: 0%"></div></div>
-
               </div>
-
               <div class="mt-15">
-
                 <div class="flex justify-between text-sm mb-5"><span>Correct Answers</span> <span id="ds-c-text">0 / 40</span></div>
-
                 <div class="progress-bar-bg"><div id="ds-c-prog" class="progress-bar-fill bg-success-500" style="width: 0%"></div></div>
-
               </div>
-
             </div>
-
-
 
             <div class="card glass-card">
-
               <h3>Lifetime Stats</h3>
-
               <div class="grid-2col mt-15">
-
                 <div class="stat-box">
-
                   <div class="stat-val" id="ds-accuracy">0%</div>
-
                   <div class="stat-label">Avg Accuracy</div>
-
                 </div>
-
                 <div class="stat-box">
-
                   <div class="stat-val" id="ds-tests">0</div>
-
                   <div class="stat-label">Tests Taken</div>
-
                 </div>
-
                 <div class="stat-box">
-
                   <div class="stat-val" id="ds-time">0m</div>
-
                   <div class="stat-label">Time Spent</div>
-
                 </div>
-
               </div>
-
             </div>
-
           </div>
-
         </section>
+
+        <!-- MCQ EXTRACTOR VIEW -->
         <section id="home-view" class="view-section fade-enter">
           <header class="view-header">
             <h2>Medical Entity Extractor & MCQ</h2>
@@ -158,126 +127,69 @@
           </div>
         </section>
 
-        <!-- NEW QUIZ VIEW -->
-
+        <!-- QUIZ ENGINE VIEW -->
         <section id="quiz-view" class="view-section fade-enter">
-
           <header class="view-header">
-
             <h2>Quiz Engine</h2>
-
             <p class="subtitle">Test your knowledge against your database.</p>
-
           </header>
 
-
-
           <div id="quiz-setup" class="card glass-card">
-
             <h3>Setup Quiz</h3>
-
             <div class="grid-2col mt-15">
-
               <div class="form-group mt-5">
-
                 <label>Subject</label>
-
                 <select id="quiz-subject-select" class="glass-select"><option value="all">Loading...</option></select>
-
               </div>
-
               <div class="form-group mt-5">
-
                 <label>Topic</label>
-
                 <select id="quiz-topic-select" class="glass-select"><option value="all">Loading...</option></select>
-
               </div>
-
               <div class="form-group mt-5">
-
                 <label>Keyword Search</label>
-
                 <input type="text" id="quiz-keyword" class="glass-input" placeholder="Optional keyword...">
-
               </div>
-
               <div class="form-group mt-5">
-
                 <label>Question Count</label>
-
                 <input type="number" id="quiz-count" class="glass-input" value="10" min="1" max="100">
-
               </div>
-
               <div class="form-group mt-5">
-
                 <label>Time Limit (Minutes, 0 for infinite)</label>
-
                 <input type="number" id="quiz-time" class="glass-input" value="0" min="0">
-
               </div>
-
             </div>
-
             <p id="quiz-match-count" class="text-sm text-brand-400 mt-10">Matching Questions: 0</p>
             <button id="start-quiz-btn" class="primary-btn mt-20">Start Quiz</button>
-
           </div>
-
-
 
           <div id="quiz-active" class="card glass-card" style="display: none;">
-
             <div class="flex justify-between items-center mb-10">
-
                 <h3 id="quiz-progress">Question 1 of 10</h3>
-
                 <div id="quiz-timer-display" class="text-xl font-mono text-brand-400"></div>
-
             </div>
-
             <div class="mb-20 text-lg p-4 bg-gray-900 rounded border border-gray-700" id="quiz-stem"></div>
-
             <div id="quiz-options" class="flex flex-col gap-3"></div>
-
             <div class="flex justify-between mt-20">
-
                 <button id="quiz-prev-btn" class="secondary-btn" disabled>Previous</button>
-
                 <button id="quiz-next-btn" class="secondary-btn">Next</button>
-
             </div>
-
           </div>
-
-
 
           <div id="quiz-results" class="card glass-card" style="display: none;">
-
             <h3 class="text-center text-2xl mb-10">Quiz Completed</h3>
-
             <div class="flex justify-center gap-10 mb-20">
-
                 <div class="text-center"><div class="text-3xl text-brand-400 font-bold" id="res-score"></div><div>Score</div></div>
-
                 <div class="text-center"><div class="text-3xl font-bold" id="res-correct"></div><div>Correct</div></div>
-
                 <div class="text-center"><div class="text-3xl font-bold" id="res-time"></div><div>Time</div></div>
-
             </div>
-
             <h4 class="mb-10 text-lg">Review</h4>
-
             <div id="res-explanations" class="flex flex-col gap-4 max-h-[500px] overflow-y-auto pr-2"></div>
-
             <button id="quiz-done-btn" class="primary-btn w-full mt-20">Back to Setup</button>
-
           </div>
-
         </section>
+
         <!-- KNOWLEDGE HUB VIEW -->
-                <section id="knowledge-hub-view" class="view-section fade-enter">
+        <section id="knowledge-hub-view" class="view-section fade-enter">
           <header class="view-header flex justify-between items-center mb-8">
             <div>
               <h2>Knowledge Hub</h2>
@@ -301,27 +213,27 @@
               <p class="text-gray-400">Complete a quiz to see your history here.</p>
             </div>
             <div id="hub-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" style="display: none;">
-              <!-- Cards rendered via JS -->
+              <!-- Cards rendered via JS Templates -->
             </div>
           </div>
 
           <!-- Session Review Sub-View -->
           <div id="hub-review-container" style="display: none;" class="max-w-5xl mx-auto flex flex-col">
               <div class="flex justify-between items-center mb-6">
-                <button id="hub-review-back-btn" class="flex items-center gap-2 text-gray-400 hover:text-white transition-colors">
+                <button id="hub-review-back-btn" class="flex items-center gap-2 text-gray-400 hover:text-white transition-colors cursor-pointer border-none bg-transparent">
                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg> Back to Hub
                 </button>
                 <h2 class="text-xl font-bold text-gray-200">Session Review</h2>
               </div>
               <div id="hub-review-questions" class="space-y-4">
-                  <!-- Questions rendered here -->
+                  <!-- Questions rendered via Template -->
               </div>
           </div>
 
           <!-- Topic Carousel Sub-View -->
           <div id="hub-carousel-container" style="display: none;" class="flex-1 flex flex-col h-full overflow-hidden absolute inset-0 bg-black z-40">
              <div class="h-16 flex items-center justify-between px-4 md:px-8 border-b border-gray-800 bg-gray-950">
-                <button id="hub-carousel-back-btn" class="flex items-center gap-2 text-gray-400 hover:text-white transition-colors">
+                <button id="hub-carousel-back-btn" class="flex items-center gap-2 text-gray-400 hover:text-white transition-colors cursor-pointer border-none bg-transparent">
                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg> Back to Hub
                 </button>
                 <div class="text-sm font-medium text-gray-400 hidden md:block" id="hub-carousel-counter">
@@ -339,7 +251,7 @@
 
                     <div class="bg-gray-900 border border-gray-800 rounded-2xl shadow-xl overflow-hidden mb-8">
                       <div id="hub-carousel-content" class="p-6 md:p-8 prose prose-invert prose-brand max-w-none prose-headings:text-gray-200 prose-a:text-brand-400 text-gray-300 text-sm">
-                         <!-- Content here -->
+                         <!-- Content dynamically injected here via DOM builder -->
                       </div>
                     </div>
 
@@ -352,11 +264,11 @@
                     </div>
 
                     <div class="mt-8 pt-6 border-t border-gray-800 flex justify-between items-center mb-8">
-                      <button id="hub-carousel-prev" class="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-900 text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-800 transition-colors border border-gray-800">
+                      <button id="hub-carousel-prev" class="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-900 text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-800 transition-colors border border-gray-800">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg> Previous
                       </button>
                       <div class="text-xs text-gray-500 hidden md:block">Use Left/Right arrow keys to navigate</div>
-                      <button id="hub-carousel-next" class="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-900 text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-800 transition-colors border border-gray-800">
+                      <button id="hub-carousel-next" class="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-900 text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-800 transition-colors border border-gray-800">
                         Next <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                       </button>
                     </div>
@@ -508,83 +420,78 @@
                  <h4 class="mb-10 text-sm text-gray-400">Activity Calendar (Last 365 Days)</h4>
                  <div id="ht-calendar" class="min-w-[800px] p-4 bg-gray-900 rounded border border-gray-700"></div>
              </div>
-                <p>Habit tracker content goes here. (e.g. streak calendar, activity charts)</p>
-             </div>
+          </div>
+        </section>
+
+        <!-- EXPERTISE MAP VIEW -->
+        <section id="expertise-view" class="view-section fade-enter">
+          <header class="view-header flex justify-between items-center">
+            <div>
+              <h2>Expertise Map</h2>
+              <p class="subtitle">Track your mastery level across all topics and subjects.</p>
+            </div>
+          </header>
+
+          <div id="expertise-empty" class="text-center py-20 hidden">
+              <h2 class="text-xl text-gray-400 mb-2">No expertise data yet</h2>
+              <p class="text-gray-500">Complete quizzes to start building your expertise map!</p>
+          </div>
+
+          <div id="expertise-content" class="hidden max-w-6xl mx-auto">
+              <!-- Overall Distribution -->
+              <div class="bg-gray-800/60 rounded-xl p-6 border border-gray-700 mb-8">
+                  <h3 class="text-lg font-semibold text-gray-200 mb-4">📊 Expertise Distribution</h3>
+                  <div id="expertise-distribution-grid" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"></div>
+                  <div class="w-full h-6 rounded-full overflow-hidden flex" id="expertise-distribution-bar"></div>
+              </div>
+
+              <!-- Recommendations -->
+              <div class="bg-gradient-to-r from-purple-600/20 to-brand-600/20 rounded-xl p-6 border border-purple-500/30 mb-8">
+                  <h3 class="text-lg font-semibold text-gray-200 mb-4">🎯 Focus Recommendations</h3>
+                  <div id="expertise-recommendations" class="space-y-3"></div>
+              </div>
+
+              <!-- By Subject -->
+              <div id="expertise-subjects-container"></div>
           </div>
         </section>
 
         <!-- PROCESSING QUEUE VIEW -->
-
         <section id="queue-view" class="view-section fade-enter">
-
           <header class="view-header">
-
             <h2>Processing Queue <span id="queue-worker-status" class="badge bg-warning ml-2">Checking...</span></h2>
-
             <p class="subtitle">Monitor background tasks and LLM generation queue.</p>
-
           </header>
 
-
-
-          <div class="grid-4col mb-20 gap-4">
-
+          <div class="grid-4col mb-20 gap-4" style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr;">
             <div class="card glass-card text-center p-4">
-
                 <div class="text-3xl font-bold text-gray-200" id="queue-pending">0</div>
-
                 <div class="text-sm text-gray-400">Pending</div>
-
             </div>
-
             <div class="card glass-card text-center p-4">
-
                 <div class="text-3xl font-bold text-brand-400" id="queue-processing">0</div>
-
                 <div class="text-sm text-gray-400">Processing</div>
-
             </div>
-
             <div class="card glass-card text-center p-4">
-
                 <div class="text-3xl font-bold text-success-400" id="queue-completed">0</div>
-
                 <div class="text-sm text-gray-400">Completed</div>
-
             </div>
-
             <div class="card glass-card text-center p-4">
-
                 <div class="text-3xl font-bold text-danger-400" id="queue-failed">0</div>
-
                 <div class="text-sm text-gray-400">Failed</div>
-
             </div>
-
           </div>
-
-
 
           <div class="card glass-card">
-
              <div class="flex justify-between items-center mb-10">
-
                  <h3 id="queue-total">Recent Tasks</h3>
-
                  <div class="flex gap-2">
-
                      <button id="queue-retry-btn" class="secondary-btn text-xs">Retry Failed</button>
-
-                     <button id="queue-clear-btn" class="danger-btn text-xs">Clear Failed</button>
-
+                     <button id="queue-clear-btn" class="secondary-btn text-xs" style="color: #ef4444; border-color: #ef4444;">Clear Failed</button>
                  </div>
-
              </div>
-
              <div id="queue-tasks-list" class="max-h-[400px] overflow-y-auto"></div>
-
           </div>
-
         </section>
 
         <!-- SETTINGS VIEW -->
@@ -619,57 +526,31 @@
           </div>
 
           <div class="grid-2col mt-20">
-
               <div class="card glass-card">
-
                 <h3>App Preferences</h3>
-
                 <div class="form-group mt-5">
-
                   <label>Daily Questions Target:</label>
-
                   <input type="number" id="set-q-target" class="glass-input">
-
                 </div>
-
                 <div class="form-group mt-5">
-
                   <label>Daily Correct Target:</label>
-
                   <input type="number" id="set-c-target" class="glass-input">
-
                 </div>
-
               </div>
-
-
 
               <div class="card glass-card">
-
                 <h3>Queue Configuration</h3>
-
                 <div class="form-group mt-5">
-
                   <label>Processing Queue Limit:</label>
-
                   <input type="number" id="set-q-limit" class="glass-input">
-
                   <p class="text-xs text-gray-400 mt-1">Number of items pulled per batch.</p>
-
                 </div>
-
                 <div class="form-group mt-5">
-
                   <label>Processing Queue Hard Limit:</label>
-
                   <input type="number" id="set-qh-limit" class="glass-input">
-
                   <p class="text-xs text-gray-400 mt-1">Global maximum size of the pending queue.</p>
-
                 </div>
-
               </div>
-
           </div>
 
           <div class="mt-24"><button id="save-settings-btn" class="primary-btn w-full sm:w-auto">Save App Settings</button></div>
@@ -697,7 +578,7 @@
         <div id="zim-viewer-container" class="overlay-panel fade-enter" style="display: none;">
           <div class="overlay-header">
             <h2>ZIM Viewer</h2>
-            <button id="close-zim-viewer-btn" class="icon-btn">
+            <button id="close-zim-viewer-btn" class="icon-btn cursor-pointer">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
             </button>
           </div>
@@ -724,10 +605,10 @@
           You are about to start a new quiz. Would you like to study the related topics first, or start the MCQ directly?
         </p>
         <div class="flex flex-col gap-3">
-          <button id="study-topics-first-btn" class="w-full flex items-center justify-center gap-2 px-6 py-4 bg-brand-600/20 text-brand-400 hover:bg-brand-600/30 hover:text-brand-300 rounded-xl transition-all font-medium border border-brand-500/30">
+          <button id="study-topics-first-btn" class="w-full flex items-center justify-center gap-2 px-6 py-4 bg-brand-600/20 text-brand-400 hover:bg-brand-600/30 hover:text-brand-300 rounded-xl transition-all font-medium border border-brand-500/30 cursor-pointer">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg> Study Topics First
           </button>
-          <button id="start-mcq-directly-btn" class="w-full flex items-center justify-center gap-2 px-6 py-4 bg-gradient-to-r from-brand-600 to-purple-600 hover:from-brand-500 hover:to-purple-500 text-white rounded-xl transition-all font-medium shadow-lg">
+          <button id="start-mcq-directly-btn" class="w-full flex items-center justify-center gap-2 px-6 py-4 bg-gradient-to-r from-brand-600 to-purple-600 hover:from-brand-500 hover:to-purple-500 text-white rounded-xl transition-all font-medium shadow-lg cursor-pointer border-none">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> Start MCQ Directly
           </button>
           <button id="cancel-pre-quiz-btn" class="mt-2 w-full py-2 text-sm text-gray-500 hover:text-gray-300 transition-colors bg-transparent border-none cursor-pointer">
@@ -795,12 +676,91 @@
       </div>
     </div>
 
+    <!-- TEMPLATES (For Security & Robust DOM Manipulation) -->
+    <template id="hub-card-template">
+      <div class="hub-card bg-gray-800/60 rounded-xl border border-gray-700 hover:border-gray-600 transition-all flex flex-col h-full overflow-hidden shadow-lg relative cursor-default">
+        <div class="hub-select-container absolute top-3 right-3 z-10 hidden">
+          <input type="checkbox" class="hub-select-cb w-5 h-5 rounded border-gray-600 bg-gray-900 text-brand-500 focus:ring-brand-500 cursor-pointer">
+        </div>
+        <div class="p-5 flex-1 hub-card-body">
+          <div class="flex justify-between items-start mb-3 pr-8">
+            <span class="hub-card-subject text-xs font-medium px-2.5 py-1 bg-brand-600/20 text-brand-400 rounded-lg truncate max-w-[150px]"></span>
+            <div class="hub-card-date text-xs text-gray-500 flex items-center gap-1 shrink-0">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+              <span></span>
+            </div>
+          </div>
+          <h3 class="hub-card-title text-lg font-semibold text-gray-200 mb-2"></h3>
+          <div class="hub-card-topics flex flex-wrap gap-1 mb-4 h-[44px] overflow-hidden relative"></div>
+          <div class="grid grid-cols-2 gap-4 bg-gray-900/50 rounded-lg p-3 border border-gray-700/50 mb-2">
+            <div class="text-center">
+              <p class="text-xs text-gray-500 mb-1">Score</p>
+              <p class="hub-card-score text-lg font-bold text-white"></p>
+            </div>
+            <div class="text-center">
+              <p class="text-xs text-gray-500 mb-1">Accuracy</p>
+              <p class="hub-card-accuracy text-lg font-bold"></p>
+            </div>
+          </div>
+          <div class="flex justify-between text-xs text-gray-400 px-1">
+            <span><span class="hub-card-correct text-success-400 font-bold"></span> Correct</span>
+            <span><span class="hub-card-wrong text-danger-400 font-bold"></span> Wrong</span>
+          </div>
+        </div>
+        <div class="border-t border-gray-700 p-3 bg-gray-900/30 grid grid-cols-2 gap-2">
+          <button class="btn-study cursor-pointer py-2 px-3 text-xs font-medium bg-brand-600/20 text-brand-400 hover:bg-brand-600/30 hover:text-brand-300 rounded-lg transition-colors flex items-center justify-center gap-1.5 col-span-2 border-none">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg> Study Topics Covered
+          </button>
+          <button class="btn-review cursor-pointer py-2 px-3 text-xs font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 rounded-lg transition-colors flex items-center justify-center gap-1.5 border-none">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> Explanations
+          </button>
+          <button class="btn-retake cursor-pointer py-2 px-3 text-xs font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 rounded-lg transition-colors flex items-center justify-center gap-1.5 border-none">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg> Retake Set
+          </button>
+        </div>
+      </div>
+    </template>
+
+    <template id="review-card-template">
+      <div class="review-card bg-gray-800 rounded-xl p-6 border">
+        <div class="flex items-start gap-4">
+          <div class="review-icon mt-1"></div>
+          <div class="flex-1 min-w-0">
+            <div class="flex justify-between mb-2 text-sm text-gray-400">
+              <span class="review-q-num"></span>
+              <span class="review-q-topic bg-gray-700 px-2 py-0.5 rounded text-xs truncate max-w-[200px]"></span>
+            </div>
+            <p class="review-q-text text-gray-200 mb-4 whitespace-pre-wrap"></p>
+            <div class="review-options grid grid-cols-1 md:grid-cols-2 gap-3 mb-4"></div>
+            <div class="review-explanation-container bg-brand-900/30 border border-brand-500/30 p-4 rounded-lg mt-4 text-sm text-gray-300 hidden">
+              <p class="font-semibold text-brand-400 mb-1">Explanation:</p>
+              <div class="review-explanation prose prose-sm prose-invert max-w-none"></div>
+            </div>
+            <div class="review-references-container mt-4 border-t border-gray-700/50 pt-4 hidden">
+              <h4 class="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg> Related Knowledge
+              </h4>
+              <div class="review-references flex flex-wrap gap-2"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <template id="review-option-template">
+      <div class="review-option p-3 rounded-lg border text-sm flex gap-3 bg-gray-900 border-gray-700 text-gray-400">
+        <span class="review-option-letter font-bold shrink-0"></span>
+        <span class="review-option-text break-words"></span>
+      </div>
+    </template>
+
     <script src="/js/state.js"></script>
     <script src="/js/dashboard.js"></script>
     <script src="/js/quiz.js"></script>
     <script src="/js/habits.js"></script>
     <script src="/js/hub.js"></script>
     <script src="/js/queue.js"></script>
+    <script src="/js/expertise.js"></script>
     <script src="/js/settings.js"></script>
     <script src="/js/vault.js"></script>
     <script src="/js/app.js"></script>

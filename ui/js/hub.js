@@ -41,133 +41,94 @@ function renderHub() {
     if (emptyEl) emptyEl.style.display = 'none';
     if (gridEl) {
         gridEl.style.display = 'grid';
-        gridEl.innerHTML = '';
+        gridEl.innerHTML = ''; // Fast clearing of container
     }
 
+    const template = document.getElementById('hub-card-template');
+
     hubSessions.forEach(session => {
-        const div = document.createElement('div');
-        div.className = `bg-gray-800/60 rounded-xl border ${hubSelected.has(session.id) ? 'border-brand-500 ring-1 ring-brand-500' : 'border-gray-700 hover:border-gray-600'} transition-all flex flex-col h-full overflow-hidden shadow-lg relative cursor-default`;
+        const clone = template.content.cloneNode(true);
+        const cardNode = clone.querySelector('.hub-card');
 
-        let selectHtml = '';
+        if (hubSelected.has(session.id)) {
+            cardNode.classList.add('border-brand-500', 'ring-1', 'ring-brand-500');
+            cardNode.classList.remove('border-gray-700', 'hover:border-gray-600');
+        }
+
+        const selectContainer = cardNode.querySelector('.hub-select-container');
+        const cb = cardNode.querySelector('.hub-select-cb');
         if (isEditing) {
-            const isChecked = hubSelected.has(session.id) ? 'checked' : '';
-            selectHtml = `
-            <div class="absolute top-3 right-3 z-10">
-                <input type="checkbox" class="hub-select-cb w-5 h-5 rounded border-gray-600 bg-gray-900 text-brand-500 focus:ring-brand-500 cursor-pointer" data-id="${session.id}" ${isChecked}>
-            </div>`;
+            selectContainer.classList.remove('hidden');
+            cb.checked = hubSelected.has(session.id);
+            cb.dataset.id = session.id;
+
+            cb.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    hubSelected.add(session.id);
+                    cardNode.classList.add('border-brand-500', 'ring-1', 'ring-brand-500');
+                    cardNode.classList.remove('border-gray-700', 'hover:border-gray-600');
+                } else {
+                    hubSelected.delete(session.id);
+                    cardNode.classList.remove('border-brand-500', 'ring-1', 'ring-brand-500');
+                    cardNode.classList.add('border-gray-700', 'hover:border-gray-600');
+                }
+                updateDeleteBtn();
+            });
+
+            const body = cardNode.querySelector('.hub-card-body');
+            body.addEventListener('click', () => {
+                cb.checked = !cb.checked;
+                cb.dispatchEvent(new Event('change'));
+            });
         }
 
-        const dateStr = new Date(session.timestamp).toLocaleDateString();
-        const shortId = session.id.split('_').pop().substring(0,6);
+        cardNode.querySelector('.hub-card-subject').textContent = session.subject_name || 'Mixed Session';
+        cardNode.querySelector('.hub-card-date span').textContent = new Date(session.timestamp).toLocaleDateString();
+        cardNode.querySelector('.hub-card-title').textContent = `Session ${session.id.split('_').pop().substring(0,6)}`;
 
+        cardNode.querySelector('.hub-card-score').textContent = `${session.score} / ${session.max_score}`;
+
+        const accEl = cardNode.querySelector('.hub-card-accuracy');
+        accEl.textContent = `${Math.round(session.accuracy)}%`;
+        if (session.accuracy >= 70) accEl.classList.add('text-success-500');
+        else if (session.accuracy >= 50) accEl.classList.add('text-warning-500');
+        else accEl.classList.add('text-danger-500');
+
+        cardNode.querySelector('.hub-card-correct').textContent = session.correct_answers;
+        cardNode.querySelector('.hub-card-wrong').textContent = session.wrong_answers;
+
+        const topicsContainer = cardNode.querySelector('.hub-card-topics');
         const topics = session.topics || [];
-        const topicsHtml = topics.slice(0, 4).map(t => `<span class="text-[10px] px-2 py-0.5 bg-gray-700 text-gray-400 rounded-full h-[18px] truncate max-w-[100px] inline-block">${t}</span>`).join(' ');
+        topics.slice(0, 4).forEach(t => {
+            const span = document.createElement('span');
+            span.className = "text-[10px] px-2 py-0.5 bg-gray-700 text-gray-400 rounded-full h-[18px] truncate max-w-[100px] inline-block";
+            span.textContent = t;
+            topicsContainer.appendChild(span);
+        });
 
-        const accClass = session.accuracy >= 70 ? 'text-success-500' : session.accuracy >= 50 ? 'text-warning-500' : 'text-danger-500';
-
-        div.innerHTML = `
-            ${selectHtml}
-            <div class="p-5 flex-1 hub-card-body">
-                <div class="flex justify-between items-start mb-3 pr-8">
-                  <span class="text-xs font-medium px-2.5 py-1 bg-brand-600/20 text-brand-400 rounded-lg truncate max-w-[150px]">
-                    ${session.subject_name || 'Mixed Session'}
-                  </span>
-                  <div class="text-xs text-gray-500 flex items-center gap-1 shrink-0">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                    ${dateStr}
-                  </div>
-                </div>
-
-                <h3 class="text-lg font-semibold text-gray-200 mb-2">Session ${shortId}</h3>
-
-                <div class="flex flex-wrap gap-1 mb-4 h-[44px] overflow-hidden relative">
-                    ${topicsHtml}
-                    ${topics.length > 4 ? `<span class="text-[10px] px-2 py-0.5 bg-gray-700 text-gray-400 rounded-full h-[18px]">+${topics.length - 4}</span>` : ''}
-                </div>
-
-                <div class="grid grid-cols-2 gap-4 bg-gray-900/50 rounded-lg p-3 border border-gray-700/50 mb-2">
-                  <div class="text-center">
-                    <p class="text-xs text-gray-500 mb-1">Score</p>
-                    <p class="text-lg font-bold text-white">${session.score} / ${session.max_score}</p>
-                  </div>
-                  <div class="text-center">
-                    <p class="text-xs text-gray-500 mb-1">Accuracy</p>
-                    <p class="text-lg font-bold ${accClass}">${Math.round(session.accuracy)}%</p>
-                  </div>
-                </div>
-
-                <div class="flex justify-between text-xs text-gray-400 px-1">
-                  <span><span class="text-success-400">${session.correct_answers}</span> Correct</span>
-                  <span><span class="text-danger-400">${session.wrong_answers}</span> Wrong</span>
-                </div>
-            </div>
-
-            <div class="border-t border-gray-700 p-3 bg-gray-900/30 grid grid-cols-2 gap-2">
-                <button class="btn-study py-2 px-3 text-xs font-medium bg-brand-600/20 text-brand-400 hover:bg-brand-600/30 hover:text-brand-300 rounded-lg transition-colors flex items-center justify-center gap-1.5 col-span-2" data-id="${session.id}">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg> Study Topics Covered
-                </button>
-                <button class="btn-review py-2 px-3 text-xs font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 rounded-lg transition-colors flex items-center justify-center gap-1.5" data-id="${session.id}">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> Explanations
-                </button>
-                <button class="btn-retake py-2 px-3 text-xs font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 rounded-lg transition-colors flex items-center justify-center gap-1.5" data-id="${session.id}">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg> Retake Set
-                </button>
-            </div>
-        `;
-
-        if(isEditing) {
-            const cb = div.querySelector('.hub-select-cb');
-            if (cb) {
-                cb.addEventListener('change', (e) => {
-                    if(e.target.checked) {
-                        hubSelected.add(session.id);
-                        div.classList.add('border-brand-500', 'ring-1', 'ring-brand-500');
-                        div.classList.remove('border-gray-700', 'hover:border-gray-600');
-                    } else {
-                        hubSelected.delete(session.id);
-                        div.classList.remove('border-brand-500', 'ring-1', 'ring-brand-500');
-                        div.classList.add('border-gray-700', 'hover:border-gray-600');
-                    }
-                    updateDeleteBtn();
-                });
-            }
-            const body = div.querySelector('.hub-card-body');
-            if (body) {
-                body.addEventListener('click', (e) => {
-                    if (cb) {
-                        cb.checked = !cb.checked;
-                        cb.dispatchEvent(new Event('change'));
-                    }
-                });
-            }
+        if (topics.length > 4) {
+            const extra = document.createElement('span');
+            extra.className = "text-[10px] px-2 py-0.5 bg-gray-700 text-gray-400 rounded-full h-[18px]";
+            extra.textContent = `+${topics.length - 4}`;
+            topicsContainer.appendChild(extra);
         }
 
-        const reviewBtn = div.querySelector('.btn-review');
-        if(reviewBtn) {
-            reviewBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                openSessionReview(session.id);
-            });
-        }
+        cardNode.querySelector('.btn-study').addEventListener('click', (e) => {
+            e.stopPropagation();
+            openTopicCarousel(session.id);
+        });
 
-        const studyBtn = div.querySelector('.btn-study');
-        if (studyBtn) {
-            studyBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                openTopicCarousel(session.id);
-            });
-        }
+        cardNode.querySelector('.btn-review').addEventListener('click', (e) => {
+            e.stopPropagation();
+            openSessionReview(session.id);
+        });
 
-        const retakeBtn = div.querySelector('.btn-retake');
-        if (retakeBtn) {
-            retakeBtn.addEventListener('click', (e) => {
-                 e.stopPropagation();
-                 // Call global state/quiz redirect logic if we implement retake, otherwise alert for now
-                 alert("Retake feature is integrated via Quiz Engine.");
-            });
-        }
+        cardNode.querySelector('.btn-retake').addEventListener('click', (e) => {
+            e.stopPropagation();
+            alert("Retake feature is integrated via Quiz Engine.");
+        });
 
-        gridEl.appendChild(div);
+        gridEl.appendChild(cardNode);
     });
 }
 
@@ -231,75 +192,80 @@ async function openSessionReview(sessionId) {
 function renderSessionReview(questions) {
     const container = document.getElementById('hub-review-questions');
     container.innerHTML = '';
+    const template = document.getElementById('review-card-template');
+    const optionTemplate = document.getElementById('review-option-template');
 
     questions.forEach((q, index) => {
+        const clone = template.content.cloneNode(true);
+        const card = clone.querySelector('.review-card');
+
         const isCorrect = q.is_correct === 1;
         const userAns = q.selected_option;
         const correctAns = q.correct_answer;
 
-        const div = document.createElement('div');
-        div.className = `bg-gray-800 rounded-xl p-6 border ${isCorrect ? 'border-success-500/30' : 'border-danger-500/30'}`;
+        if (isCorrect) {
+            card.classList.add('border-success-500/30');
+            card.querySelector('.review-icon').innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success-500"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>';
+        } else {
+            card.classList.add('border-danger-500/30');
+            card.querySelector('.review-icon').innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-danger-500"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>';
+        }
 
-        const iconHtml = isCorrect
-            ? '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success-500 mt-1"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>'
-            : '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-danger-500 mt-1"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>';
+        card.querySelector('.review-q-num').textContent = `Question ${index + 1}`;
+        card.querySelector('.review-q-topic').textContent = q.topic || 'General';
+        card.querySelector('.review-q-text').textContent = q.question_text;
 
-        let optionsHtml = '';
+        const optsContainer = card.querySelector('.review-options');
         ['A', 'B', 'C', 'D'].forEach(opt => {
             const text = q[`opt_${opt.toLowerCase()}`];
             if (!text) return;
+
+            const optClone = optionTemplate.content.cloneNode(true);
+            const optDiv = optClone.querySelector('.review-option');
+            optDiv.querySelector('.review-option-letter').textContent = opt;
+            optDiv.querySelector('.review-option-text').textContent = text;
+
             const isUserOpt = userAns === opt;
             const isCorrectOpt = correctAns === opt;
 
-            let bgClass = "bg-gray-900 border-gray-700 text-gray-400";
-            if (isCorrectOpt) bgClass = "bg-success-500/20 border-success-500/50 text-success-300";
-            else if (isUserOpt) bgClass = "bg-danger-500/20 border-danger-500/50 text-danger-300";
-
-            optionsHtml += `
-                <div class="p-3 rounded-lg border text-sm flex gap-3 ${bgClass}">
-                  <span class="font-bold shrink-0">${opt}</span>
-                  <span>${text}</span>
-                </div>
-            `;
+            if (isCorrectOpt) {
+                optDiv.classList.replace('bg-gray-900', 'bg-success-500/20');
+                optDiv.classList.replace('border-gray-700', 'border-success-500/50');
+                optDiv.classList.replace('text-gray-400', 'text-success-300');
+            } else if (isUserOpt) {
+                optDiv.classList.replace('bg-gray-900', 'bg-danger-500/20');
+                optDiv.classList.replace('border-gray-700', 'border-danger-500/50');
+                optDiv.classList.replace('text-gray-400', 'text-danger-300');
+            }
+            optsContainer.appendChild(optDiv);
         });
 
-        let expHtml = '';
         if (q.explanation) {
-            expHtml = `
-            <div class="bg-brand-900/30 border border-brand-500/30 p-4 rounded-lg mt-4 text-sm text-gray-300">
-                <p class="font-semibold text-brand-400 mb-1">Explanation:</p>
-                <div>${q.explanation}</div>
-            </div>`;
+            const expContainer = card.querySelector('.review-explanation-container');
+            const expContent = card.querySelector('.review-explanation');
+            expContainer.classList.remove('hidden');
+
+            // Safely parse markdown to HTML, then sanitize it to prevent XSS
+            const htmlContent = window.marked && window.DOMPurify
+                ? window.DOMPurify.sanitize(window.marked.parse(q.explanation))
+                : window.DOMPurify ? window.DOMPurify.sanitize(q.explanation) : q.explanation;
+
+            expContent.innerHTML = htmlContent;
         }
 
-        let refsHtml = '';
         if (q.reference_links) {
-             refsHtml = renderReferencesHTML(q.reference_links, q.topic);
+            const refsContainer = card.querySelector('.review-references-container');
+            const refsTarget = card.querySelector('.review-references');
+            const added = appendReferences(refsTarget, q.reference_links, q.topic);
+            if (added > 0) refsContainer.classList.remove('hidden');
         }
 
-        div.innerHTML = `
-            <div class="flex items-start gap-4">
-                ${iconHtml}
-                <div class="flex-1">
-                  <div class="flex justify-between mb-2 text-sm text-gray-400">
-                    <span>Question ${index + 1}</span>
-                    <span class="bg-gray-700 px-2 py-0.5 rounded text-xs">${q.topic || 'General'}</span>
-                  </div>
-                  <p class="text-gray-200 mb-4">${q.question_text}</p>
-                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-                      ${optionsHtml}
-                  </div>
-                  ${expHtml}
-                  ${refsHtml}
-                </div>
-            </div>
-        `;
-        container.appendChild(div);
+        container.appendChild(card);
     });
 }
 
-function renderReferencesHTML(refsStr, highlightTopic) {
-    if (!refsStr) return '';
+function appendReferences(container, refsStr, highlightTopic) {
+    if (!refsStr) return 0;
     try {
         const refs = JSON.parse(refsStr);
         let allRefs = [];
@@ -307,35 +273,40 @@ function renderReferencesHTML(refsStr, highlightTopic) {
         if (refs.obsidian) allRefs.push(...refs.obsidian.map(r => ({...r, type: 'obsidian'})));
         if (refs.zim) allRefs.push(...refs.zim.map(r => ({...r, type: 'zim'})));
 
-        if (allRefs.length === 0) return '';
+        if (allRefs.length === 0) return 0;
 
-        let refButtons = '';
+        const lowerHighlight = highlightTopic ? highlightTopic.toLowerCase() : '';
+
         allRefs.forEach(ref => {
-            let cls = '';
-            let isHighlight = highlightTopic && ref.title && ref.title.toLowerCase().includes(highlightTopic.toLowerCase());
-            let hlStyle = isHighlight ? 'box-shadow: 0 0 0 1px var(--accent-color);' : '';
+            const a = document.createElement('a');
+            a.href = "#";
+
+            let isHighlight = lowerHighlight && ref.title && ref.title.toLowerCase().includes(lowerHighlight);
+            if (isHighlight) {
+                a.style.boxShadow = '0 0 0 1px var(--accent-color)';
+            }
 
             if (ref.type === 'pdf') {
-                refButtons += `<a href="#" class="citation-pdf" style="${hlStyle}" data-filepath="${ref.file_path}" data-page="${ref.page || 1}">${ref.title || 'PDF'} (Pg ${ref.page || 1})</a>`;
+                a.className = "citation-pdf";
+                a.dataset.filepath = ref.file_path || '';
+                a.dataset.page = ref.page || 1;
+                a.textContent = `${ref.title || 'PDF'} (Pg ${ref.page || 1})`;
             } else if (ref.type === 'obsidian') {
-                refButtons += `<a href="#" class="citation-obsidian" style="${hlStyle}" data-vault="Primary" data-file="${ref.title}">${ref.title || 'Note'}</a>`;
+                a.className = "citation-obsidian";
+                a.dataset.vault = "Primary";
+                a.dataset.file = ref.title || '';
+                a.textContent = ref.title || 'Note';
             } else if (ref.type === 'zim') {
-                refButtons += `<a href="#" class="citation-zim" style="${hlStyle}" data-article-id="${ref.article_id}">${ref.title || 'ZIM Article'}</a>`;
+                a.className = "citation-zim";
+                a.dataset.articleId = ref.article_id || ref.file_path || '';
+                a.textContent = ref.title || 'ZIM Article';
             }
+            container.appendChild(a);
         });
 
-        return `
-        <div class="mt-4 border-t border-gray-700/50 pt-4">
-          <h4 class="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg> Related Knowledge
-          </h4>
-          <div class="flex flex-wrap gap-2">
-             ${refButtons}
-          </div>
-        </div>
-        `;
+        return allRefs.length;
     } catch(e) {
-        return '';
+        return 0;
     }
 }
 
@@ -347,13 +318,18 @@ async function openTopicCarousel(sessionId) {
 
     currentTopicIndex = 0;
     currentSessionTopics = [];
-    document.getElementById('hub-carousel-content').innerHTML = '<div class="text-center py-12 animate-pulse">Loading topics...</div>';
+
+    const contentEl = document.getElementById('hub-carousel-content');
+    contentEl.innerHTML = '';
+    const loader = document.createElement('div');
+    loader.className = "text-center py-12 animate-pulse text-gray-400";
+    loader.textContent = "Loading topics...";
+    contentEl.appendChild(loader);
 
     await fetchAndRenderTopics(sessionId);
 
     if (carouselInterval) clearInterval(carouselInterval);
 
-    // Check if any pending
     const hasPending = currentSessionTopics.some(t => t.llm_status === 'pending');
     if (hasPending) {
         carouselInterval = setInterval(async () => {
@@ -375,7 +351,7 @@ async function fetchAndRenderTopics(sessionId, silent = false) {
             if (currentSessionTopics.length > 0) {
                 renderCurrentTopic();
             } else if (!silent) {
-                document.getElementById('hub-carousel-content').innerHTML = 'No topics found for this session.';
+                document.getElementById('hub-carousel-content').textContent = 'No topics found for this session.';
             }
         }
     } catch(e) {
@@ -403,30 +379,88 @@ function renderCurrentTopic() {
     }
 
     const contentEl = document.getElementById('hub-carousel-content');
+    contentEl.innerHTML = ''; // Safe clear
+
     if (topic.llm_status === 'pending') {
-        contentEl.innerHTML = `<div class="text-gray-400 italic animate-pulse flex items-center gap-2">
-            <span class="w-4 h-4 rounded-full border-2 border-brand-500 border-t-transparent animate-spin inline-block"></span>
-            LM Studio generating detailed explanation...
-        </div>`;
+        const div = document.createElement('div');
+        div.className = "text-gray-400 italic animate-pulse flex items-center gap-2";
+        div.innerHTML = `<span class="w-4 h-4 rounded-full border-2 border-brand-500 border-t-transparent animate-spin inline-block"></span> LM Studio generating detailed explanation...`;
+        contentEl.appendChild(div);
     } else if (topic.unified_article) {
-        contentEl.innerHTML = topic.unified_article;
+        // Attempt to parse JSON safely if it's JSON from the multi-pass pipeline
+        let parsedArticle;
+        let isJson = false;
+        try {
+            parsedArticle = JSON.parse(topic.unified_article);
+            isJson = true;
+        } catch(e) {
+            isJson = false;
+        }
+
+        if (isJson && parsedArticle) {
+            // Reconstruct HTML using safe DOM APIs
+            const h2 = document.createElement('h2');
+            h2.className = "text-xl font-bold mb-4";
+            h2.textContent = `Unified Article: ${parsedArticle.subtopic || ''}`;
+
+            const pSec = document.createElement('p');
+            pSec.innerHTML = `<strong>Section:</strong> ${parsedArticle.section || ''}`;
+
+            const pCtx = document.createElement('p');
+            pCtx.innerHTML = `<strong>Context:</strong> ${parsedArticle.conditional_context || ''}`;
+
+            const ul = document.createElement('ul');
+            ul.className = "list-disc pl-5 mt-4 space-y-2";
+
+            (parsedArticle.clinical_points || []).forEach(pt => {
+                const li = document.createElement('li');
+                li.textContent = pt.point + " ";
+                if (pt.source) {
+                    const badge = document.createElement('span');
+                    badge.className = "text-xs bg-gray-700 text-brand-300 px-2 py-0.5 rounded-full ml-2";
+                    badge.title = `Source: ${pt.source} (Page ${pt.page || 1})`;
+                    badge.textContent = `[Ref: ${pt.source}]`;
+                    li.appendChild(badge);
+                }
+                ul.appendChild(li);
+            });
+
+            contentEl.appendChild(h2);
+            contentEl.appendChild(pSec);
+            contentEl.appendChild(pCtx);
+            contentEl.appendChild(ul);
+
+            if (parsedArticle.discrepancies) {
+                const disc = document.createElement('div');
+                disc.className = "mt-6 bg-danger-500/10 border border-danger-500/30 p-4 rounded-lg";
+                const discTitle = document.createElement('strong');
+                discTitle.className = "text-danger-400 block mb-2";
+                discTitle.textContent = "Discrepancies & Variances:";
+                disc.appendChild(discTitle);
+                const discText = document.createElement('span');
+                discText.textContent = parsedArticle.discrepancies;
+                disc.appendChild(discText);
+                contentEl.appendChild(disc);
+            }
+        } else {
+            // Fallback to markdown parsed output safely
+            const htmlContent = window.marked && window.DOMPurify
+                ? window.DOMPurify.sanitize(window.marked.parse(topic.unified_article))
+                : window.DOMPurify ? window.DOMPurify.sanitize(topic.unified_article) : topic.unified_article;
+            contentEl.innerHTML = htmlContent;
+        }
     } else {
-        contentEl.innerHTML = topic.enhanced_explanation || "No detailed notes available.";
+        const textNode = document.createTextNode(topic.enhanced_explanation || "No detailed notes available.");
+        contentEl.appendChild(textNode);
     }
 
     const refsContainer = document.getElementById('hub-carousel-references');
     const refList = document.getElementById('hub-carousel-ref-list');
+    refList.innerHTML = '';
+
     if (topic.top_references) {
-        refsContainer.style.display = 'block';
-
-        const html = renderReferencesHTML(topic.top_references, topic.topic_name);
-        const match = html.match(/<div class="flex flex-wrap gap-2">([\s\S]*?)<\/div>\s*<\/div>\s*$/);
-        if (match) {
-            refList.innerHTML = match[1];
-        } else {
-            refList.innerHTML = '';
-        }
-
+        const added = appendReferences(refList, topic.top_references, topic.topic_name);
+        refsContainer.style.display = added > 0 ? 'block' : 'none';
     } else {
         refsContainer.style.display = 'none';
     }

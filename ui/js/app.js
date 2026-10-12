@@ -1,170 +1,153 @@
+// ui/js/app.js
+
 document.addEventListener('DOMContentLoaded', () => {
-    // Navigation logic (Tab Switching)
+    // --- Safe Escape Helper ---
+    const escapeHTML = (str) => {
+        if (typeof str !== 'string') return '';
+        return str.replace(/[&<>'"]/g, tag => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+        }[tag] || tag));
+    };
+
+    // --- Navigation Logic (Tab Switching) ---
     const navButtons = document.querySelectorAll('.nav-btn');
     const viewSections = document.querySelectorAll('.view-section');
 
-    function switchTab(targetId) {
-        // Remove active class from all buttons and sections
-        navButtons.forEach(btn => btn.classList.remove('active'));
-        viewSections.forEach(sec => sec.classList.remove('active'));
-
-        // Add active class to target
-        const targetBtn = document.querySelector(`.nav-btn[data-target="${targetId}"]`);
-        const targetSec = document.getElementById(targetId);
-
-        if (targetBtn) targetBtn.classList.add('active');
-        if (targetSec) targetSec.classList.add('active');
-    }
+    const switchTab = (targetId) => {
+        navButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.target === targetId));
+        viewSections.forEach(sec => sec.classList.toggle('active', sec.id === targetId));
+    };
 
     navButtons.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const targetId = btn.getAttribute('data-target');
+        btn.addEventListener('click', (e) => {
+            const targetId = e.currentTarget.dataset.target;
             switchTab(targetId);
 
             // If switching to settings, refresh diagnostics automatically
-            if(targetId === 'settings-view' && window.refreshDiagnostics) {
+            if (targetId === 'settings-view' && typeof window.refreshDiagnostics === 'function') {
                 window.refreshDiagnostics();
             }
         });
     });
 
-    // Theme Toggle Logic
+    // --- Theme Toggle Logic ---
     const themeToggleBtn = document.getElementById('theme-toggle');
     const body = document.body;
-
-    // Check local storage for theme preference
     const savedTheme = localStorage.getItem('theme');
+
     if (savedTheme) {
         body.className = savedTheme;
-    } else {
-        // Default to dark if user prefers dark mode OS wide
-        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-            body.className = 'dark-theme';
-        }
+    } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        body.className = 'dark-theme';
     }
 
-    themeToggleBtn.addEventListener('click', () => {
-        if (body.classList.contains('light-theme')) {
-            body.classList.replace('light-theme', 'dark-theme');
-            localStorage.setItem('theme', 'dark-theme');
-        } else {
-            body.classList.replace('dark-theme', 'light-theme');
-            localStorage.setItem('theme', 'light-theme');
-        }
+    themeToggleBtn?.addEventListener('click', () => {
+        const isLight = body.classList.contains('light-theme');
+        const newTheme = isLight ? 'dark-theme' : 'light-theme';
+        body.classList.replace(isLight ? 'light-theme' : 'dark-theme', newTheme);
+        localStorage.setItem('theme', newTheme);
     });
 
-    // Extraction Logic
+    // --- MCQ Topic Extraction Logic ---
     const extractBtn = document.getElementById('extract-btn');
-    const mcqTextEl = document.getElementById('mcq-text');
-    const useZimEl = document.getElementById('use-zim-refinement');
-    const useTantivyEl = document.getElementById('use-tantivy-refinement');
     const topicsContainer = document.getElementById('topics-container');
 
-    if (extractBtn) {
-        extractBtn.addEventListener('click', async () => {
-            const mcqText = mcqTextEl.value.trim();
-            const useZimRefinement = useZimEl.checked;
-            const useTantivyRefinement = useTantivyEl.checked;
-
-            if (!mcqText) {
-                alert('Please enter some MCQ text.');
-                return;
-            }
-
-            // Show loading state
-            extractBtn.disabled = true;
-            extractBtn.textContent = 'Extracting...';
-            topicsContainer.innerHTML = '';
-
-            try {
-                const response = await fetch('/api/mcq/topics/extract', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        mcq_text: mcqText,
-                        use_zim_refinement: useZimRefinement,
-                        use_tantivy_refinement: useTantivyRefinement
-                    })
-                });
-
-                if (!response.ok) {
-                    throw new Error(`Server error: ${response.statusText}`);
-                }
-
-                const data = await response.json();
-                const topics = data.topics || [];
-
-                renderTopics(topics);
-            } catch (error) {
-                console.error('Error extracting topics:', error);
-                alert('Failed to extract topics. Please check the console for details.');
-            } finally {
-                extractBtn.disabled = false;
-                extractBtn.textContent = 'Extract Entities';
-            }
-        });
-    }
-
-    function renderTopics(topics) {
-        if (topics.length === 0) {
-            const emptyMsg = document.createElement('div');
-            emptyMsg.textContent = 'No entities found.';
-            emptyMsg.className = 'text-muted';
-            topicsContainer.appendChild(emptyMsg);
+    const renderTopics = (topics) => {
+        if (!topicsContainer) return;
+        topicsContainer.innerHTML = '';
+        if (!topics || topics.length === 0) {
+            topicsContainer.innerHTML = '<div class="text-muted">No entities found.</div>';
             return;
         }
 
+        const fragment = document.createDocumentFragment();
         topics.forEach(topic => {
             const chip = document.createElement('div');
             chip.className = 'topic-chip';
-            chip.textContent = topic;
+            chip.textContent = topic; // Safe text injection
 
-            // Add click interaction for validation
             chip.addEventListener('click', () => {
                 const inspectorContent = document.getElementById('inspector-content');
                 if (inspectorContent) {
-                    inspectorContent.innerHTML = `<strong>Selected Entity:</strong><br/>${topic}<br/><br/>You can perform further actions on this entity here.`;
+                    inspectorContent.innerHTML = `<strong>Selected Entity:</strong><br/>${escapeHTML(topic)}<br/><br/>You can perform further actions on this entity here.`;
                 }
             });
-
-            topicsContainer.appendChild(chip);
+            fragment.appendChild(chip);
         });
-    }
+        topicsContainer.appendChild(fragment);
+    };
 
-    // --- Application Bridging Logic ---
+    extractBtn?.addEventListener('click', async () => {
+        const mcqTextEl = document.getElementById('mcq-text');
+        const mcqText = mcqTextEl?.value.trim();
+        const useZimRefinement = document.getElementById('use-zim-refinement')?.checked || false;
+        const useTantivyRefinement = document.getElementById('use-tantivy-refinement')?.checked || false;
+
+        if (!mcqText) return alert('Please enter some MCQ text.');
+
+        extractBtn.disabled = true;
+        extractBtn.textContent = 'Extracting...';
+        if (topicsContainer) topicsContainer.innerHTML = '';
+
+        try {
+            const response = await fetch('/api/mcq/topics/extract', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    mcq_text: mcqText,
+                    use_zim_refinement: useZimRefinement,
+                    use_tantivy_refinement: useTantivyRefinement
+                })
+            });
+
+            if (!response.ok) throw new Error(`Server error: ${response.statusText}`);
+
+            const data = await response.json();
+            renderTopics(data.topics || []);
+        } catch (error) {
+            console.error('Error extracting topics:', error);
+            alert('Failed to extract topics. Please check the console for details.');
+        } finally {
+            extractBtn.disabled = false;
+            extractBtn.textContent = 'Extract Entities';
+        }
+    });
+
+    // --- Application Bridging Logic (Global Event Delegation) ---
     document.addEventListener('click', async (e) => {
+        const target = e.target;
+
         // Handle PDF Citations
-        const pdfBtn = e.target.closest('.citation-pdf');
+        const pdfBtn = target.closest('.citation-pdf');
         if (pdfBtn) {
             e.preventDefault();
-            const filePath = pdfBtn.getAttribute('data-filepath');
-            const page = pdfBtn.getAttribute('data-page') || 1;
+            const filePath = pdfBtn.dataset.filepath;
+            const page = pdfBtn.dataset.page || 1;
             try {
                 const res = await fetch(`/api/notes/launch-sumatra?file_path=${encodeURIComponent(filePath)}&page=${page}`);
                 const data = await res.json();
-                if (data.status !== 'success') {
-                    console.error('Error launching SumatraPDF:', data.message);
-                }
+                if (data.status !== 'success') console.error('Error launching SumatraPDF:', data.message);
             } catch (err) {
                 console.error('Failed to launch PDF:', err);
             }
+            return;
         }
 
-        // Handle Obsidian Links
-        const obsBtn = e.target.closest('.citation-obsidian');
+        // Handle Obsidian Links (Bug fixed: removed duplicate 'file' declaration)
+        const obsBtn = target.closest('.citation-obsidian');
         if (obsBtn) {
             e.preventDefault();
-            const file = obsBtn.getAttribute('data-file');
-            const file = e.target.getAttribute('data-file');
+            const vault = obsBtn.dataset.vault || 'Primary';
+            const file = obsBtn.dataset.file;
             window.location.href = `obsidian://open?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(file)}`;
+            return;
         }
 
         // Handle ZIM Articles
-        if (e.target.classList.contains('citation-zim')) {
+        const zimBtn = target.closest('.citation-zim');
+        if (zimBtn) {
             e.preventDefault();
-            const articleId = e.target.getAttribute('data-article-id');
+            const articleId = zimBtn.dataset.articleId;
             try {
                 const res = await fetch(`/api/notes/zim-article?article_id=${encodeURIComponent(articleId)}`);
                 const data = await res.json();
@@ -172,7 +155,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     const viewerContainer = document.getElementById('zim-viewer-container');
                     const contentArea = document.getElementById('zim-content-area');
                     if (viewerContainer && contentArea) {
-                        contentArea.innerHTML = data.html;
+                        // STRICT XSS MITIGATION: Sanitize offline ZIM HTML before injecting
+                        const safeHTML = window.DOMPurify ? window.DOMPurify.sanitize(data.html) : escapeHTML(data.html);
+                        contentArea.innerHTML = safeHTML;
                         viewerContainer.style.display = 'flex';
                     }
                 } else {
@@ -181,70 +166,52 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch (err) {
                 console.error('Failed to load ZIM article:', err);
             }
+            return;
+        }
+
+        // Close ZIM Viewer
+        const closeZimBtn = target.closest('#close-zim-viewer-btn');
+        if (closeZimBtn) {
+            const viewerContainer = document.getElementById('zim-viewer-container');
+            const contentArea = document.getElementById('zim-content-area');
+            if (viewerContainer) viewerContainer.style.display = 'none';
+            if (contentArea) contentArea.innerHTML = ''; // Clear memory to free RAM
         }
     });
 
-    const closeZimBtn = document.getElementById('close-zim-viewer-btn');
-    if (closeZimBtn) {
-        closeZimBtn.addEventListener('click', () => {
-            const viewerContainer = document.getElementById('zim-viewer-container');
-            if (viewerContainer) viewerContainer.style.display = 'none';
-        });
-    }
-
     // --- Settings / Diagnostics Data Loaders ---
-    // (Models dropdowns)
-    const cpuEmbedSelect = document.getElementById('cpu-embed-model-select');
-    if (cpuEmbedSelect) {
-        fetch('/api/models/cpu_embedding_models')
+    const loadModels = (endpoint, selectId, apiRoute) => {
+        const selectEl = document.getElementById(selectId);
+        if (!selectEl) return;
+
+        fetch(endpoint)
             .then(res => res.json())
             .then(data => {
-                cpuEmbedSelect.innerHTML = '';
+                selectEl.innerHTML = '';
+                const fragment = document.createDocumentFragment();
                 data.models.forEach(model => {
                     const opt = document.createElement('option');
                     opt.value = model.id;
                     opt.textContent = model.name;
-                    if (model.id === data.active) opt.selected = true;
-                    cpuEmbedSelect.appendChild(opt);
+                    opt.selected = (model.id === data.active);
+                    fragment.appendChild(opt);
                 });
+                selectEl.appendChild(fragment);
             })
-            .catch(err => {
-                cpuEmbedSelect.innerHTML = '<option value="">Error loading models</option>';
+            .catch(() => {
+                selectEl.innerHTML = '<option value="">Error loading models</option>';
             });
 
-        cpuEmbedSelect.addEventListener('change', (e) => {
-            fetch('/api/models/set_embedding_model', {
+        selectEl.addEventListener('change', (e) => {
+            fetch(apiRoute, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ model_name: e.target.value })
             });
         });
-    }
+    };
 
-    const flashrankSelect = document.getElementById('flashrank-model-select');
-    if (flashrankSelect) {
-        fetch('/api/models/flashrank_models')
-            .then(res => res.json())
-            .then(data => {
-                flashrankSelect.innerHTML = '';
-                data.models.forEach(model => {
-                    const opt = document.createElement('option');
-                    opt.value = model.id;
-                    opt.textContent = model.name;
-                    if (model.id === data.active) opt.selected = true;
-                    flashrankSelect.appendChild(opt);
-                });
-            })
-            .catch(err => {
-                flashrankSelect.innerHTML = '<option value="">Error loading models</option>';
-            });
-
-        flashrankSelect.addEventListener('change', (e) => {
-            fetch('/api/models/set_flashrank_model', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model_name: e.target.value })
-            });
-        });
-    }
+    // Load dynamic models for settings pane
+    loadModels('/api/models/cpu_embedding_models', 'cpu-embed-model-select', '/api/models/set_embedding_model');
+    loadModels('/api/models/flashrank_models', 'flashrank-model-select', '/api/models/set_flashrank_model');
 });

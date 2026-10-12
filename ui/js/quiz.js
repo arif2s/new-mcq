@@ -1,8 +1,18 @@
+// ui/js/quiz.js
+
 let currentQuiz = null;
 let currentQuestionIndex = 0;
 let quizAnswers = {};
 let quizTimer = null;
 let quizStartTime = null;
+let questionStartTime = null; // Added to track per-question time
+
+function escapeHTML(str) {
+    if (typeof str !== 'string') return '';
+    return str.replace(/[&<>'"]/g, tag => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+    }[tag] || tag));
+}
 
 async function loadSubjects() {
     try {
@@ -12,7 +22,7 @@ async function loadSubjects() {
         if(sel) {
             sel.innerHTML = '<option value="all">All Subjects</option>';
             subjects.forEach(s => {
-                sel.innerHTML += `<option value="${s.subject}">${s.subject} (${s.count})</option>`;
+                sel.innerHTML += `<option value="${escapeHTML(s.subject)}">${escapeHTML(s.subject)} (${s.count})</option>`;
             });
         }
     } catch(e) {
@@ -28,7 +38,7 @@ async function loadTopics() {
         if(sel) {
             sel.innerHTML = '<option value="all">All Topics</option>';
             topics.forEach(t => {
-                sel.innerHTML += `<option value="${t.topic}">${t.topic} (${t.count})</option>`;
+                sel.innerHTML += `<option value="${escapeHTML(t.topic)}">${escapeHTML(t.topic)} (${t.count})</option>`;
             });
         }
     } catch(e) {
@@ -182,7 +192,6 @@ function renderTopicEditor() {
     const container = document.getElementById('topic-editor-questions');
     container.innerHTML = '';
 
-    // simple counts for duplicate finding
     let counts = {};
     topicEditorData.forEach(q => {
         q.topics.forEach(t => {
@@ -222,39 +231,21 @@ function renderTopicEditor() {
                 input.className = "px-2 py-1 text-xs rounded-full border border-brand-500 bg-gray-900 text-white focus:outline-none focus:ring-1 focus:ring-brand-500 min-w-[100px]";
                 input.value = t.text;
 
-                input.onblur = () => {
-                    t.editing = false;
-                    renderTopicEditor();
-                };
-
-                input.onkeydown = (e) => {
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        t.editing = false;
-                        renderTopicEditor();
-                    }
-                };
-
-                input.oninput = (e) => {
-                    t.text = e.target.value;
-                };
+                input.onblur = () => { t.editing = false; renderTopicEditor(); };
+                input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); t.editing = false; renderTopicEditor(); } };
+                input.oninput = (e) => { t.text = e.target.value; };
 
                 chipContainer.appendChild(input);
                 setTimeout(() => input.focus(), 0);
-
             } else {
                 const btn = document.createElement('button');
                 let bgColor = 'bg-gray-700 hover:bg-gray-600 text-gray-200';
-                let strike = '';
 
                 if (t.excluded) {
                     bgColor = 'bg-red-900/40 text-gray-500 hover:bg-red-900/60 line-through';
-                    strike = 'line-through';
                 } else {
                     const lower = t.text.toLowerCase();
-                    const isDup = counts[lower] > 1;
-
-                    if (isDup) {
+                    if (counts[lower] > 1) {
                         bgColor = 'bg-yellow-900/50 text-yellow-200 hover:bg-yellow-800/70 border border-yellow-800';
                     }
                 }
@@ -262,18 +253,16 @@ function renderTopicEditor() {
                 btn.className = `px-3 py-1 text-xs rounded-full cursor-pointer transition-colors border-none ${bgColor}`;
                 btn.textContent = t.text;
 
-                btn.onclick = (e) => {
+                btn.onclick = () => {
                     if (doubleClickTimeout) {
                         clearTimeout(doubleClickTimeout);
                         doubleClickTimeout = null;
-                        // Double click
                         t.editing = true;
                         t.excluded = false;
                         renderTopicEditor();
                     } else {
                         doubleClickTimeout = setTimeout(() => {
                             doubleClickTimeout = null;
-                            // Single click
                             t.excluded = !t.excluded;
                             renderTopicEditor();
                         }, 250);
@@ -387,6 +376,9 @@ function renderQuestion() {
     document.getElementById('quiz-progress').textContent = `Question ${currentQuestionIndex + 1} of ${currentQuiz.questions.length}`;
     document.getElementById('quiz-stem').textContent = q.question_text || q.question;
 
+    // Reset exact timestamp for accurate FSRS elapsed time calculation
+    questionStartTime = Date.now();
+
     const optsContainer = document.getElementById('quiz-options');
     optsContainer.innerHTML = '';
 
@@ -402,7 +394,7 @@ function renderQuestion() {
                  btn.classList.add('bg-brand-600', 'text-white');
             }
 
-            btn.innerHTML = `<span class="font-bold mr-2">${opt.toUpperCase()})</span> ${optText}`;
+            btn.innerHTML = `<span class="font-bold mr-2">${opt.toUpperCase()})</span> ${escapeHTML(optText)}`;
             btn.onclick = () => selectOption(q.id || currentQuestionIndex, opt, btn);
             optsContainer.appendChild(btn);
         }
@@ -422,12 +414,15 @@ function renderQuestion() {
 
 function selectOption(qId, option, btnEl) {
     const q = currentQuiz.questions[currentQuestionIndex];
-    const isCorrect = option.toLowerCase() === (q.correct_option || q.answer || '').toLowerCase();
+    const isCorrect = option.toLowerCase() === (q.correct_option || q.answer || q.correct_answer || '').toLowerCase();
+
+    // Capture accurate time spent for Spaced Repetition (FSRS)
+    const timeSpent = Date.now() - questionStartTime;
 
     quizAnswers[qId] = {
         selected: option,
         isCorrect: isCorrect,
-        timeSpent: 0 // Simplification for now
+        timeSpent: timeSpent
     };
 
     renderQuestion(); // Re-render to show selection
@@ -454,17 +449,43 @@ async function finishQuiz() {
 
     let correct = 0;
     const answersList = [];
+    const scorePromises = [];
 
     currentQuiz.questions.forEach((q, idx) => {
-        const ans = quizAnswers[q.id || idx];
+        const qId = q.id || idx;
+        const ans = quizAnswers[qId];
+
         if (ans) {
             if (ans.isCorrect) correct++;
             answersList.push({
-                questionId: q.id || idx,
+                questionId: qId.toString(),
                 selectedOption: ans.selected,
                 isCorrect: ans.isCorrect,
                 timeSpentSeconds: ans.timeSpent
             });
+
+            // FSRS Algorithmic Scoring Linkage
+            // Only attempt to score if the ID is numeric (meaning it lives in `mcq_bank`, not `csv_questions`)
+            const numericMcqId = parseInt(qId, 10);
+            if (!isNaN(numericMcqId) && String(numericMcqId) === String(qId)) {
+                let rating = 3; // Default: 3 = Good
+
+                if (!ans.isCorrect) {
+                    rating = 1; // 1 = Again (Failed)
+                } else {
+                    const timeSec = ans.timeSpent / 1000;
+                    if (timeSec > 30) rating = 2; // 2 = Hard (Struggled)
+                    else if (timeSec < 8) rating = 4; // 4 = Easy (Instant Recall)
+                }
+
+                scorePromises.push(
+                    fetch('/api/mcq/score', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ mcq_id: numericMcqId, rating: rating })
+                    }).catch(e => console.error("FSRS Score Error:", e))
+                );
+            }
         }
     });
 
@@ -483,7 +504,7 @@ async function finishQuiz() {
         answers: answersList
     };
 
-    // Update Habit State
+    // Update Habit State natively
     const state = window.AppState.get();
     const today = new Date().toISOString().split('T')[0];
     let habit = state.habitLog.find(h => h.date === today);
@@ -498,15 +519,18 @@ async function finishQuiz() {
     state.testResults.push(result);
     window.AppState.update({ habitLog: state.habitLog, testResults: state.testResults });
 
-    // Attempt backend save
+    // Execute background APIs concurrently
     try {
-        await fetch('/api/sessions/save', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ ...result, questions: currentQuiz.questions })
-        });
+        await Promise.all([
+            fetch('/api/sessions/save', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ ...result, questions: currentQuiz.questions })
+            }),
+            ...scorePromises
+        ]);
     } catch(e) {
-        console.error("Failed to save session to backend", e);
+        console.error("Failed to save session or FSRS scores to backend", e);
     }
 
     showResults(result);
@@ -523,73 +547,31 @@ function showResults(result) {
     const s = result.timeUsedSeconds % 60;
     document.getElementById('res-time').textContent = `${m}m ${s}s`;
 
-    // Rank Simulation Analytics
-    const wrongAnswers = result.totalQuestions - result.correctAnswers;
-    const rawMarks = (result.correctAnswers * 4) - (wrongAnswers * 1);
-    const targetExamQuestions = (window.AppState && window.AppState.rankSimConfigs && window.AppState.rankSimConfigs[0]?.totalQuestions) ? window.AppState.rankSimConfigs[0].totalQuestions : 200;
-    const maxExamMarks = targetExamQuestions * 4;
-
-    let projectedMarks = 0;
-    if (result.totalQuestions > 0) {
-        projectedMarks = rawMarks * (targetExamQuestions / result.totalQuestions);
-    }
-    projectedMarks = Math.round(projectedMarks);
-
-    let rankBracket = 'AIR 50,000+';
-    let percentile = '50.0%';
-    let actionableTips = 'Focus on high-yield basic concepts.';
-
-    const maxProjected = maxExamMarks;
-    const pPercentage = maxProjected > 0 ? (projectedMarks / maxProjected) : 0;
-
-    if (pPercentage >= 0.85) {
-        rankBracket = 'AIR 1 - 500';
-        percentile = '99.9%';
-        actionableTips = 'Excellent performance! Maintain accuracy and reduce unforced errors.';
-    } else if (pPercentage >= 0.70) {
-        rankBracket = 'AIR 501 - 3,000';
-        percentile = '98.5%';
-        actionableTips = 'Great job. Review your incorrect answers closely to jump to the next tier.';
-    } else if (pPercentage >= 0.50) {
-        rankBracket = 'AIR 3,001 - 15,000';
-        percentile = '85.0%';
-        actionableTips = 'Solid foundation. Focus on secondary topics to improve your score.';
-    } else if (pPercentage >= 0.30) {
-        rankBracket = 'AIR 15,001 - 40,000';
-        percentile = '60.0%';
-        actionableTips = 'You need to consolidate core concepts. Practice more MCQs.';
-    }
-
-    const pmElem = document.getElementById('sim-projected-marks');
-    if(pmElem) pmElem.textContent = `${projectedMarks} / ${maxExamMarks}`;
-
-    const rbElem = document.getElementById('sim-rank-bracket');
-    if(rbElem) rbElem.textContent = rankBracket;
-
-    const ptElem = document.getElementById('sim-percentile');
-    if(ptElem) ptElem.textContent = percentile;
-
-    const atElem = document.getElementById('sim-actionable-tips');
-    if(atElem) atElem.textContent = actionableTips;
-
+    // Safe Explanation Injection via DOMPurify
     const container = document.getElementById('res-explanations');
     container.innerHTML = '';
 
     currentQuiz.questions.forEach((q, idx) => {
-        const ans = result.answers.find(a => a.questionId === (q.id || idx));
+        const ans = result.answers.find(a => a.questionId === String(q.id || idx));
         const isCorrect = ans ? ans.isCorrect : false;
 
         const div = document.createElement('div');
         div.className = `p-4 mb-4 rounded border ${isCorrect ? 'border-success-500 bg-success-900/20' : 'border-danger-500 bg-danger-900/20'}`;
 
+        const rawExplanation = q.explanation || 'No explanation provided.';
+        const cleanExplanation = window.DOMPurify && window.marked
+            ? window.DOMPurify.sanitize(window.marked.parse(rawExplanation))
+            : escapeHTML(rawExplanation);
+
         div.innerHTML = `
-            <h4 class="font-bold mb-2">Q: ${q.question_text || q.question}</h4>
-            <p class="text-sm mb-1">Your Answer: <span class="font-bold">${ans ? ans.selectedOption : 'Skipped'}</span></p>
-            <p class="text-sm mb-3">Correct Answer: <span class="font-bold">${q.correct_option || q.answer}</span></p>
-            <div class="text-sm text-gray-300 bg-gray-900 p-3 rounded">
-                <strong>Explanation:</strong> ${q.explanation || 'No explanation provided.'}
+            <h4 class="font-bold mb-2 text-gray-200">Q: ${escapeHTML(q.question_text || q.question)}</h4>
+            <p class="text-sm mb-1 text-gray-300">Your Answer: <span class="font-bold">${ans ? escapeHTML(ans.selectedOption) : 'Skipped'}</span></p>
+            <p class="text-sm mb-3 text-gray-300">Correct Answer: <span class="font-bold">${escapeHTML(q.correct_option || q.answer || q.correct_answer)}</span></p>
+            <div class="text-sm text-gray-300 bg-gray-900 p-4 rounded border border-gray-700">
+                <strong class="text-brand-400 block mb-1">Explanation:</strong>
+                <div class="prose prose-sm prose-invert max-w-none">${cleanExplanation}</div>
             </div>
-            ${q.topic_name ? `<div class="mt-2 text-xs text-brand-400">Topic: ${q.topic_name}</div>` : ''}
+            ${q.topic_name ? `<div class="mt-3 text-xs font-semibold text-brand-400 uppercase tracking-wider">Topic: ${escapeHTML(q.topic_name)}</div>` : ''}
         `;
         container.appendChild(div);
     });
