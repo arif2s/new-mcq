@@ -36,15 +36,54 @@ async function loadTopics() {
     }
 }
 
+let searchDebounceTimeout = null;
+
+async function updateMatchCount() {
+    const subject = document.getElementById('quiz-subject-select').value;
+    const topic = document.getElementById('quiz-topic-select').value;
+    const keyword = document.getElementById('quiz-keyword').value;
+
+    const payload = {
+        subjects: subject === 'all' ? null : [subject],
+        topics: topic === 'all' ? null : [topic],
+        keyword: keyword ? keyword : null,
+        count: 0
+    };
+
+    try {
+        const res = await fetch('/api/mcq/search_count', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        if(res.ok) {
+            const data = await res.json();
+            const el = document.getElementById('quiz-match-count');
+            if (el) el.textContent = `Matching Questions: ${data.count}`;
+        }
+    } catch(e) {
+        console.error("Failed to fetch match count", e);
+    }
+}
+
+function handleSearchChange() {
+    if (searchDebounceTimeout) clearTimeout(searchDebounceTimeout);
+    searchDebounceTimeout = setTimeout(updateMatchCount, 300);
+}
+
+let pendingQuizData = null;
+
 async function startQuiz() {
     const subject = document.getElementById('quiz-subject-select').value;
     const topic = document.getElementById('quiz-topic-select').value;
+    const keyword = document.getElementById('quiz-keyword').value;
     const count = parseInt(document.getElementById('quiz-count').value) || 10;
     const timeLimit = parseInt(document.getElementById('quiz-time').value) || 0;
 
     const payload = {
         subjects: subject === 'all' ? null : [subject],
         topics: topic === 'all' ? null : [topic],
+        keyword: keyword ? keyword : null,
         count: count
     };
 
@@ -58,22 +97,14 @@ async function startQuiz() {
         if(res.ok) {
             const data = await res.json();
             if(data.questions && data.questions.length > 0) {
-                currentQuiz = {
-                    config: { subjectName: subject, timeLimitMinutes: timeLimit },
+                pendingQuizData = {
+                    config: { subjectName: subject === 'all' ? 'All Subjects' : subject, timeLimitMinutes: timeLimit },
                     questions: data.questions
                 };
-                currentQuestionIndex = 0;
-                quizAnswers = {};
-                quizStartTime = Date.now();
 
-                document.getElementById('quiz-setup').style.display = 'none';
-                document.getElementById('quiz-active').style.display = 'block';
+                // Show pre-quiz modal
+                document.getElementById('pre-quiz-modal').style.display = 'flex';
 
-                renderQuestion();
-
-                if (timeLimit > 0) {
-                    startTimer(timeLimit * 60);
-                }
             } else {
                 alert("No questions found for the selected criteria.");
             }
@@ -84,6 +115,254 @@ async function startQuiz() {
         console.error(e);
         alert("Failed to start quiz.");
     }
+}
+
+function beginQuizRunner() {
+    document.getElementById('pre-quiz-modal').style.display = 'none';
+    if (!pendingQuizData) return;
+
+    currentQuiz = pendingQuizData;
+    currentQuestionIndex = 0;
+    quizAnswers = {};
+    quizStartTime = Date.now();
+
+    document.getElementById('quiz-setup').style.display = 'none';
+    document.getElementById('quiz-active').style.display = 'block';
+
+    renderQuestion();
+
+    if (currentQuiz.config.timeLimitMinutes > 0) {
+        startTimer(currentQuiz.config.timeLimitMinutes * 60);
+    }
+
+    pendingQuizData = null;
+}
+
+let topicEditorData = [];
+let doubleClickTimeout = null;
+
+async function prepareOfflineTopics() {
+    document.getElementById('pre-quiz-modal').style.display = 'none';
+    if (!pendingQuizData) return;
+
+    try {
+        // We only extract for the current questions
+        const res = await fetch('/api/queue/extract_topics', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                questions: pendingQuizData.questions,
+                use_zim_refinement: false,
+                use_tantivy_refinement: false
+            })
+        });
+
+        if (res.ok) {
+            const data = await res.json();
+            topicEditorData = data.questions.map(q => {
+                return {
+                    question: q.question,
+                    originalTopics: [...q.topics],
+                    topics: q.topics.map(t => ({text: t, excluded: false, editing: false}))
+                };
+            });
+            renderTopicEditor();
+            document.getElementById('topic-editor-modal').style.display = 'flex';
+        } else {
+            alert("Failed to extract topics.");
+        }
+
+    } catch(e) {
+        console.error(e);
+        alert("Error connecting to extract topics API.");
+    }
+}
+
+function renderTopicEditor() {
+    const container = document.getElementById('topic-editor-questions');
+    container.innerHTML = '';
+
+    // simple counts for duplicate finding
+    let counts = {};
+    topicEditorData.forEach(q => {
+        q.topics.forEach(t => {
+            if (!t.excluded) {
+                const lower = t.text.toLowerCase();
+                counts[lower] = (counts[lower] || 0) + 1;
+            }
+        });
+    });
+
+    const customSelect = document.getElementById('custom-topic-question-select');
+    if (customSelect) customSelect.innerHTML = '';
+
+    topicEditorData.forEach((qData, qIndex) => {
+        if (customSelect) {
+            const opt = document.createElement('option');
+            opt.value = qIndex;
+            opt.textContent = `Q${qIndex + 1}: ${qData.question.substring(0, 30)}...`;
+            customSelect.appendChild(opt);
+        }
+
+        const div = document.createElement('div');
+        div.className = "bg-gray-800 p-3 rounded-lg border border-gray-700 mb-4";
+
+        const qTitle = document.createElement('div');
+        qTitle.className = "text-sm text-gray-300 mb-2 truncate";
+        qTitle.title = qData.question;
+        qTitle.textContent = `${qIndex + 1}. ${qData.question}`;
+        div.appendChild(qTitle);
+
+        const chipContainer = document.createElement('div');
+        chipContainer.className = "flex flex-wrap gap-2";
+
+        qData.topics.forEach((t, tIndex) => {
+            if (t.editing) {
+                const input = document.createElement('input');
+                input.className = "px-2 py-1 text-xs rounded-full border border-brand-500 bg-gray-900 text-white focus:outline-none focus:ring-1 focus:ring-brand-500 min-w-[100px]";
+                input.value = t.text;
+
+                input.onblur = () => {
+                    t.editing = false;
+                    renderTopicEditor();
+                };
+
+                input.onkeydown = (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        t.editing = false;
+                        renderTopicEditor();
+                    }
+                };
+
+                input.oninput = (e) => {
+                    t.text = e.target.value;
+                };
+
+                chipContainer.appendChild(input);
+                setTimeout(() => input.focus(), 0);
+
+            } else {
+                const btn = document.createElement('button');
+                let bgColor = 'bg-gray-700 hover:bg-gray-600 text-gray-200';
+                let strike = '';
+
+                if (t.excluded) {
+                    bgColor = 'bg-red-900/40 text-gray-500 hover:bg-red-900/60 line-through';
+                    strike = 'line-through';
+                } else {
+                    const lower = t.text.toLowerCase();
+                    const isDup = counts[lower] > 1;
+
+                    if (isDup) {
+                        bgColor = 'bg-yellow-900/50 text-yellow-200 hover:bg-yellow-800/70 border border-yellow-800';
+                    }
+                }
+
+                btn.className = `px-3 py-1 text-xs rounded-full cursor-pointer transition-colors border-none ${bgColor}`;
+                btn.textContent = t.text;
+
+                btn.onclick = (e) => {
+                    if (doubleClickTimeout) {
+                        clearTimeout(doubleClickTimeout);
+                        doubleClickTimeout = null;
+                        // Double click
+                        t.editing = true;
+                        t.excluded = false;
+                        renderTopicEditor();
+                    } else {
+                        doubleClickTimeout = setTimeout(() => {
+                            doubleClickTimeout = null;
+                            // Single click
+                            t.excluded = !t.excluded;
+                            renderTopicEditor();
+                        }, 250);
+                    }
+                };
+
+                chipContainer.appendChild(btn);
+            }
+        });
+
+        div.appendChild(chipContainer);
+        container.appendChild(div);
+    });
+}
+
+function handleAddCustomTopic() {
+    const input = document.getElementById('custom-topic-input');
+    const select = document.getElementById('custom-topic-question-select');
+
+    if (!input || !select) return;
+
+    const topicText = input.value.trim();
+    if (!topicText) return;
+
+    const qIndex = parseInt(select.value, 10);
+    if (isNaN(qIndex) || qIndex < 0 || qIndex >= topicEditorData.length) return;
+
+    topicEditorData[qIndex].topics.push({ text: topicText, excluded: false, editing: false });
+    input.value = '';
+    renderTopicEditor();
+}
+
+async function confirmAndQueueTopics() {
+    const finalQuestions = pendingQuizData.questions.map((q, i) => {
+        const qData = topicEditorData[i];
+        const finalTopics = qData.topics.filter(t => !t.excluded && t.text.trim() !== '').map(t => t.text);
+        return {
+            ...q,
+            topics: finalTopics
+        };
+    });
+
+    document.getElementById('topic-editor-modal').style.display = 'none';
+
+    try {
+        const res = await fetch('/api/queue/prepare', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                questions: finalQuestions,
+                use_zim_refinement: false,
+                use_tantivy_refinement: false
+            })
+        });
+
+        if (res.ok) {
+            alert("Topics queued successfully!");
+        } else {
+            alert("Failed to queue topics.");
+        }
+    } catch(e) {
+        console.error(e);
+        alert("Error calling /api/queue/prepare.");
+    }
+
+    // Create an offline session entry in knowledge hub
+    const result = {
+        id: crypto.randomUUID(),
+        subjectName: pendingQuizData.config.subjectName,
+        timestamp: Date.now(),
+        totalQuestions: pendingQuizData.questions.length,
+        correctAnswers: 0,
+        accuracy: 0,
+        timeUsedSeconds: 0,
+        mode: 'offline',
+        answers: []
+    };
+
+    try {
+        await fetch('/api/sessions/save', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ ...result, questions: finalQuestions })
+        });
+    } catch(e) {
+        console.error("Failed to save session to backend", e);
+    }
+
+    pendingQuizData = null;
 }
 
 function startTimer(seconds) {
@@ -281,4 +560,33 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('quiz-next-btn')?.addEventListener('click', nextQuestion);
     document.getElementById('quiz-prev-btn')?.addEventListener('click', prevQuestion);
     document.getElementById('quiz-done-btn')?.addEventListener('click', resetQuizView);
+
+    // Search bindings
+    document.getElementById('quiz-subject-select')?.addEventListener('change', handleSearchChange);
+    document.getElementById('quiz-topic-select')?.addEventListener('change', handleSearchChange);
+    document.getElementById('quiz-keyword')?.addEventListener('input', handleSearchChange);
+
+    // Modal bindings
+    document.getElementById('start-mcq-directly-btn')?.addEventListener('click', beginQuizRunner);
+    document.getElementById('cancel-pre-quiz-btn')?.addEventListener('click', () => {
+        document.getElementById('pre-quiz-modal').style.display = 'none';
+        pendingQuizData = null;
+    });
+    document.getElementById('study-topics-first-btn')?.addEventListener('click', prepareOfflineTopics);
+
+    document.getElementById('cancel-topic-editor-btn')?.addEventListener('click', () => {
+        document.getElementById('topic-editor-modal').style.display = 'none';
+        pendingQuizData = null;
+    });
+    document.getElementById('close-topic-editor-btn')?.addEventListener('click', () => {
+        document.getElementById('topic-editor-modal').style.display = 'none';
+        pendingQuizData = null;
+    });
+    document.getElementById('confirm-topic-editor-btn')?.addEventListener('click', confirmAndQueueTopics);
+
+    document.getElementById('add-custom-topic-btn')?.addEventListener('click', handleAddCustomTopic);
+    document.getElementById('custom-topic-input')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') handleAddCustomTopic();
+    });
+
 });

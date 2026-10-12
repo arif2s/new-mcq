@@ -196,6 +196,14 @@
 
               <div class="form-group">
 
+                <label>Keyword Search</label>
+
+                <input type="text" id="quiz-keyword" class="glass-input" placeholder="Optional keyword...">
+
+              </div>
+
+              <div class="form-group">
+
                 <label>Question Count</label>
 
                 <input type="number" id="quiz-count" class="glass-input" value="10" min="1" max="100">
@@ -212,6 +220,7 @@
 
             </div>
 
+            <p id="quiz-match-count" class="text-sm text-brand-400 mt-10">Matching Questions: 0</p>
             <button id="start-quiz-btn" class="primary-btn mt-20">Start Quiz</button>
 
           </div>
@@ -705,6 +714,73 @@
             <p id="inspector-content" class="text-muted">Select a topic or entity to view details here.</p>
         </div>
       </aside>
+    </div>
+
+    <!-- PRE-QUIZ MODAL -->
+    <div id="pre-quiz-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 100;">
+      <div class="modal glass-modal w-full max-w-md">
+        <h2 class="text-xl font-bold text-gray-100 mb-2">Quiz Ready!</h2>
+        <p class="text-gray-400 mb-6 text-sm" id="pre-quiz-modal-text">
+          You are about to start a new quiz. Would you like to study the related topics first, or start the MCQ directly?
+        </p>
+        <div class="flex flex-col gap-3">
+          <button id="study-topics-first-btn" class="w-full flex items-center justify-center gap-2 px-6 py-4 bg-brand-600/20 text-brand-400 hover:bg-brand-600/30 hover:text-brand-300 rounded-xl transition-all font-medium border border-brand-500/30">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg> Study Topics First
+          </button>
+          <button id="start-mcq-directly-btn" class="w-full flex items-center justify-center gap-2 px-6 py-4 bg-gradient-to-r from-brand-600 to-purple-600 hover:from-brand-500 hover:to-purple-500 text-white rounded-xl transition-all font-medium shadow-lg">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> Start MCQ Directly
+          </button>
+          <button id="cancel-pre-quiz-btn" class="mt-2 w-full py-2 text-sm text-gray-500 hover:text-gray-300 transition-colors bg-transparent border-none cursor-pointer">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TOPIC EDITOR MODAL -->
+    <div id="topic-editor-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 100;">
+      <div class="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl relative">
+        <div class="p-4 border-b border-gray-700 flex justify-between items-center bg-gray-800 rounded-t-xl">
+          <div class="flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <h2 class="text-lg font-bold text-gray-200">Review & Edit Extracted Topics</h2>
+          </div>
+          <button id="close-topic-editor-btn" class="text-gray-400 hover:text-white transition-colors bg-transparent border-none cursor-pointer">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+
+        <div class="p-4 overflow-y-auto flex-1 space-y-4" id="topic-editor-content">
+          <p class="text-sm text-gray-400 mb-4">
+            Topics have been extracted automatically.
+            <br/><strong class="text-gray-300">Single-click</strong> a topic to exclude it (strikethrough).
+            <br/><strong class="text-gray-300">Double-click</strong> a topic to edit its name (press Enter to save).
+            <br/><span class="text-green-500 font-bold">Dark Green</span>: Notes already exist. <span class="text-yellow-500 font-bold">Dark Yellow</span>: Duplicate topic in this batch.
+          </p>
+          <div id="topic-editor-questions"></div>
+          <div class="mt-4 pt-4 border-t border-gray-700/50 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+            <span class="text-sm text-gray-300 font-medium whitespace-nowrap">Add Custom Topic:</span>
+            <div class="flex w-full sm:w-auto gap-2">
+              <input type="text" id="custom-topic-input" class="glass-input flex-1 py-2 px-3 text-sm" placeholder="Type new topic...">
+              <select id="custom-topic-question-select" class="glass-select py-2 px-3 text-sm max-w-[200px]">
+                <!-- Options populated dynamically -->
+              </select>
+              <button id="add-custom-topic-btn" class="secondary-btn py-2 px-4 flex items-center gap-2 whitespace-nowrap">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> Add
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="p-4 border-t border-gray-700 flex justify-end gap-3 bg-gray-800 rounded-b-xl">
+          <button id="cancel-topic-editor-btn" class="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors bg-transparent border-none cursor-pointer">
+            Cancel
+          </button>
+          <button id="confirm-topic-editor-btn" class="px-6 py-2 text-sm bg-brand-600 hover:bg-brand-500 text-white rounded-lg flex items-center gap-2 font-medium transition-all cursor-pointer border-none">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> Confirm & Queue
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- MODAL -->
