@@ -26,7 +26,9 @@
 
         <h3 class="nav-heading">Navigation</h3>
         <ul class="nav-list">
-          <li><button class="nav-btn active" data-target="home-view">Home / MCQ</button></li>
+          <li><button class="nav-btn active" data-target="dashboard-view">Dashboard</button></li>
+          <li><button class="nav-btn" data-target="home-view">MCQ Extractor</button></li>
+          <li><button class="nav-btn" data-target="quiz-view">Quiz Engine</button></li>
           <li><button class="nav-btn" data-target="knowledge-hub-view">Knowledge Hub</button></li>
           <li><button class="nav-btn" data-target="rag-vault-view">RAG Vault</button></li>
           <li><button class="nav-btn" data-target="habit-tracker-view">Habit Tracker</button></li>
@@ -53,7 +55,82 @@
       <main class="main-content relative-container">
 
         <!-- HOME / MCQ VIEW -->
-        <section id="home-view" class="view-section active fade-enter-active">
+        <section id="dashboard-view" class="view-section active fade-enter-active">
+
+          <header class="view-header">
+
+            <h2>Dashboard</h2>
+
+            <p class="subtitle">Overview of your learning progress and statistics.</p>
+
+          </header>
+
+
+
+          <div class="grid-2col mb-20">
+
+            <div class="card glass-card">
+
+              <h3>Daily Targets</h3>
+
+              <div class="mt-15">
+
+                <div class="flex justify-between text-sm mb-5"><span>Questions Answered</span> <span id="ds-q-text">0 / 50</span></div>
+
+                <div class="progress-bar-bg"><div id="ds-q-prog" class="progress-bar-fill bg-brand-500" style="width: 0%"></div></div>
+
+              </div>
+
+              <div class="mt-15">
+
+                <div class="flex justify-between text-sm mb-5"><span>Correct Answers</span> <span id="ds-c-text">0 / 40</span></div>
+
+                <div class="progress-bar-bg"><div id="ds-c-prog" class="progress-bar-fill bg-success-500" style="width: 0%"></div></div>
+
+              </div>
+
+            </div>
+
+
+
+            <div class="card glass-card">
+
+              <h3>Lifetime Stats</h3>
+
+              <div class="grid-2col mt-15">
+
+                <div class="stat-box">
+
+                  <div class="stat-val" id="ds-accuracy">0%</div>
+
+                  <div class="stat-label">Avg Accuracy</div>
+
+                </div>
+
+                <div class="stat-box">
+
+                  <div class="stat-val" id="ds-tests">0</div>
+
+                  <div class="stat-label">Tests Taken</div>
+
+                </div>
+
+                <div class="stat-box">
+
+                  <div class="stat-val" id="ds-time">0m</div>
+
+                  <div class="stat-label">Time Spent</div>
+
+                </div>
+
+              </div>
+
+            </div>
+
+          </div>
+
+        </section>
+        <section id="home-view" class="view-section fade-enter">
           <header class="view-header">
             <h2>Medical Entity Extractor & MCQ</h2>
             <p class="subtitle">Extract clinical entities and analyze MCQ questions.</p>
@@ -81,6 +158,115 @@
           </div>
         </section>
 
+        <!-- NEW QUIZ VIEW -->
+
+        <section id="quiz-view" class="view-section fade-enter">
+
+          <header class="view-header">
+
+            <h2>Quiz Engine</h2>
+
+            <p class="subtitle">Test your knowledge against your database.</p>
+
+          </header>
+
+
+
+          <div id="quiz-setup" class="card glass-card">
+
+            <h3>Setup Quiz</h3>
+
+            <div class="grid-2col mt-15">
+
+              <div class="form-group">
+
+                <label>Subject</label>
+
+                <select id="quiz-subject-select" class="glass-select"><option value="all">Loading...</option></select>
+
+              </div>
+
+              <div class="form-group">
+
+                <label>Topic</label>
+
+                <select id="quiz-topic-select" class="glass-select"><option value="all">Loading...</option></select>
+
+              </div>
+
+              <div class="form-group">
+
+                <label>Question Count</label>
+
+                <input type="number" id="quiz-count" class="glass-input" value="10" min="1" max="100">
+
+              </div>
+
+              <div class="form-group">
+
+                <label>Time Limit (Minutes, 0 for infinite)</label>
+
+                <input type="number" id="quiz-time" class="glass-input" value="0" min="0">
+
+              </div>
+
+            </div>
+
+            <button id="start-quiz-btn" class="primary-btn mt-20">Start Quiz</button>
+
+          </div>
+
+
+
+          <div id="quiz-active" class="card glass-card" style="display: none;">
+
+            <div class="flex justify-between items-center mb-10">
+
+                <h3 id="quiz-progress">Question 1 of 10</h3>
+
+                <div id="quiz-timer-display" class="text-xl font-mono text-brand-400"></div>
+
+            </div>
+
+            <div class="mb-20 text-lg p-4 bg-gray-900 rounded border border-gray-700" id="quiz-stem"></div>
+
+            <div id="quiz-options" class="flex flex-col gap-3"></div>
+
+            <div class="flex justify-between mt-20">
+
+                <button id="quiz-prev-btn" class="secondary-btn" disabled>Previous</button>
+
+                <button id="quiz-next-btn" class="secondary-btn">Next</button>
+
+            </div>
+
+          </div>
+
+
+
+          <div id="quiz-results" class="card glass-card" style="display: none;">
+
+            <h3 class="text-center text-2xl mb-10">Quiz Completed</h3>
+
+            <div class="flex justify-center gap-10 mb-20">
+
+                <div class="text-center"><div class="text-3xl text-brand-400 font-bold" id="res-score"></div><div>Score</div></div>
+
+                <div class="text-center"><div class="text-3xl font-bold" id="res-correct"></div><div>Correct</div></div>
+
+                <div class="text-center"><div class="text-3xl font-bold" id="res-time"></div><div>Time</div></div>
+
+            </div>
+
+            <h4 class="mb-10 text-lg">Review</h4>
+
+            <div id="res-explanations" class="flex flex-col gap-4 max-h-[500px] overflow-y-auto pr-2"></div>
+
+            <button id="quiz-done-btn" class="primary-btn w-full mt-20">Back to Setup</button>
+
+          </div>
+
+        </section>
         <!-- KNOWLEDGE HUB VIEW -->
         <section id="knowledge-hub-view" class="view-section fade-enter">
           <header class="view-header">
@@ -88,7 +274,16 @@
             <p class="subtitle">Your centralized repository of medical concepts and notes.</p>
           </header>
           <div class="card glass-card">
-             <div class="content-placeholder">
+             <div class="grid-2col mb-20">
+                <div class="stat-box"><div class="stat-val text-brand-400" id="ht-active-streak">0 Days</div><div class="stat-label">Active Streak</div></div>
+                <div class="stat-box"><div class="stat-val text-brand-400" id="ht-longest-streak">0 Days</div><div class="stat-label">Longest Streak</div></div>
+                <div class="stat-box"><div class="stat-val" id="ht-week-q">0</div><div class="stat-label">Questions (Last 7 Days)</div></div>
+                <div class="stat-box"><div class="stat-val" id="ht-month-q">0</div><div class="stat-label">Questions (Last 30 Days)</div></div>
+             </div>
+             <div class="mt-20 overflow-x-auto">
+                 <h4 class="mb-10 text-sm text-gray-400">Activity Calendar (Last 365 Days)</h4>
+                 <div id="ht-calendar" class="min-w-[800px] p-4 bg-gray-900 rounded border border-gray-700"></div>
+             </div>
                 <p>Knowledge hub content goes here. (e.g. Saved sessions, offline generated questions)</p>
              </div>
           </div>
@@ -101,7 +296,16 @@
             <p class="subtitle">Search and manage your Retrieval-Augmented Generation sources.</p>
           </header>
           <div class="card glass-card">
-             <div class="content-placeholder">
+             <div class="grid-2col mb-20">
+                <div class="stat-box"><div class="stat-val text-brand-400" id="ht-active-streak">0 Days</div><div class="stat-label">Active Streak</div></div>
+                <div class="stat-box"><div class="stat-val text-brand-400" id="ht-longest-streak">0 Days</div><div class="stat-label">Longest Streak</div></div>
+                <div class="stat-box"><div class="stat-val" id="ht-week-q">0</div><div class="stat-label">Questions (Last 7 Days)</div></div>
+                <div class="stat-box"><div class="stat-val" id="ht-month-q">0</div><div class="stat-label">Questions (Last 30 Days)</div></div>
+             </div>
+             <div class="mt-20 overflow-x-auto">
+                 <h4 class="mb-10 text-sm text-gray-400">Activity Calendar (Last 365 Days)</h4>
+                 <div id="ht-calendar" class="min-w-[800px] p-4 bg-gray-900 rounded border border-gray-700"></div>
+             </div>
                 <p>RAG Vault content goes here. (e.g. document management, indexing status)</p>
              </div>
           </div>
@@ -114,23 +318,93 @@
             <p class="subtitle">Track your learning and review habits over time.</p>
           </header>
           <div class="card glass-card">
-             <div class="content-placeholder">
+             <div class="grid-2col mb-20">
+                <div class="stat-box"><div class="stat-val text-brand-400" id="ht-active-streak">0 Days</div><div class="stat-label">Active Streak</div></div>
+                <div class="stat-box"><div class="stat-val text-brand-400" id="ht-longest-streak">0 Days</div><div class="stat-label">Longest Streak</div></div>
+                <div class="stat-box"><div class="stat-val" id="ht-week-q">0</div><div class="stat-label">Questions (Last 7 Days)</div></div>
+                <div class="stat-box"><div class="stat-val" id="ht-month-q">0</div><div class="stat-label">Questions (Last 30 Days)</div></div>
+             </div>
+             <div class="mt-20 overflow-x-auto">
+                 <h4 class="mb-10 text-sm text-gray-400">Activity Calendar (Last 365 Days)</h4>
+                 <div id="ht-calendar" class="min-w-[800px] p-4 bg-gray-900 rounded border border-gray-700"></div>
+             </div>
                 <p>Habit tracker content goes here. (e.g. streak calendar, activity charts)</p>
              </div>
           </div>
         </section>
 
         <!-- PROCESSING QUEUE VIEW -->
+
         <section id="queue-view" class="view-section fade-enter">
+
           <header class="view-header">
-            <h2>Processing Queue</h2>
+
+            <h2>Processing Queue <span id="queue-worker-status" class="badge bg-warning ml-2">Checking...</span></h2>
+
             <p class="subtitle">Monitor background tasks and LLM generation queue.</p>
+
           </header>
-          <div class="card glass-card">
-             <div class="content-placeholder">
-                <p>Queue content goes here. (e.g. pending synthesis tasks, background processing)</p>
-             </div>
+
+
+
+          <div class="grid-4col mb-20 gap-4">
+
+            <div class="card glass-card text-center p-4">
+
+                <div class="text-3xl font-bold text-gray-200" id="queue-pending">0</div>
+
+                <div class="text-sm text-gray-400">Pending</div>
+
+            </div>
+
+            <div class="card glass-card text-center p-4">
+
+                <div class="text-3xl font-bold text-brand-400" id="queue-processing">0</div>
+
+                <div class="text-sm text-gray-400">Processing</div>
+
+            </div>
+
+            <div class="card glass-card text-center p-4">
+
+                <div class="text-3xl font-bold text-success-400" id="queue-completed">0</div>
+
+                <div class="text-sm text-gray-400">Completed</div>
+
+            </div>
+
+            <div class="card glass-card text-center p-4">
+
+                <div class="text-3xl font-bold text-danger-400" id="queue-failed">0</div>
+
+                <div class="text-sm text-gray-400">Failed</div>
+
+            </div>
+
           </div>
+
+
+
+          <div class="card glass-card">
+
+             <div class="flex justify-between items-center mb-10">
+
+                 <h3 id="queue-total">Recent Tasks</h3>
+
+                 <div class="flex gap-2">
+
+                     <button id="queue-retry-btn" class="secondary-btn text-xs">Retry Failed</button>
+
+                     <button id="queue-clear-btn" class="danger-btn text-xs">Clear Failed</button>
+
+                 </div>
+
+             </div>
+
+             <div id="queue-tasks-list" class="max-h-[400px] overflow-y-auto"></div>
+
+          </div>
+
         </section>
 
         <!-- SETTINGS VIEW -->
@@ -163,6 +437,63 @@
                 <button id="refresh-diag-btn" class="secondary-btn mt-15">Refresh</button>
               </div>
           </div>
+
+          <div class="grid-2col mt-20">
+
+              <div class="card glass-card">
+
+                <h3>App Preferences</h3>
+
+                <div class="form-group mt-15">
+
+                  <label>Daily Questions Target:</label>
+
+                  <input type="number" id="set-q-target" class="glass-input">
+
+                </div>
+
+                <div class="form-group">
+
+                  <label>Daily Correct Target:</label>
+
+                  <input type="number" id="set-c-target" class="glass-input">
+
+                </div>
+
+              </div>
+
+
+
+              <div class="card glass-card">
+
+                <h3>Queue Configuration</h3>
+
+                <div class="form-group mt-15">
+
+                  <label>Processing Queue Limit:</label>
+
+                  <input type="number" id="set-q-limit" class="glass-input">
+
+                  <p class="text-xs text-gray-400 mt-1">Number of items pulled per batch.</p>
+
+                </div>
+
+                <div class="form-group">
+
+                  <label>Processing Queue Hard Limit:</label>
+
+                  <input type="number" id="set-qh-limit" class="glass-input">
+
+                  <p class="text-xs text-gray-400 mt-1">Global maximum size of the pending queue.</p>
+
+                </div>
+
+              </div>
+
+          </div>
+
+          <button id="save-settings-btn" class="primary-btn mt-10">Save App Settings</button>
+
 
           <div class="card glass-card mt-20">
             <h3>Model Configuration</h3>
@@ -217,6 +548,13 @@
       </div>
     </div>
 
+    <script src="/js/state.js"></script>
+    <script src="/js/dashboard.js"></script>
+    <script src="/js/quiz.js"></script>
+    <script src="/js/habits.js"></script>
+    <script src="/js/hub.js"></script>
+    <script src="/js/queue.js"></script>
+    <script src="/js/settings.js"></script>
     <script src="/js/app.js"></script>
     <script src="/js/search.js"></script>
   </body>

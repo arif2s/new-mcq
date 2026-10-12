@@ -18,7 +18,7 @@ class SourcePayload(BaseModel):
     enabled: bool = True
     itemCount: int = 0
     lastIndexed: str = "Never"
-    pdfEngine: str = "fitz"
+    pdfEngine: str = "pymupdf"
 
 @router.get("")
 def get_sources():
@@ -30,7 +30,7 @@ def get_sources():
                 "id": r["id"], "name": r["name"], "type": r["type"],
                 "path": r["path"], "enabled": bool(r["enabled"]),
                 "itemCount": r["itemCount"], "lastIndexed": r["lastIndexed"],
-                "pdfEngine": r["pdfEngine"] if "pdfEngine" in r.keys() else "fitz"
+                "pdfEngine": r["pdfEngine"] if "pdfEngine" in r.keys() else "pymupdf"
             }
             for r in cursor.fetchall()
         ]
@@ -124,9 +124,9 @@ async def run_indexing():
                     pdf_files = list(source_path.rglob("*.pdf")) if source_path.is_dir() else [source_path] if source_path.suffix.lower() == ".pdf" else []
                     total_files = len(pdf_files)
 
-                    pdf_engine = src.get("pdfEngine", "fitz")
+                    pdf_engine = src.get("pdfEngine", "pymupdf")
 
-                    import fitz
+                    import pymupdf
                     if pdf_engine == "docling":
                         from parsers.docling_parser import extract_pdf_structure
 
@@ -148,7 +148,7 @@ async def run_indexing():
                                     writer.add_document(doc)
                                     item_count += 1
                             else:
-                                with fitz.open(str(file_path)) as pdf_doc:
+                                with pymupdf.open(str(file_path)) as pdf_doc:
                                     total_pages = pdf_doc.page_count
                                     for page_num in range(total_pages):
                                         await asyncio.sleep(0)
