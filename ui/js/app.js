@@ -136,10 +136,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Application Bridging Logic ---
     document.addEventListener('click', async (e) => {
         // Handle PDF Citations
-        if (e.target.classList.contains('citation-pdf')) {
+        const pdfBtn = e.target.closest('.citation-pdf');
+        if (pdfBtn) {
             e.preventDefault();
-            const filePath = e.target.getAttribute('data-filepath');
-            const page = e.target.getAttribute('data-page') || 1;
+            const filePath = pdfBtn.getAttribute('data-filepath');
+            const page = pdfBtn.getAttribute('data-page') || 1;
             try {
                 const res = await fetch(`/api/notes/launch-sumatra?file_path=${encodeURIComponent(filePath)}&page=${page}`);
                 const data = await res.json();
@@ -152,9 +153,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // Handle Obsidian Links
-        if (e.target.classList.contains('citation-obsidian')) {
+        const obsBtn = e.target.closest('.citation-obsidian');
+        if (obsBtn) {
             e.preventDefault();
-            const vault = e.target.getAttribute('data-vault');
+            const file = obsBtn.getAttribute('data-file');
             const file = e.target.getAttribute('data-file');
             window.location.href = `obsidian://open?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(file)}`;
         }

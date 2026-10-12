@@ -523,6 +523,55 @@ function showResults(result) {
     const s = result.timeUsedSeconds % 60;
     document.getElementById('res-time').textContent = `${m}m ${s}s`;
 
+    // Rank Simulation Analytics
+    const wrongAnswers = result.totalQuestions - result.correctAnswers;
+    const rawMarks = (result.correctAnswers * 4) - (wrongAnswers * 1);
+    const targetExamQuestions = (window.AppState && window.AppState.rankSimConfigs && window.AppState.rankSimConfigs[0]?.totalQuestions) ? window.AppState.rankSimConfigs[0].totalQuestions : 200;
+    const maxExamMarks = targetExamQuestions * 4;
+
+    let projectedMarks = 0;
+    if (result.totalQuestions > 0) {
+        projectedMarks = rawMarks * (targetExamQuestions / result.totalQuestions);
+    }
+    projectedMarks = Math.round(projectedMarks);
+
+    let rankBracket = 'AIR 50,000+';
+    let percentile = '50.0%';
+    let actionableTips = 'Focus on high-yield basic concepts.';
+
+    const maxProjected = maxExamMarks;
+    const pPercentage = maxProjected > 0 ? (projectedMarks / maxProjected) : 0;
+
+    if (pPercentage >= 0.85) {
+        rankBracket = 'AIR 1 - 500';
+        percentile = '99.9%';
+        actionableTips = 'Excellent performance! Maintain accuracy and reduce unforced errors.';
+    } else if (pPercentage >= 0.70) {
+        rankBracket = 'AIR 501 - 3,000';
+        percentile = '98.5%';
+        actionableTips = 'Great job. Review your incorrect answers closely to jump to the next tier.';
+    } else if (pPercentage >= 0.50) {
+        rankBracket = 'AIR 3,001 - 15,000';
+        percentile = '85.0%';
+        actionableTips = 'Solid foundation. Focus on secondary topics to improve your score.';
+    } else if (pPercentage >= 0.30) {
+        rankBracket = 'AIR 15,001 - 40,000';
+        percentile = '60.0%';
+        actionableTips = 'You need to consolidate core concepts. Practice more MCQs.';
+    }
+
+    const pmElem = document.getElementById('sim-projected-marks');
+    if(pmElem) pmElem.textContent = `${projectedMarks} / ${maxExamMarks}`;
+
+    const rbElem = document.getElementById('sim-rank-bracket');
+    if(rbElem) rbElem.textContent = rankBracket;
+
+    const ptElem = document.getElementById('sim-percentile');
+    if(ptElem) ptElem.textContent = percentile;
+
+    const atElem = document.getElementById('sim-actionable-tips');
+    if(atElem) atElem.textContent = actionableTips;
+
     const container = document.getElementById('res-explanations');
     container.innerHTML = '';
 
