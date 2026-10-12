@@ -40,6 +40,17 @@
         </div>
       </div>
 
+
+      <div id="zim-viewer-container" style="display: none; height: 100%; flex-direction: column;">
+        <div style="padding: 10px; background: #eee; border-bottom: 1px solid #ccc; display: flex; justify-content: space-between;">
+          <h2 style="margin: 0;">ZIM Viewer</h2>
+          <button id="close-zim-viewer-btn">Close</button>
+        </div>
+        <div id="zim-content-area" style="flex: 1; overflow-y: auto; padding: 20px; background: white;">
+          <!-- ZIM HTML will go here -->
+        </div>
+      </div>
+
       <div class="main-content" id="settings-view" style="display: none;">
         <h2>System Diagnostics & Settings</h2>
         <div style="margin-bottom: 20px;">
@@ -57,6 +68,24 @@
             <li>SumatraPDF Availability: <span id="diag-sumatra">Checking...</span></li>
           </ul>
           <button id="refresh-diag-btn">Refresh Diagnostics</button>
+        </div>
+
+        <div style="margin-top: 20px;">
+          <h3>Model Configuration</h3>
+
+          <div style="margin-bottom: 15px;">
+            <label for="cpu-embed-model-select">CPU Embedding Model:</label><br>
+            <select id="cpu-embed-model-select" style="width: 100%; padding: 5px; margin-top: 5px;">
+              <option value="loading">Loading models...</option>
+            </select>
+          </div>
+
+          <div>
+            <label for="flashrank-model-select">FlashRank Model:</label><br>
+            <select id="flashrank-model-select" style="width: 100%; padding: 5px; margin-top: 5px;">
+              <option value="loading">Loading models...</option>
+            </select>
+          </div>
         </div>
       </div>
 

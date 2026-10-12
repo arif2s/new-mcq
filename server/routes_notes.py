@@ -1,6 +1,10 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import difflib
+import subprocess
+import shutil
+import os
+from pathlib import Path
 
 router = APIRouter(prefix="/api/notes", tags=["Notes QA"])
 
@@ -53,3 +57,43 @@ async def calculate_qa_metrics(payload: QAMetricsRequest):
         "token_ratio": round(token_ratio, 4),
         "levenshtein_distance": lev_dist
     }
+
+
+@router.get("/launch-sumatra")
+def launch_sumatra(file_path: str, page: int = 1):
+    sumatra_exe = shutil.which("SumatraPDF") or shutil.which("sumatrapdf.exe") or "SumatraPDF"
+    if sys.platform != 'win32':
+        return {"status": "error", "message": "PDF deep-linking via SumatraPDF is only supported on Windows."}
+
+    try:
+        sanitized_path = Path(file_path).resolve()
+        subprocess.Popen([sumatra_exe, "-reuse-instance", "-page", str(page), str(sanitized_path)], shell=False)
+        return {"status": "success"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@router.get("/zim-article")
+def zim_article(article_id: str):
+    import libzim
+    from core.database import get_db_connection
+
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT path FROM knowledge_sources WHERE type = 'zim' AND enabled = 1 LIMIT 1")
+            row = cursor.fetchone()
+
+        if not row:
+            return {"status": "error", "message": "No ZIM file enabled."}
+
+        zim_path = row["path"] if isinstance(row, dict) else row[0]
+
+        archive = libzim.Archive(zim_path)
+
+        # In libzim, we typically get entry by path or title. We'll try by path/url.
+        entry = archive.get_entry_by_path(article_id)
+
+        content = entry.get_item().content
+        return {"status": "success", "html": content.decode('utf-8')}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
