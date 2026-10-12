@@ -178,7 +178,7 @@
 
             <div class="grid-2col mt-15">
 
-              <div class="form-group">
+              <div class="form-group mt-5">
 
                 <label>Subject</label>
 
@@ -186,7 +186,7 @@
 
               </div>
 
-              <div class="form-group">
+              <div class="form-group mt-5">
 
                 <label>Topic</label>
 
@@ -194,7 +194,7 @@
 
               </div>
 
-              <div class="form-group">
+              <div class="form-group mt-5">
 
                 <label>Keyword Search</label>
 
@@ -202,7 +202,7 @@
 
               </div>
 
-              <div class="form-group">
+              <div class="form-group mt-5">
 
                 <label>Question Count</label>
 
@@ -210,7 +210,7 @@
 
               </div>
 
-              <div class="form-group">
+              <div class="form-group mt-5">
 
                 <label>Time Limit (Minutes, 0 for infinite)</label>
 
@@ -624,7 +624,7 @@
 
                 <h3>App Preferences</h3>
 
-                <div class="form-group mt-15">
+                <div class="form-group mt-5">
 
                   <label>Daily Questions Target:</label>
 
@@ -632,7 +632,7 @@
 
                 </div>
 
-                <div class="form-group">
+                <div class="form-group mt-5">
 
                   <label>Daily Correct Target:</label>
 
@@ -648,7 +648,7 @@
 
                 <h3>Queue Configuration</h3>
 
-                <div class="form-group mt-15">
+                <div class="form-group mt-5">
 
                   <label>Processing Queue Limit:</label>
 
@@ -658,7 +658,7 @@
 
                 </div>
 
-                <div class="form-group">
+                <div class="form-group mt-5">
 
                   <label>Processing Queue Hard Limit:</label>
 
@@ -672,19 +672,19 @@
 
           </div>
 
-          <button id="save-settings-btn" class="primary-btn mt-10">Save App Settings</button>
+          <div class="mt-24"><button id="save-settings-btn" class="primary-btn w-full sm:w-auto">Save App Settings</button></div>
 
 
           <div class="card glass-card mt-20">
             <h3>Model Configuration</h3>
-            <div class="form-group">
+            <div class="form-group mt-5">
               <label for="cpu-embed-model-select">CPU Embedding Model:</label>
               <select id="cpu-embed-model-select" class="glass-select">
                 <option value="loading">Loading models...</option>
               </select>
             </div>
 
-            <div class="form-group">
+            <div class="form-group mt-5">
               <label for="flashrank-model-select">FlashRank Model:</label>
               <select id="flashrank-model-select" class="glass-select">
                 <option value="loading">Loading models...</option>
@@ -788,7 +788,7 @@
       <div class="modal glass-modal">
         <h3>Database Not Built</h3>
         <p>The Tantivy index is missing or incomplete. Please go to the Settings panel to build the database before searching.</p>
-        <div class="modal-actions">
+        <div class="modal-actions mt-24 flex gap-4 justify-end">
           <button id="close-modal-btn" class="secondary-btn">Close</button>
           <button id="go-to-settings-btn" class="primary-btn">Go to Settings</button>
         </div>
