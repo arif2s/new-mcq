@@ -3,105 +3,216 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Multi-Topic Entity Extraction</title>
+    <title>Medisearch AI</title>
     <link rel="stylesheet" href="/css/main.css" />
+    <link rel="stylesheet" href="/css/animations.css" />
   </head>
-  <body>
-    <div class="container">
-      <div class="left-rail">
-        <input type="text" id="global-search" placeholder="Search knowledge..." style="width: 100%; padding: 8px; margin-bottom: 15px; box-sizing: border-box;" />
-
-        <h3>Navigation</h3>
-        <div style="margin-bottom: 20px; display: flex; flex-direction: column; gap: 10px;">
-          <button id="nav-home-btn">Home</button>
-          <button id="nav-settings-btn">Settings</button>
+  <body class="light-theme">
+    <div class="background-animation"></div>
+    <div class="container glass-panel">
+      <!-- LEFT RAIL -->
+      <nav class="left-rail">
+        <div class="app-header">
+          <div class="app-logo">Medisearch</div>
+          <button id="theme-toggle" class="icon-btn" aria-label="Toggle Theme">
+            <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+            <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+          </button>
         </div>
 
-        <h3>Refinement Settings</h3>
+        <div class="search-container">
+            <input type="text" id="global-search" class="glass-input" placeholder="Search knowledge..." />
+        </div>
+
+        <h3 class="nav-heading">Navigation</h3>
+        <ul class="nav-list">
+          <li><button class="nav-btn active" data-target="home-view">Home / MCQ</button></li>
+          <li><button class="nav-btn" data-target="knowledge-hub-view">Knowledge Hub</button></li>
+          <li><button class="nav-btn" data-target="rag-vault-view">RAG Vault</button></li>
+          <li><button class="nav-btn" data-target="habit-tracker-view">Habit Tracker</button></li>
+          <li><button class="nav-btn" data-target="queue-view">Processing Queue</button></li>
+          <li><button class="nav-btn" data-target="settings-view">Settings</button></li>
+        </ul>
+
+        <h3 class="nav-heading">Refinement</h3>
         <div class="checkbox-group">
-          <label>
+          <label class="custom-checkbox">
             <input type="checkbox" id="use-zim-refinement" />
-            Enable ZIM Refinement
+            <span class="checkmark"></span>
+            ZIM Refinement
           </label>
-          <label>
+          <label class="custom-checkbox">
             <input type="checkbox" id="use-tantivy-refinement" />
-            Enable Tantivy PDF Refinement
+            <span class="checkmark"></span>
+            Tantivy Refinement
           </label>
         </div>
-      </div>
+      </nav>
 
-      <div class="main-content" id="home-view">
-        <h2>Medical Entity Extractor</h2>
-        <textarea id="mcq-text" placeholder="Enter MCQ stem text here...">The patient has dyspnea but no asthma. They were prescribed amoxicillin.</textarea>
-        <button id="extract-btn">Extract Entities</button>
+      <!-- CENTER STAGE -->
+      <main class="main-content relative-container">
 
-        <div id="topics-container">
-          <!-- Extracted topics will be dynamically rendered here as chips -->
-        </div>
-      </div>
+        <!-- HOME / MCQ VIEW -->
+        <section id="home-view" class="view-section active fade-enter-active">
+          <header class="view-header">
+            <h2>Medical Entity Extractor & MCQ</h2>
+            <p class="subtitle">Extract clinical entities and analyze MCQ questions.</p>
+          </header>
 
-
-      <div id="zim-viewer-container" style="display: none; height: 100%; flex-direction: column;">
-        <div style="padding: 10px; background: #eee; border-bottom: 1px solid #ccc; display: flex; justify-content: space-between;">
-          <h2 style="margin: 0;">ZIM Viewer</h2>
-          <button id="close-zim-viewer-btn">Close</button>
-        </div>
-        <div id="zim-content-area" style="flex: 1; overflow-y: auto; padding: 20px; background: white;">
-          <!-- ZIM HTML will go here -->
-        </div>
-      </div>
-
-      <div class="main-content" id="settings-view" style="display: none;">
-        <h2>System Diagnostics & Settings</h2>
-        <div style="margin-bottom: 20px;">
-          <h3>Database Construction</h3>
-          <button id="build-db-btn">Generate / Build Database</button>
-          <progress id="build-progress" value="0" max="100" style="display: none; width: 100%; margin-top: 10px;"></progress>
-          <p id="build-status" style="display: none; margin-top: 5px;"></p>
-        </div>
-
-        <div>
-          <h3>System Diagnostics</h3>
-          <ul id="diagnostics-list">
-            <li>LM Studio (Port 1234): <span id="diag-lm-studio">Checking...</span></li>
-            <li>Database Row Counts: <span id="diag-db-rows">Checking...</span></li>
-            <li>SumatraPDF Availability: <span id="diag-sumatra">Checking...</span></li>
-          </ul>
-          <button id="refresh-diag-btn">Refresh Diagnostics</button>
-        </div>
-
-        <div style="margin-top: 20px;">
-          <h3>Model Configuration</h3>
-
-          <div style="margin-bottom: 15px;">
-            <label for="cpu-embed-model-select">CPU Embedding Model:</label><br>
-            <select id="cpu-embed-model-select" style="width: 100%; padding: 5px; margin-top: 5px;">
-              <option value="loading">Loading models...</option>
-            </select>
+          <div class="card glass-card">
+            <textarea id="mcq-text" class="glass-input large-textarea" placeholder="Enter MCQ stem text here...">The patient has dyspnea but no asthma. They were prescribed amoxicillin.</textarea>
+            <div class="action-bar">
+              <button id="extract-btn" class="primary-btn pulse-on-hover">Extract Entities</button>
+            </div>
           </div>
 
-          <div>
-            <label for="flashrank-model-select">FlashRank Model:</label><br>
-            <select id="flashrank-model-select" style="width: 100%; padding: 5px; margin-top: 5px;">
-              <option value="loading">Loading models...</option>
-            </select>
+          <div class="card glass-card topics-section">
+            <h3>Extracted Entities</h3>
+            <div id="topics-container" class="chip-container">
+              <!-- Extracted topics will be dynamically rendered here as chips -->
+            </div>
+          </div>
+
+          <div class="card glass-card explanation-section" style="margin-top: 20px;">
+            <h3>Explanation & Topics</h3>
+            <div id="explanation-container" class="content-placeholder">
+              <p>Analyze an MCQ to view explanations and relevant medical topics here.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- KNOWLEDGE HUB VIEW -->
+        <section id="knowledge-hub-view" class="view-section fade-enter">
+          <header class="view-header">
+            <h2>Knowledge Hub</h2>
+            <p class="subtitle">Your centralized repository of medical concepts and notes.</p>
+          </header>
+          <div class="card glass-card">
+             <div class="content-placeholder">
+                <p>Knowledge hub content goes here. (e.g. Saved sessions, offline generated questions)</p>
+             </div>
+          </div>
+        </section>
+
+        <!-- RAG VAULT VIEW -->
+        <section id="rag-vault-view" class="view-section fade-enter">
+          <header class="view-header">
+            <h2>RAG Vault</h2>
+            <p class="subtitle">Search and manage your Retrieval-Augmented Generation sources.</p>
+          </header>
+          <div class="card glass-card">
+             <div class="content-placeholder">
+                <p>RAG Vault content goes here. (e.g. document management, indexing status)</p>
+             </div>
+          </div>
+        </section>
+
+        <!-- HABIT TRACKER VIEW -->
+        <section id="habit-tracker-view" class="view-section fade-enter">
+          <header class="view-header">
+            <h2>Habit Tracker</h2>
+            <p class="subtitle">Track your learning and review habits over time.</p>
+          </header>
+          <div class="card glass-card">
+             <div class="content-placeholder">
+                <p>Habit tracker content goes here. (e.g. streak calendar, activity charts)</p>
+             </div>
+          </div>
+        </section>
+
+        <!-- PROCESSING QUEUE VIEW -->
+        <section id="queue-view" class="view-section fade-enter">
+          <header class="view-header">
+            <h2>Processing Queue</h2>
+            <p class="subtitle">Monitor background tasks and LLM generation queue.</p>
+          </header>
+          <div class="card glass-card">
+             <div class="content-placeholder">
+                <p>Queue content goes here. (e.g. pending synthesis tasks, background processing)</p>
+             </div>
+          </div>
+        </section>
+
+        <!-- SETTINGS VIEW -->
+        <section id="settings-view" class="view-section fade-enter">
+          <header class="view-header">
+            <h2>System Settings</h2>
+            <p class="subtitle">Diagnostics, model configuration, and database management.</p>
+          </header>
+
+          <div class="grid-2col">
+              <div class="card glass-card">
+                <h3>Database Construction</h3>
+                <p class="text-muted">Build the Tantivy index from your documents.</p>
+                <button id="build-db-btn" class="primary-btn">Build Database</button>
+                <div class="progress-container mt-15" style="display: none;" id="build-progress-container">
+                    <div class="progress-bar-bg">
+                        <div class="progress-bar-fill" id="build-progress" style="width: 0%"></div>
+                    </div>
+                </div>
+                <p id="build-status" class="status-text mt-10" style="display: none;"></p>
+              </div>
+
+              <div class="card glass-card">
+                <h3>System Diagnostics</h3>
+                <ul id="diagnostics-list" class="diag-list">
+                  <li><span class="diag-label">LM Studio (Port 1234):</span> <span id="diag-lm-studio" class="badge bg-warning">Checking...</span></li>
+                  <li><span class="diag-label">Database Row Counts:</span> <span id="diag-db-rows" class="badge bg-warning">Checking...</span></li>
+                  <li><span class="diag-label">SumatraPDF:</span> <span id="diag-sumatra" class="badge bg-warning">Checking...</span></li>
+                </ul>
+                <button id="refresh-diag-btn" class="secondary-btn mt-15">Refresh</button>
+              </div>
+          </div>
+
+          <div class="card glass-card mt-20">
+            <h3>Model Configuration</h3>
+            <div class="form-group">
+              <label for="cpu-embed-model-select">CPU Embedding Model:</label>
+              <select id="cpu-embed-model-select" class="glass-select">
+                <option value="loading">Loading models...</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="flashrank-model-select">FlashRank Model:</label>
+              <select id="flashrank-model-select" class="glass-select">
+                <option value="loading">Loading models...</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <!-- ZIM VIEWER OVERLAY -->
+        <div id="zim-viewer-container" class="overlay-panel fade-enter" style="display: none;">
+          <div class="overlay-header">
+            <h2>ZIM Viewer</h2>
+            <button id="close-zim-viewer-btn" class="icon-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+          </div>
+          <div id="zim-content-area" class="overlay-content">
+            <!-- ZIM HTML will go here -->
           </div>
         </div>
-      </div>
+      </main>
 
-      <div class="right-inspector" id="right-inspector">
-        <h3>Inspector</h3>
-        <p id="inspector-content">Select a topic or entity to view details here.</p>
-      </div>
+      <!-- RIGHT INSPECTOR -->
+      <aside class="right-inspector">
+        <h3 class="inspector-title">Details Inspector</h3>
+        <div class="card glass-card inspector-card">
+            <p id="inspector-content" class="text-muted">Select a topic or entity to view details here.</p>
+        </div>
+      </aside>
     </div>
 
-    <div id="missing-db-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1000;">
-      <div style="background: white; padding: 20px; border-radius: 8px; max-width: 400px; text-align: center;">
+    <!-- MODAL -->
+    <div id="missing-db-modal" class="modal-backdrop fade-enter" style="display: none;">
+      <div class="modal glass-modal">
         <h3>Database Not Built</h3>
         <p>The Tantivy index is missing or incomplete. Please go to the Settings panel to build the database before searching.</p>
-        <div style="margin-top: 15px; display: flex; justify-content: center; gap: 10px;">
-          <button id="close-modal-btn" style="background: #ccc; color: black;">Close</button>
-          <button id="go-to-settings-btn">Go to Settings</button>
+        <div class="modal-actions">
+          <button id="close-modal-btn" class="secondary-btn">Close</button>
+          <button id="go-to-settings-btn" class="primary-btn">Go to Settings</button>
         </div>
       </div>
     </div>

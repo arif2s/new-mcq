@@ -1,60 +1,117 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // Navigation logic (Tab Switching)
+    const navButtons = document.querySelectorAll('.nav-btn');
+    const viewSections = document.querySelectorAll('.view-section');
+
+    function switchTab(targetId) {
+        // Remove active class from all buttons and sections
+        navButtons.forEach(btn => btn.classList.remove('active'));
+        viewSections.forEach(sec => sec.classList.remove('active'));
+
+        // Add active class to target
+        const targetBtn = document.querySelector(`.nav-btn[data-target="${targetId}"]`);
+        const targetSec = document.getElementById(targetId);
+
+        if (targetBtn) targetBtn.classList.add('active');
+        if (targetSec) targetSec.classList.add('active');
+    }
+
+    navButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetId = btn.getAttribute('data-target');
+            switchTab(targetId);
+
+            // If switching to settings, refresh diagnostics automatically
+            if(targetId === 'settings-view' && window.refreshDiagnostics) {
+                window.refreshDiagnostics();
+            }
+        });
+    });
+
+    // Theme Toggle Logic
+    const themeToggleBtn = document.getElementById('theme-toggle');
+    const body = document.body;
+
+    // Check local storage for theme preference
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme) {
+        body.className = savedTheme;
+    } else {
+        // Default to dark if user prefers dark mode OS wide
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            body.className = 'dark-theme';
+        }
+    }
+
+    themeToggleBtn.addEventListener('click', () => {
+        if (body.classList.contains('light-theme')) {
+            body.classList.replace('light-theme', 'dark-theme');
+            localStorage.setItem('theme', 'dark-theme');
+        } else {
+            body.classList.replace('dark-theme', 'light-theme');
+            localStorage.setItem('theme', 'light-theme');
+        }
+    });
+
+    // Extraction Logic
     const extractBtn = document.getElementById('extract-btn');
     const mcqTextEl = document.getElementById('mcq-text');
     const useZimEl = document.getElementById('use-zim-refinement');
     const useTantivyEl = document.getElementById('use-tantivy-refinement');
     const topicsContainer = document.getElementById('topics-container');
 
-    extractBtn.addEventListener('click', async () => {
-        const mcqText = mcqTextEl.value.trim();
-        const useZimRefinement = useZimEl.checked;
-        const useTantivyRefinement = useTantivyEl.checked;
+    if (extractBtn) {
+        extractBtn.addEventListener('click', async () => {
+            const mcqText = mcqTextEl.value.trim();
+            const useZimRefinement = useZimEl.checked;
+            const useTantivyRefinement = useTantivyEl.checked;
 
-        if (!mcqText) {
-            alert('Please enter some MCQ text.');
-            return;
-        }
-
-        // Show loading state
-        extractBtn.disabled = true;
-        extractBtn.textContent = 'Extracting...';
-        topicsContainer.innerHTML = '';
-
-        try {
-            const response = await fetch('/api/mcq/topics/extract', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    mcq_text: mcqText,
-                    use_zim_refinement: useZimRefinement,
-                    use_tantivy_refinement: useTantivyRefinement
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(`Server error: ${response.statusText}`);
+            if (!mcqText) {
+                alert('Please enter some MCQ text.');
+                return;
             }
 
-            const data = await response.json();
-            const topics = data.topics || [];
+            // Show loading state
+            extractBtn.disabled = true;
+            extractBtn.textContent = 'Extracting...';
+            topicsContainer.innerHTML = '';
 
-            renderTopics(topics);
-        } catch (error) {
-            console.error('Error extracting topics:', error);
-            alert('Failed to extract topics. Please check the console for details.');
-        } finally {
-            extractBtn.disabled = false;
-            extractBtn.textContent = 'Extract Entities';
-        }
-    });
+            try {
+                const response = await fetch('/api/mcq/topics/extract', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        mcq_text: mcqText,
+                        use_zim_refinement: useZimRefinement,
+                        use_tantivy_refinement: useTantivyRefinement
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Server error: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                const topics = data.topics || [];
+
+                renderTopics(topics);
+            } catch (error) {
+                console.error('Error extracting topics:', error);
+                alert('Failed to extract topics. Please check the console for details.');
+            } finally {
+                extractBtn.disabled = false;
+                extractBtn.textContent = 'Extract Entities';
+            }
+        });
+    }
 
     function renderTopics(topics) {
         if (topics.length === 0) {
             const emptyMsg = document.createElement('div');
             emptyMsg.textContent = 'No entities found.';
-            emptyMsg.style.color = '#666';
+            emptyMsg.className = 'text-muted';
             topicsContainer.appendChild(emptyMsg);
             return;
         }
@@ -68,7 +125,7 @@ document.addEventListener('DOMContentLoaded', () => {
             chip.addEventListener('click', () => {
                 const inspectorContent = document.getElementById('inspector-content');
                 if (inspectorContent) {
-                    inspectorContent.textContent = `Selected topic: ${topic}\n\nYou can perform further actions on this entity here.`;
+                    inspectorContent.innerHTML = `<strong>Selected Entity:</strong><br/>${topic}<br/><br/>You can perform further actions on this entity here.`;
                 }
             });
 
@@ -115,12 +172,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (viewerContainer && contentArea) {
                         contentArea.innerHTML = data.html;
                         viewerContainer.style.display = 'flex';
-                        // hide other views
-                        const settingsView = document.getElementById('settings-view');
-                        if (settingsView) settingsView.style.display = 'none';
-                        // if there is a main view, hide it
-                        const mainView = document.getElementById('main-view'); // Not strictly standard here but standard practice
-                        if (mainView) mainView.style.display = 'none';
                     }
                 } else {
                     console.error('Error loading ZIM article:', data.message);
@@ -136,45 +187,11 @@ document.addEventListener('DOMContentLoaded', () => {
         closeZimBtn.addEventListener('click', () => {
             const viewerContainer = document.getElementById('zim-viewer-container');
             if (viewerContainer) viewerContainer.style.display = 'none';
-            // Show main view back if needed (or let navigation handle it)
         });
     }
 
-    // --- Settings Diagnostics Tab ---
-    const refreshDiagBtn = document.getElementById('refresh-diag-btn');
-    if (refreshDiagBtn) {
-        refreshDiagBtn.addEventListener('click', async () => {
-            document.getElementById('diag-lm-studio').textContent = 'Checking...';
-            document.getElementById('diag-db-rows').textContent = 'Checking...';
-            document.getElementById('diag-sumatra').textContent = 'Checking...';
-
-            try {
-                const resLM = await fetch('/api/models/diagnostics/lm_studio');
-                const dataLM = await resLM.json();
-                document.getElementById('diag-lm-studio').textContent = dataLM.status === 'ok' ? 'Connected' : 'Offline/Error';
-            } catch (e) {
-                document.getElementById('diag-lm-studio').textContent = 'Offline/Error';
-            }
-
-            try {
-                const resDB = await fetch('/api/models/diagnostics/db');
-                const dataDB = await resDB.json();
-                document.getElementById('diag-db-rows').textContent = dataDB.status === 'ok' ? `SQLite: ${dataDB.sqlite_row_count} | LanceDB: ${dataDB.lancedb_row_count}` : 'Error';
-            } catch (e) {
-                document.getElementById('diag-db-rows').textContent = 'Error';
-            }
-
-            try {
-                const resSumatra = await fetch('/api/models/diagnostics/sumatrapdf');
-                const dataSumatra = await resSumatra.json();
-                document.getElementById('diag-sumatra').textContent = dataSumatra.available ? 'Available' : 'Not Found';
-            } catch (e) {
-                document.getElementById('diag-sumatra').textContent = 'Error';
-            }
-        });
-    }
-
-    // --- Model Selectors ---
+    // --- Settings / Diagnostics Data Loaders ---
+    // (Models dropdowns)
     const cpuEmbedSelect = document.getElementById('cpu-embed-model-select');
     if (cpuEmbedSelect) {
         fetch('/api/models/cpu_embedding_models')
@@ -228,5 +245,4 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
     }
-
 });
