@@ -16,7 +16,11 @@ libzim
 
 # LLM & Text Processing / NLP
 tiktoken
+spacy
+typer
 medspacy
+medspacy_quickumls
+en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 
 # Search & Indexing Engine
 tantivy>=0.22
@@ -28,8 +32,9 @@ playwright
 pytest
 
 # Vector DB and Embeddings
+numpy<2.0.0
 lancedb
-pyarrow
+pyarrow<17.0.0
 onnxruntime
 tokenizers
 huggingface_hub
