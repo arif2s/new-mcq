@@ -7,12 +7,6 @@ const LEVEL_CONFIG = {
     expert: { color: 'text-success-500', bg: 'bg-success-500/10', border: 'border-success-500/30', emoji: '👑' }
 };
 
-function escapeHTML(str) {
-    if (typeof str !== 'string') return '';
-    return str.replace(/[&<>'"]/g, tag => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-    }[tag] || tag));
-}
 
 function initExpertiseMap() {
     const state = window.AppState.get();
@@ -68,7 +62,7 @@ function initExpertiseMap() {
                 <div class="${config.bg} ${config.border} border rounded-xl p-4 text-center">
                     <span class="text-2xl">${config.emoji}</span>
                     <p class="text-2xl font-bold mt-1 ${config.color}">${count}</p>
-                    <p class="text-xs text-gray-400 capitalize">${escapeHTML(level)}</p>
+                    <p class="text-xs text-gray-400 capitalize">${window.escapeHTML(level)}</p>
                     <p class="text-xs text-gray-500">${pct.toFixed(0)}%</p>
                 </div>
             `;
@@ -95,8 +89,8 @@ function initExpertiseMap() {
             recsContainer.innerHTML = topRecs.map(exp => `
                 <div class="flex items-center justify-between bg-gray-900/50 rounded-lg p-3">
                   <div>
-                    <span class="text-sm text-gray-300">${escapeHTML(exp.topic)}</span>
-                    <span class="text-xs text-gray-500 ml-2">(${escapeHTML(exp.subject)})</span>
+                    <span class="text-sm text-gray-300">${window.escapeHTML(exp.topic)}</span>
+                    <span class="text-xs text-gray-500 ml-2">(${window.escapeHTML(exp.subject)})</span>
                   </div>
                   <div class="flex items-center gap-2">
                     <span class="text-xs px-2 py-0.5 rounded-full ${LEVEL_CONFIG[exp.level].bg} ${LEVEL_CONFIG[exp.level].color}">
@@ -132,9 +126,9 @@ function initExpertiseMap() {
                     <div class="${config.bg} ${config.border} border rounded-lg p-4 transition-all hover:scale-[1.02]">
                         <div class="flex items-start justify-between mb-2">
                           <div>
-                            <p class="text-sm font-medium text-gray-200">${escapeHTML(exp.topic)}</p>
+                            <p class="text-sm font-medium text-gray-200">${window.escapeHTML(exp.topic)}</p>
                             <p class="text-xs capitalize ${config.color}">
-                              ${config.emoji} ${escapeHTML(exp.level)}
+                              ${config.emoji} ${window.escapeHTML(exp.level)}
                             </p>
                           </div>
                           <div class="flex items-center gap-1">
@@ -160,7 +154,7 @@ function initExpertiseMap() {
             return `
                 <div class="bg-gray-800/60 rounded-xl p-6 border border-gray-700 mb-6">
                     <div class="flex items-center justify-between mb-4">
-                      <h3 class="text-lg font-semibold text-gray-200">📚 ${escapeHTML(subject)}</h3>
+                      <h3 class="text-lg font-semibold text-gray-200">📚 ${window.escapeHTML(subject)}</h3>
                       <div class="flex items-center gap-3 text-sm">
                         <span class="text-gray-400">${subjectInfo?.questions?.length || 0} total questions</span>
                         <span class="font-medium ${avgClass}">Avg: ${avgAccuracy.toFixed(1)}%</span>

@@ -18,18 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const indexingProgressBar = document.getElementById('indexing-progress-bar');
 
 
-  function escapeHTML(str) {
-    if (typeof str !== 'string') return '';
-    return str.replace(/[&<>'"]/g,
-      tag => ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      "'": '&#39;',
-      '"': '&quot;'
-    }[tag]));
-  }
-\n  let sources = [];
+    let sources = [];
   let isIndexing = false;
   let ws = null;
   let fallbackTimer = null;
@@ -89,12 +78,12 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
-                <p class="text-sm font-semibold text-gray-200">${escapeHTML(src.name)}</p>
+                <p class="text-sm font-semibold text-gray-200">${window.escapeHTML(src.name)}</p>
                 <span class="text-xs px-2 py-0.5 rounded bg-gray-800 text-gray-400 uppercase font-mono">
                   ${typeBadge}
                 </span>
               </div>
-              <p class="text-xs font-mono text-gray-400 truncate mt-0.5">${escapeHTML(src.path)}</p>
+              <p class="text-xs font-mono text-gray-400 truncate mt-0.5">${window.escapeHTML(src.path)}</p>
             </div>
           </div>
           <div class="flex items-center gap-6">

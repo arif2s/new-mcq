@@ -1,26 +1,12 @@
 // ui/js/dashboard.js
 
-function escapeHTML(str) {
-    if (typeof str !== 'string') return '';
-    return str.replace(/[&<>'"]/g, tag => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-    }[tag] || tag));
-}
 
-// Helper to get local date strings
 function getTodayString() {
     return new Date().toISOString().split('T')[0];
 }
 
-function getYesterdayString() {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    return d.toISOString().split('T')[0];
-}
-
-// Compute daily stats for "Today vs Yesterday" and Hourly Heatmap
 function getDayStats(state, dateStr) {
-    const results = state.testResults.filter(r => {
+    const results = (state.testResults || []).filter(r => {
         const d = new Date(r.timestamp);
         return d.toISOString().split('T')[0] === dateStr;
     });
@@ -53,7 +39,6 @@ function getDayStats(state, dateStr) {
     };
 }
 
-// Enhanced Rank Simulation with Banding
 function simulateRank(config, correct, wrong, actualQuestions) {
     if (actualQuestions === 0) return { projectedMarks: 0, estimatedRank: 0, percentile: "0.0" };
 
@@ -62,7 +47,7 @@ function simulateRank(config, correct, wrong, actualQuestions) {
     projectedMarks = Math.max(0, Math.round(projectedMarks));
 
     const dp = [...(config.dataPoints || [])].sort((a, b) => b.marks - a.marks);
-    let estimatedRank = 50000; // Default fallback
+    let estimatedRank = 50000;
 
     if (dp.length > 0) {
         if (projectedMarks >= dp[0].marks) {
@@ -83,181 +68,47 @@ function simulateRank(config, correct, wrong, actualQuestions) {
         }
     }
 
-    const TOTAL_CANDIDATES = 200000; // Base assumption
+    const TOTAL_CANDIDATES = 200000;
     const percentile = Math.max(0, ((TOTAL_CANDIDATES - estimatedRank) / TOTAL_CANDIDATES) * 100).toFixed(1);
-
-    // Mock bands for UI completeness if none exist
-    const bands = config.bands && config.bands.length > 0 ? config.bands : [
-        { label: "1-100", marksMin: config.maxMarks * 0.85, marksMax: config.maxMarks, rankMin: 1, rankMax: 100, outlook: "Top-tier" },
-        { label: "100-3.5k", marksMin: config.maxMarks * 0.70, marksMax: config.maxMarks * 0.85 - 1, rankMin: 101, rankMax: 3500, outlook: "Clinical branches in range" }
-    ];
-
-    let currentBand = null;
-    let nextBand = null;
-
-    const sortedBands = [...bands].sort((a, b) => a.marksMin - b.marksMin);
-    for (let i = 0; i < sortedBands.length; i++) {
-        if (projectedMarks >= sortedBands[i].marksMin && projectedMarks <= sortedBands[i].marksMax) {
-            currentBand = sortedBands[i];
-            if (i < sortedBands.length - 1) nextBand = sortedBands[i+1];
-            break;
-        }
-    }
-
-    if (!currentBand && sortedBands.length > 0 && projectedMarks < sortedBands[0].marksMin) {
-        nextBand = sortedBands[0];
-    }
-
-    const marksToNextBand = nextBand ? nextBand.marksMin - projectedMarks : 0;
-
-    return { projectedMarks, estimatedRank, percentile, rawMarks, currentBand, nextBand, marksToNextBand };
+    return { projectedMarks, estimatedRank, percentile, rawMarks };
 }
-
-// ---------------------------------------------------------
-// UI Rendering Pipeline
-// ---------------------------------------------------------
 
 function initDashboard() {
     const state = window.AppState.get();
     if (!state) return;
 
+    const dashContainer = document.getElementById('dashboard-view');
+    if (!dashContainer) return;
+
+    // Aggregations
+    const testResults = state.testResults || [];
+    const ankiCards = state.ankiCards || [];
+    const subjects = state.subjects || [];
+    const rankSimConfigs = state.rankSimConfigs || [];
+
+    const totalTests = testResults.length;
+    const avgAccuracy = totalTests > 0 ? testResults.reduce((a, r) => a + r.accuracy, 0) / totalTests : 0;
+    const totalTimeMinutes = Math.round(testResults.reduce((a, r) => a + r.timeUsedSeconds, 0) / 60);
+    const recentResults = [...testResults].sort((a, b) => b.timestamp - a.timestamp).slice(0, 10);
+    const totalQuestionsAnswered = state.totalQuestionsEver || 0;
+
     const todayStats = getDayStats(state, getTodayString());
-    const yesterdayStats = getDayStats(state, getYesterdayString());
 
-    const dsAccuracy = document.getElementById('ds-accuracy');
-    const dsTests = document.getElementById('ds-tests');
-    const dsTime = document.getElementById('ds-time');
+    // Spaced Repetition Stats
+    const ankiStats = ankiCards.reduce((acc, c) => {
+        acc[c.status] = (acc[c.status] || 0) + 1;
+        return acc;
+    }, { mastered: 0, review: 0, learning: 0, new: 0 });
 
-    const totalTests = state.testResults.length;
-    const avgAccuracy = totalTests > 0 ? state.testResults.reduce((a, r) => a + r.accuracy, 0) / totalTests : 0;
-    const totalTimeMin = Math.round(state.testResults.reduce((a, r) => a + r.timeUsedSeconds, 0) / 60);
-
-    if(dsAccuracy) dsAccuracy.textContent = `${Math.round(avgAccuracy)}%`;
-    if(dsTests) dsTests.textContent = totalTests;
-    if(dsTime) dsTime.textContent = `${totalTimeMin}m`;
-
-    const targets = state.dailyTargets;
-    const qProgress = targets.questionsTarget > 0 ? (todayStats.questionsAnswered / targets.questionsTarget) * 100 : 100;
-    const cProgress = targets.correctTarget > 0 ? (todayStats.correctAnswers / targets.correctTarget) * 100 : 100;
-
-    const qProgEl = document.getElementById('ds-q-prog');
-    const cProgEl = document.getElementById('ds-c-prog');
-
-    if(qProgEl) {
-        qProgEl.style.width = `${Math.min(100, qProgress)}%`;
-        document.getElementById('ds-q-text').textContent = `${todayStats.questionsAnswered} / ${targets.questionsTarget}`;
-    }
-    if(cProgEl) {
-        cProgEl.style.width = `${Math.min(100, cProgress)}%`;
-        document.getElementById('ds-c-text').textContent = `${todayStats.correctAnswers} / ${targets.correctTarget}`;
-    }
-
-    let extContainer = document.getElementById('ds-extended-container');
-    if (!extContainer) {
-        extContainer = document.createElement('div');
-        extContainer.id = 'ds-extended-container';
-        document.getElementById('dashboard-view').appendChild(extContainer);
-    }
-
-    let html = `<div class="grid md:grid-cols-2 gap-6 mb-8">`;
-    html += renderTodayVsYesterday(todayStats, yesterdayStats);
-    html += renderHourlyActivity(todayStats);
-    html += `</div>`;
-
-    html += renderRankSimulations(state);
-    html += renderRecentResults(state);
-
-    extContainer.innerHTML = html;
-    attachRankEditorListeners();
-}
-
-// ---------------------------------------------------------
-// Sub-renderers
-// ---------------------------------------------------------
-
-function getTrendHTML(today, yesterday, isTime = false) {
-    if (yesterday === 0 && today === 0) return `<span class="text-gray-500">-</span>`;
-    if (yesterday === 0) return `<span class="text-success-500">+100%</span>`;
-    const diff = ((today - yesterday) / yesterday) * 100;
-
-    if (diff > 5) return `<span class="text-${isTime ? 'brand-400' : 'success-500'}">+${Math.abs(diff).toFixed(0)}%</span>`;
-    if (diff < -5) return `<span class="text-danger-500">-${Math.abs(diff).toFixed(0)}%</span>`;
-    return `<span class="text-gray-500">Same</span>`;
-}
-
-function renderTodayVsYesterday(todayStats, yesterdayStats) {
-    return `
-    <div class="bg-gray-800/60 rounded-2xl p-6 border border-gray-700">
-        <h2 class="text-lg font-semibold text-gray-200 mb-4 flex items-center gap-2">
-            ⚡ Today vs Yesterday
-        </h2>
-        <div class="space-y-4">
-            <div class="flex justify-between text-sm">
-                <span class="text-gray-400">Questions</span>
-                <div>
-                    <span class="text-gray-500">${yesterdayStats.questionsAnswered} &rarr; </span>
-                    <span class="text-gray-200 font-medium">${todayStats.questionsAnswered}</span>
-                    <span class="ml-2 w-16 inline-block text-right">${getTrendHTML(todayStats.questionsAnswered, yesterdayStats.questionsAnswered)}</span>
-                </div>
-            </div>
-            <div class="flex justify-between text-sm">
-                <span class="text-gray-400">Correct</span>
-                <div>
-                    <span class="text-gray-500">${yesterdayStats.correctAnswers} &rarr; </span>
-                    <span class="text-gray-200 font-medium">${todayStats.correctAnswers}</span>
-                    <span class="ml-2 w-16 inline-block text-right">${getTrendHTML(todayStats.correctAnswers, yesterdayStats.correctAnswers)}</span>
-                </div>
-            </div>
-            <div class="flex justify-between text-sm">
-                <span class="text-gray-400">Accuracy</span>
-                <div>
-                    <span class="text-gray-500">${yesterdayStats.accuracy.toFixed(0)}% &rarr; </span>
-                    <span class="text-gray-200 font-medium">${todayStats.accuracy.toFixed(0)}%</span>
-                    <span class="ml-2 w-16 inline-block text-right">${getTrendHTML(todayStats.accuracy, yesterdayStats.accuracy)}</span>
-                </div>
-            </div>
-        </div>
-    </div>`;
-}
-
-function renderHourlyActivity(todayStats) {
-    const hourlyData = Array.from({ length: 24 }, (_, i) => {
-        const hStat = todayStats.hourlyStats.find(h => h.hour === i);
-        return { hour: i, questions: hStat ? hStat.questionsAnswered : 0 };
+    // Subject Performance
+    const subjectPerformance = subjects.map(s => {
+        const sr = testResults.filter(r => r.subjectName === s.name);
+        const avg = sr.length > 0 ? sr.reduce((a, r) => a + r.accuracy, 0) / sr.length : 0;
+        return { name: s.name, tests: sr.length, avgAccuracy: avg };
     });
-    const maxQ = Math.max(...hourlyData.map(h => h.questions), 1);
 
-    let barsHtml = hourlyData.map(h => {
-        const height = (h.questions / maxQ) * 100;
-        const bg = h.questions > 0 ? 'bg-brand-500 hover:bg-brand-400' : 'bg-gray-700';
-        const displayHeight = h.questions > 0 ? Math.max(height, 5) : 2;
-        return `
-            <div class="flex-1 flex flex-col items-center group relative cursor-crosshair">
-                <div class="w-full rounded-t transition-all ${bg}" style="height: ${displayHeight}%;"></div>
-                ${h.questions > 0 ? `<div class="absolute bottom-full mb-2 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap text-white">${h.questions} Qs</div>` : ''}
-            </div>
-        `;
-    }).join('');
-
-    return `
-    <div class="bg-gray-800/60 rounded-2xl p-6 border border-gray-700">
-        <h2 class="text-lg font-semibold text-gray-200 mb-4 flex items-center gap-2">
-            🕒 Today's Activity by Hour
-        </h2>
-        <div class="flex items-end gap-1 h-24 mb-2 border-b border-gray-700 pb-1">
-            ${barsHtml}
-        </div>
-        <div class="flex justify-between text-xs text-gray-500">
-            <span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>11pm</span>
-        </div>
-    </div>`;
-}
-
-function renderRankSimulations(state) {
-    const rankConfigs = state.rankSimConfigs || [];
-    const recentResults = [...state.testResults].sort((a,b) => b.timestamp - a.timestamp).slice(0, 10);
-
-    const processedRankSims = rankConfigs.map(config => {
+    // Rank Simulations
+    const processedRankSims = rankSimConfigs.map(config => {
         const testsWithRank = recentResults.filter(r => r.totalQuestions > 0).map(r => ({
              ...r, sim: simulateRank(config, r.correctAnswers, r.wrongAnswers, r.totalQuestions)
         }));
@@ -267,128 +118,225 @@ function renderRankSimulations(state) {
         return { config, testsWithRank, latest, best };
     }).filter(s => s !== null);
 
-    let html = `<div class="bg-gray-800/60 rounded-xl p-6 border border-gray-700 mb-8 relative">
-        <div class="flex items-center justify-between mb-4">
-            <h3 class="text-lg font-semibold text-gray-200 flex items-center gap-2">🏅 Preparedness & Rank Trend</h3>
-            <button id="open-rank-editor-btn" class="px-3 py-1.5 bg-gray-700 text-gray-300 rounded-lg text-sm hover:bg-gray-600 transition-colors">
-                ⚙️ Edit Rank Data
-            </button>
-        </div>`;
+    // Hourly Data Formatting
+    const hourlyData = Array.from({ length: 24 }, (_, i) => {
+        const hStat = todayStats.hourlyStats.find(h => h.hour === i);
+        return { hour: i, questions: hStat ? hStat.questionsAnswered : 0 };
+    });
+    const maxQ = Math.max(...hourlyData.map(h => h.questions), 1);
 
-    if (processedRankSims.length === 0) {
-        html += `<p class="text-gray-500 text-sm">Take a quiz to see rank projections.</p></div>`;
-        return html;
-    }
+    // --- Dynamic Render ---
+    dashContainer.innerHTML = `
+      <div class="max-w-6xl mx-auto p-6 animate-fade-in">
+        <div class="mb-8">
+            <h1 class="text-3xl font-bold mb-2">📊 Dashboard</h1>
+            <p class="opacity-70">Your learning analytics at a glance</p>
+        </div>
 
-    processedRankSims.forEach(simData => {
-        const config = simData.config;
-        const sim = simData.latest.sim;
+        <!-- Today's Summary -->
+        <div class="glass-card card-shade-1 mb-8">
+          <h2 class="text-lg font-semibold mb-4 opacity-90">Today's Summary</h2>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="text-center">
+              <p class="text-3xl font-bold">${todayStats.questionsAnswered}</p>
+              <p class="text-xs mt-1 opacity-70">Questions Answered</p>
+            </div>
+            <div class="text-center">
+              <p class="text-3xl font-bold">${todayStats.correctAnswers}</p>
+              <p class="text-xs mt-1 opacity-70">Correct Answers</p>
+            </div>
+            <div class="text-center">
+              <p class="text-3xl font-bold">${todayStats.accuracy.toFixed(1)}%</p>
+              <p class="text-xs mt-1 opacity-70">Accuracy</p>
+            </div>
+            <div class="text-center">
+              <p class="text-3xl font-bold">${Math.round(todayStats.timeSpentSeconds / 60)}m</p>
+              <p class="text-xs mt-1 opacity-70">Time Spent</p>
+            </div>
+          </div>
+        </div>
 
-        html += `
-        <div class="mb-6 last:mb-0 border border-gray-700 rounded-xl p-4 bg-gray-900/30">
-            <div class="flex justify-between items-center mb-3">
-                <p class="text-sm font-semibold text-brand-400">${escapeHTML(config.examName)}</p>
-                <span class="text-xs bg-gray-800 px-2 py-1 rounded text-gray-400">Total: ${config.maxMarks} Marks</span>
+        <!-- Overall Stats -->
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+          <div class="glass-card card-shade-2 text-center" style="padding: 16px;">
+            <p class="text-xl font-bold">${totalTests}</p>
+            <p class="text-xs opacity-70 mt-1">Tests Taken</p>
+          </div>
+          <div class="glass-card card-shade-2 text-center" style="padding: 16px;">
+            <p class="text-xl font-bold">${avgAccuracy.toFixed(1)}%</p>
+            <p class="text-xs opacity-70 mt-1">Avg Accuracy</p>
+          </div>
+          <div class="glass-card card-shade-2 text-center" style="padding: 16px;">
+            <p class="text-xl font-bold">${totalQuestionsAnswered}</p>
+            <p class="text-xs opacity-70 mt-1">Questions Done</p>
+          </div>
+          <div class="glass-card card-shade-2 text-center" style="padding: 16px;">
+            <p class="text-xl font-bold">${totalTimeMinutes}m</p>
+            <p class="text-xs opacity-70 mt-1">Total Time</p>
+          </div>
+          <div class="glass-card card-shade-2 text-center" style="padding: 16px;">
+            <p class="text-xl font-bold">${state.streakDays || 0}</p>
+            <p class="text-xs opacity-70 mt-1">Day Streak 🔥</p>
+          </div>
+          <div class="glass-card card-shade-2 text-center" style="padding: 16px;">
+            <p class="text-xl font-bold">${state.longestStreak || 0}</p>
+            <p class="text-xs opacity-70 mt-1">Best Streak</p>
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-6 mb-8">
+          <!-- SR Status -->
+          <div class="glass-card card-shade-3">
+            <h3 class="text-lg font-semibold mb-4 opacity-90">🧠 Spaced Repetition Status</h3>
+            <div class="space-y-4 mt-2">
+              ${['mastered', 'review', 'learning', 'new'].map(level => {
+                  const count = ankiStats[level] || 0;
+                  const pct = ankiCards.length > 0 ? (count / ankiCards.length) * 100 : 0;
+                  const colors = { mastered: 'bg-success-500', review: 'bg-brand-500', learning: 'bg-warning-500', new: 'bg-gray-500' };
+                  return `
+                  <div class="flex items-center justify-between">
+                    <span class="text-sm opacity-80 capitalize w-20">${level}</span>
+                    <div class="flex-1 mx-4 bg-gray-900/30 rounded-full h-2.5 shadow-inner">
+                      <div class="${colors[level]} h-2.5 rounded-full" style="width: ${pct}%"></div>
+                    </div>
+                    <span class="text-sm font-medium w-8 text-right opacity-90">${count}</span>
+                  </div>`;
+              }).join('')}
+            </div>
+          </div>
+
+          <!-- Subject Performance -->
+          <div class="glass-card card-shade-4">
+            <h3 class="text-lg font-semibold mb-4 opacity-90">📚 Subject Performance</h3>
+            ${subjectPerformance.length === 0 ? '<p class="opacity-60 text-sm">No subjects loaded yet.</p>' : `
+            <div class="space-y-3 max-h-48 overflow-y-auto pr-2">
+              ${subjectPerformance.map(sp => `
+                <div class="bg-gray-900/30 rounded-lg p-3 border border-white/5">
+                  <div class="flex justify-between items-center mb-1">
+                    <span class="text-sm font-medium opacity-90 truncate flex-1">${window.escapeHTML(sp.name)}</span>
+                    <span class="text-xs opacity-60 ml-2">${sp.tests} tests</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <div class="flex-1 bg-gray-900/40 rounded-full h-2">
+                      <div class="h-2 rounded-full ${sp.avgAccuracy >= 70 ? 'bg-success-500' : sp.avgAccuracy >= 50 ? 'bg-warning-500' : 'bg-danger-500'}" style="width: ${sp.avgAccuracy}%"></div>
+                    </div>
+                    <span class="text-xs w-10 text-right opacity-80">${sp.avgAccuracy.toFixed(0)}%</span>
+                  </div>
+                </div>
+              `).join('')}
+            </div>`}
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-6 mb-8">
+            <!-- Hourly Activity -->
+            <div class="glass-card">
+                <h3 class="text-lg font-semibold mb-4 opacity-90">🕒 Today's Activity by Hour</h3>
+                <div class="flex items-end gap-1 h-32 mb-2 border-b border-white/10 pb-1">
+                    ${hourlyData.map(h => `
+                        <div class="flex-1 flex flex-col items-center group relative cursor-crosshair">
+                            <div class="w-full rounded-t transition-all ${h.questions > 0 ? 'bg-brand-500 hover:bg-brand-400 shadow-[0_0_8px_rgba(139,92,246,0.6)]' : 'bg-gray-700/30'}"
+                                 style="height: ${h.questions > 0 ? Math.max((h.questions / maxQ) * 100, 5) : 2}%;"></div>
+                            ${h.questions > 0 ? `<div class="absolute bottom-full mb-2 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap text-white">${h.questions} Qs</div>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="flex justify-between text-xs opacity-50">
+                    <span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>11pm</span>
+                </div>
             </div>
 
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                <div class="bg-gray-800 rounded-lg p-3 text-center border border-gray-700">
-                    <p class="text-xs text-gray-400 mb-1">Latest Rank</p>
-                    <p class="text-xl font-bold text-brand-400">${sim.estimatedRank.toLocaleString()}</p>
-                    <p class="text-[10px] text-gray-500">${sim.projectedMarks} Marks</p>
+            <!-- Rank Simulation Preparedness -->
+            <div class="glass-card relative">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold opacity-90">🏅 Rank Preparedness</h3>
+                    <button id="open-rank-editor-btn" class="px-3 py-1.5 bg-gray-900/50 rounded-lg text-xs opacity-80 hover:opacity-100 transition-colors border border-white/10">
+                        ⚙️ Edit Config
+                    </button>
                 </div>
-                <div class="bg-gray-800 rounded-lg p-3 text-center border border-gray-700">
-                    <p class="text-xs text-gray-400 mb-1">Best Rank</p>
-                    <p class="text-xl font-bold text-success-500">${simData.best.sim.estimatedRank.toLocaleString()}</p>
-                    <p class="text-[10px] text-gray-500">${simData.best.sim.projectedMarks} Marks</p>
-                </div>
-                <div class="bg-gray-800 rounded-lg p-3 text-center border border-gray-700">
-                    <p class="text-xs text-gray-400 mb-1">Percentile</p>
-                    <p class="text-xl font-bold text-purple-400">${sim.percentile}%</p>
-                </div>
-                <div class="bg-gray-800 rounded-lg p-3 text-center border border-gray-700">
-                    <p class="text-xs text-gray-400 mb-1">Score Breakdown</p>
-                    <p class="text-sm font-bold text-gray-200 mt-1">
-                        <span class="text-success-500">${simData.latest.correctAnswers}✓</span>
-                        <span class="text-danger-500">${simData.latest.wrongAnswers}✗</span>
-                    </p>
-                </div>
+                ${processedRankSims.length === 0 ? '<p class="opacity-60 text-sm mt-4">Take a test to see rank projections.</p>' : `
+                <div class="space-y-4 max-h-48 overflow-y-auto pr-2">
+                    ${processedRankSims.map(simData => `
+                    <div class="border border-white/10 rounded-xl p-4 bg-gray-900/30">
+                        <div class="flex justify-between items-center mb-3">
+                            <p class="text-sm font-semibold opacity-90">${window.escapeHTML(simData.config.examName)}</p>
+                            <span class="text-xs bg-black/40 px-2 py-1 rounded opacity-70">Max: ${simData.config.maxMarks}</span>
+                        </div>
+                        <div class="grid grid-cols-3 gap-3">
+                            <div class="bg-black/20 rounded-lg p-2 text-center">
+                                <p class="text-xs opacity-60 mb-1">Latest Rank</p>
+                                <p class="text-lg font-bold text-brand-400">${simData.latest.sim.estimatedRank.toLocaleString()}</p>
+                            </div>
+                            <div class="bg-black/20 rounded-lg p-2 text-center">
+                                <p class="text-xs opacity-60 mb-1">Best Rank</p>
+                                <p class="text-lg font-bold text-success-500">${simData.best.sim.estimatedRank.toLocaleString()}</p>
+                            </div>
+                            <div class="bg-black/20 rounded-lg p-2 text-center">
+                                <p class="text-xs opacity-60 mb-1">Percentile</p>
+                                <p class="text-lg font-bold text-purple-400">${simData.latest.sim.percentile}%</p>
+                            </div>
+                        </div>
+                    </div>
+                    `).join('')}
+                </div>`}
             </div>
+        </div>
 
-            ${sim.nextBand && sim.marksToNextBand > 0 ? `
-            <div class="bg-brand-500/10 border border-brand-500/30 rounded-lg p-3 text-sm">
-                <p class="font-semibold text-brand-400 mb-1">+${sim.marksToNextBand} marks to reach AIR${sim.nextBand.label}</p>
-                <p class="text-xs text-gray-400">≈ ${Math.ceil(sim.marksToNextBand / config.marksPerCorrect)} more correct answers needed.</p>
-            </div>` : ''}
-        </div>`;
-    });
+        <!-- Recent Results -->
+        <div class="glass-card">
+          <h3 class="text-lg font-semibold mb-4 opacity-90">📝 Recent Test Results</h3>
+          ${recentResults.length === 0 ? '<p class="opacity-60 text-sm">No tests taken yet.</p>' : `
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm text-left">
+              <thead>
+                <tr class="border-b border-white/10 opacity-70">
+                  <th class="py-3 px-2 font-medium">Date</th>
+                  <th class="py-3 px-2 font-medium">Subject</th>
+                  <th class="py-3 px-2 font-medium">Mode</th>
+                  <th class="py-3 px-2 font-medium text-center">Q's</th>
+                  <th class="py-3 px-2 font-medium text-center">Score</th>
+                  <th class="py-3 px-2 font-medium text-center">Accuracy</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${recentResults.map((r, i) => `
+                  <tr class="border-b border-white/5 ${i % 2 === 0 ? '' : 'bg-black/10'}">
+                    <td class="py-2.5 px-2 opacity-90">${new Date(r.timestamp).toLocaleDateString()}</td>
+                    <td class="py-2.5 px-2 opacity-90 truncate max-w-[150px]">${window.escapeHTML(r.subjectName)}</td>
+                    <td class="py-2.5 px-2">
+                      <span class="px-2 py-0.5 rounded-full text-xs font-medium border border-white/10 bg-black/20 opacity-90">${window.escapeHTML(r.mode)}</span>
+                    </td>
+                    <td class="py-2.5 px-2 text-center opacity-90">${r.totalQuestions}</td>
+                    <td class="py-2.5 px-2 text-center opacity-90">${r.score || r.correctAnswers}</td>
+                    <td class="py-2.5 px-2 text-center font-medium ${r.accuracy >= 70 ? 'text-success-500' : r.accuracy >= 50 ? 'text-warning-500' : 'text-danger-500'}">
+                      ${r.accuracy.toFixed(1)}%
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>`}
+        </div>
+      </div>
+    `;
 
-    html += `</div>`;
-    return html;
-}
-
-function renderRecentResults(state) {
-    const recentResults = [...state.testResults].sort((a,b) => b.timestamp - a.timestamp).slice(0, 10);
-
-    let html = `<div class="bg-gray-800/60 rounded-xl p-6 border border-gray-700">
-        <h3 class="text-lg font-semibold text-gray-200 mb-4">📝 Recent Test Results</h3>`;
-
-    if (recentResults.length === 0) {
-        html += '<p class="text-gray-500 text-sm">No tests taken yet. Upload a CSV and start a quiz!</p></div>';
-        return html;
-    }
-
-    html += `<div class="overflow-x-auto">
-        <table class="w-full text-sm text-left">
-            <thead>
-            <tr class="border-b border-gray-700">
-                <th class="py-3 px-2 text-gray-400 font-medium">Date</th>
-                <th class="py-3 px-2 text-gray-400 font-medium">Subject</th>
-                <th class="py-3 px-2 text-gray-400 font-medium">Mode</th>
-                <th class="py-3 px-2 text-gray-400 font-medium text-center">Q's</th>
-                <th class="py-3 px-2 text-gray-400 font-medium text-center">Score</th>
-                <th class="py-3 px-2 text-gray-400 font-medium text-center">Accuracy</th>
-            </tr>
-            </thead>
-            <tbody>`;
-
-    recentResults.forEach((r, i) => {
-        const accClass = r.accuracy >= 70 ? 'text-success-500' : r.accuracy >= 50 ? 'text-warning-500' : 'text-danger-500';
-        const modeClass = r.mode === 'learn' ? 'bg-purple-500/20 text-purple-400' : 'bg-brand-500/20 text-brand-400';
-        html += `
-        <tr class="border-b border-gray-700/50 ${i % 2 !== 0 ? 'bg-gray-800/30' : ''}">
-            <td class="py-2.5 px-2 text-gray-300">${new Date(r.timestamp).toLocaleDateString()}</td>
-            <td class="py-2.5 px-2 text-gray-300 truncate max-w-[150px]">${escapeHTML(r.subjectName)}</td>
-            <td class="py-2.5 px-2"><span class="px-2 py-0.5 rounded-full text-xs uppercase ${modeClass}">${escapeHTML(r.mode || 'test')}</span></td>
-            <td class="py-2.5 px-2 text-center text-gray-300">${r.totalQuestions}</td>
-            <td class="py-2.5 px-2 text-center text-gray-300">${r.score || r.correctAnswers}</td>
-            <td class="py-2.5 px-2 text-center font-medium ${accClass}">${r.accuracy.toFixed(1)}%</td>
-        </tr>`;
-    });
-
-    html += `</tbody></table></div></div>`;
-    return html;
+    attachRankEditorListeners();
 }
 
 // ---------------------------------------------------------
 // Rank Configuration Editor Modal Logic
 // ---------------------------------------------------------
-
 let localRankConfigs = [];
 
 function attachRankEditorListeners() {
     const btn = document.getElementById('open-rank-editor-btn');
-    if (btn) {
-        btn.addEventListener('click', openRankEditor);
-    }
+    if (btn) btn.addEventListener('click', openRankEditor);
 }
 
 function openRankEditor() {
     const state = window.AppState.get();
-    // Deep clone to avoid mutating state directly before saving
     localRankConfigs = JSON.parse(JSON.stringify(state.rankSimConfigs || []));
 
-    // Ensure at least one config exists to edit
     if (localRankConfigs.length === 0) {
         localRankConfigs.push({
             examName: "NEET PG (Default)",
@@ -404,7 +352,6 @@ function openRankEditor() {
             bands: []
         });
     }
-
     renderRankEditor();
 }
 
@@ -414,7 +361,6 @@ function closeRankEditor() {
 }
 
 function saveRankEditor() {
-    // Clean up derived values before saving
     const cleaned = localRankConfigs.map(c => ({
         ...c,
         maxMarks: c.totalQuestions * c.marksPerCorrect,
@@ -423,7 +369,7 @@ function saveRankEditor() {
 
     window.AppState.update({ rankSimConfigs: cleaned });
     closeRankEditor();
-    initDashboard(); // Re-render dashboard with new stats
+    initDashboard();
 }
 
 function renderRankEditor() {
@@ -436,42 +382,42 @@ function renderRankEditor() {
         document.body.appendChild(modal);
     }
 
-    const config = localRankConfigs[0]; // For simplicity in Vanilla JS, edit the first config or map them. We'll map the first.
+    const config = localRankConfigs[0];
 
     modal.innerHTML = `
-    <div class="modal glass-modal w-full max-w-2xl text-left flex flex-col max-h-[90vh]">
-        <div class="flex justify-between items-center border-b border-gray-700 pb-4 mb-4">
-            <h2 class="text-xl font-bold text-gray-100">Edit Rank Simulation Data</h2>
+    <div class="glass-modal w-full max-w-2xl text-left flex flex-col max-h-[90vh]">
+        <div class="flex justify-between items-center border-b border-white/10 pb-4 mb-4">
+            <h2 class="text-xl font-bold">Edit Rank Simulation Data</h2>
             <button id="close-rank-modal-x" class="text-gray-400 hover:text-white bg-transparent border-none cursor-pointer">✕</button>
         </div>
 
         <div class="overflow-y-auto flex-1 pr-2">
-            <div class="bg-gray-800/50 rounded-xl p-4 border border-gray-700 mb-6">
-                <h3 class="text-sm font-semibold text-gray-300 mb-3">Exam Settings</h3>
+            <div class="bg-black/20 rounded-xl p-4 border border-white/10 mb-6">
+                <h3 class="text-sm font-semibold mb-3 opacity-90">Exam Settings</h3>
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
-                        <label class="text-xs text-gray-400 block mb-1">Exam Name</label>
-                        <input type="text" id="re-exam-name" value="${escapeHTML(config.examName)}" class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-1.5 text-sm text-white">
+                        <label class="text-xs opacity-70 block mb-1">Exam Name</label>
+                        <input type="text" id="re-exam-name" value="${window.escapeHTML(config.examName)}" class="w-full bg-black/40 border border-white/10 rounded px-3 py-1.5 text-sm text-white focus:border-brand-500 outline-none transition-colors">
                     </div>
                     <div>
-                        <label class="text-xs text-gray-400 block mb-1">Total Qs</label>
-                        <input type="number" id="re-total-qs" value="${config.totalQuestions}" class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-1.5 text-sm text-white">
+                        <label class="text-xs opacity-70 block mb-1">Total Qs</label>
+                        <input type="number" id="re-total-qs" value="${config.totalQuestions}" class="w-full bg-black/40 border border-white/10 rounded px-3 py-1.5 text-sm text-white focus:border-brand-500 outline-none transition-colors">
                     </div>
                     <div>
-                        <label class="text-xs text-gray-400 block mb-1">Marks (+)</label>
-                        <input type="number" id="re-marks-correct" value="${config.marksPerCorrect}" class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-1.5 text-sm text-white">
+                        <label class="text-xs opacity-70 block mb-1">Marks (+)</label>
+                        <input type="number" id="re-marks-correct" value="${config.marksPerCorrect}" class="w-full bg-black/40 border border-white/10 rounded px-3 py-1.5 text-sm text-white focus:border-brand-500 outline-none transition-colors">
                     </div>
                     <div>
-                        <label class="text-xs text-gray-400 block mb-1">Negative (-)</label>
-                        <input type="number" id="re-negative" value="${config.negativePerWrong}" class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-1.5 text-sm text-white">
+                        <label class="text-xs opacity-70 block mb-1">Negative (-)</label>
+                        <input type="number" id="re-negative" value="${config.negativePerWrong}" class="w-full bg-black/40 border border-white/10 rounded px-3 py-1.5 text-sm text-white focus:border-brand-500 outline-none transition-colors">
                     </div>
                 </div>
             </div>
 
-            <div class="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
+            <div class="bg-black/20 rounded-xl p-4 border border-white/10">
                 <div class="flex justify-between items-center mb-4">
-                    <h3 class="text-sm font-semibold text-gray-300">Marks → Rank Cutoffs</h3>
-                    <button id="re-add-row-btn" class="px-3 py-1 bg-brand-600/20 text-brand-400 rounded hover:bg-brand-600/40 text-xs border-none cursor-pointer">
+                    <h3 class="text-sm font-semibold opacity-90">Marks → Rank Cutoffs</h3>
+                    <button id="re-add-row-btn" class="px-3 py-1 bg-brand-600/20 text-brand-400 rounded hover:bg-brand-600/40 text-xs border-none cursor-pointer transition-colors">
                         + Add Row
                     </button>
                 </div>
@@ -479,25 +425,23 @@ function renderRankEditor() {
                 <div id="re-data-points-container" class="space-y-2">
                     ${config.dataPoints.map((dp, idx) => `
                         <div class="flex gap-3 items-center">
-                            <input type="number" data-idx="${idx}" data-field="marks" value="${dp.marks}" class="re-dp-input flex-1 bg-gray-900 border border-gray-600 rounded px-3 py-1.5 text-sm text-white" placeholder="Marks">
-                            <input type="number" data-idx="${idx}" data-field="rank" value="${dp.rank}" class="re-dp-input flex-1 bg-gray-900 border border-gray-600 rounded px-3 py-1.5 text-sm text-white" placeholder="Rank">
-                            <button data-idx="${idx}" class="re-dp-del p-2 text-gray-500 hover:text-danger-500 bg-transparent border-none cursor-pointer">🗑️</button>
+                            <input type="number" data-idx="${idx}" data-field="marks" value="${dp.marks}" class="re-dp-input flex-1 bg-black/40 border border-white/10 rounded px-3 py-1.5 text-sm text-white focus:border-brand-500 outline-none transition-colors" placeholder="Marks">
+                            <input type="number" data-idx="${idx}" data-field="rank" value="${dp.rank}" class="re-dp-input flex-1 bg-black/40 border border-white/10 rounded px-3 py-1.5 text-sm text-white focus:border-brand-500 outline-none transition-colors" placeholder="Rank">
+                            <button data-idx="${idx}" class="re-dp-del p-2 text-gray-400 hover:text-danger-500 bg-transparent border-none cursor-pointer transition-colors">🗑️</button>
                         </div>
                     `).join('')}
                 </div>
             </div>
         </div>
 
-        <div class="border-t border-gray-700 pt-4 mt-4 flex justify-end gap-3">
-            <button id="close-rank-modal-btn" class="px-4 py-2 text-gray-400 hover:text-white bg-transparent border-none cursor-pointer text-sm">Cancel</button>
-            <button id="save-rank-modal-btn" class="px-6 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-lg font-medium cursor-pointer border-none text-sm">Save Configuration</button>
+        <div class="border-t border-white/10 pt-4 mt-4 flex justify-end gap-3">
+            <button id="close-rank-modal-btn" class="px-4 py-2 text-gray-400 hover:text-white bg-transparent border-none cursor-pointer text-sm transition-colors">Cancel</button>
+            <button id="save-rank-modal-btn" class="px-6 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-lg font-medium cursor-pointer border-none text-sm shadow-lg transition-colors">Save Configuration</button>
         </div>
     </div>
     `;
 
-    modal.style.display = 'flex';
-
-    // Bind local state update listeners
+    // Local state wiring
     document.getElementById('re-exam-name').oninput = (e) => localRankConfigs[0].examName = e.target.value;
     document.getElementById('re-total-qs').oninput = (e) => localRankConfigs[0].totalQuestions = parseInt(e.target.value) || 200;
     document.getElementById('re-marks-correct').oninput = (e) => localRankConfigs[0].marksPerCorrect = parseFloat(e.target.value) || 4;
@@ -529,24 +473,9 @@ function renderRankEditor() {
     document.getElementById('save-rank-modal-btn').onclick = saveRankEditor;
 }
 
-// ---------------------------------------------------------
-// Init Listener
-// ---------------------------------------------------------
-
+// Bind to event lifecycle
 document.addEventListener('stateUpdated', initDashboard);
-document.addEventListener('DOMContentLoaded', async () => {
-    if (window.AppState && window.AppState.fetch) {
-        await window.AppState.fetch();
-    }
-    initDashboard();
-
-    // Re-render when dashboard nav is clicked to ensure fresh data
-    const navBtns = document.querySelectorAll('.nav-btn');
-    navBtns.forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            if (e.target.getAttribute('data-target') === 'dashboard-view') {
-                initDashboard();
-            }
-        });
-    });
+document.addEventListener('DOMContentLoaded', () => {
+    if (window.AppState && window.AppState.fetch) window.AppState.fetch().then(initDashboard);
+    else initDashboard();
 });

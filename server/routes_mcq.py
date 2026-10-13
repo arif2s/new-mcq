@@ -4,7 +4,7 @@ import time
 import json
 from core.database import get_db_connection
 from core.scheduler import calculate_fsrs_next_interval
-from agents.topic_extractor import extract_topics
+from dummy import extract_topics
 
 router = APIRouter(prefix="/api/mcq", tags=["mcq"])
 

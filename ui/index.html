@@ -9,55 +9,106 @@
     <!-- Safe Markdown and HTML Sanitization for LLM/CSV Outputs -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
-  </head>
+  <script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        brand: { 300: "#8b5cf6", 400: "#7c3aed", 500: "#6d28d9" },
+        success: { 400: "#4ade80", 500: "#22c55e" },
+        warning: { 200: "#fef08a", 400: "#facc15", 500: "#eab308" },
+        danger: { 400: "#f87171", 500: "#ef4444" }
+      }
+    }
+  }
+}
+</script>
+</head>
   <body class="light-theme">
     <div class="background-animation"></div>
     <div class="container glass-panel">
       <!-- LEFT RAIL -->
-      <nav class="left-rail">
-        <div class="app-header">
-          <div class="app-logo">Medisearch</div>
-          <div class="flex gap-2">
-            <button id="open-help-btn" class="icon-btn" aria-label="Help & Documentation">
+      <nav class="left-rail glass-panel">
+        <div class="app-header flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <button id="sidebar-toggle" class="icon-btn" aria-label="Toggle Sidebar">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+            </button>
+            <div class="app-logo sidebar-text">Medisearch</div>
+          </div>
+          <div class="flex gap-1 sidebar-text">
+            <button id="open-help-btn" class="icon-btn" aria-label="Help">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
             </button>
             <button id="theme-toggle" class="icon-btn" aria-label="Toggle Theme">
-              <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+              <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line></svg>
               <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
             </button>
           </div>
         </div>
 
-        <div class="search-container">
+        <div class="search-container sidebar-text">
             <input type="text" id="global-search" class="glass-input" placeholder="Search knowledge..." />
         </div>
 
-        <h3 class="nav-heading">Navigation</h3>
+        <h3 class="nav-heading sidebar-text">Navigation</h3>
         <ul class="nav-list">
-          <li><button class="nav-btn active" data-target="dashboard-view">Dashboard</button></li>
-          <li><button class="nav-btn" data-target="home-view">MCQ Extractor</button></li>
-          <li><button class="nav-btn" data-target="quiz-view">Quiz Engine</button></li>
-          <li><button class="nav-btn" data-target="knowledge-hub-view">Knowledge Hub</button></li>
-          <li><button class="nav-btn" data-target="rag-vault-view">RAG Vault</button></li>
-          <li><button class="nav-btn" data-target="habit-tracker-view">Habit Tracker</button></li>
-          <li><button class="nav-btn" data-target="expertise-view">Expertise Map</button></li>
-          <li><button class="nav-btn" data-target="queue-view">Processing Queue</button></li>
-          <li><button class="nav-btn" data-target="settings-view">Settings</button></li>
+          <li>
+            <button class="nav-btn active" data-target="dashboard-view" title="Dashboard">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+              <span class="sidebar-text">Dashboard</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-btn" data-target="home-view" title="MCQ Extractor">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"></polyline><line x1="9" y1="20" x2="15" y2="20"></line><line x1="12" y1="4" x2="12" y2="20"></line></svg>
+              <span class="sidebar-text">MCQ Extractor</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-btn" data-target="quiz-view" title="Quiz Engine">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+              <span class="sidebar-text">Quiz Engine</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-btn" data-target="knowledge-hub-view" title="Knowledge Hub">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+              <span class="sidebar-text">Knowledge Hub</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-btn" data-target="rag-vault-view" title="RAG Vault">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+              <span class="sidebar-text">RAG Vault</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-btn" data-target="habit-tracker-view" title="Habit Tracker">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+              <span class="sidebar-text">Habit Tracker</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-btn" data-target="expertise-view" title="Expertise Map">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10H12V2z"></path><path d="M12 12 2.1 12A10 10 0 0 1 12 2.1z"></path></svg>
+              <span class="sidebar-text">Expertise Map</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-btn" data-target="queue-view" title="Processing Queue">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+              <span class="sidebar-text">Processing Queue</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-btn" data-target="settings-view" title="Settings">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-1.82-.33l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+              <span class="sidebar-text">Settings</span>
+            </button>
+          </li>
         </ul>
-
-        <h3 class="nav-heading">Refinement</h3>
-        <div class="checkbox-group">
-          <label class="custom-checkbox">
-            <input type="checkbox" id="use-zim-refinement" />
-            <span class="checkmark"></span>
-            ZIM Refinement
-          </label>
-          <label class="custom-checkbox">
-            <input type="checkbox" id="use-tantivy-refinement" />
-            <span class="checkmark"></span>
-            Tantivy Refinement
-          </label>
-        </div>
       </nav>
 
       <!-- CENTER STAGE -->
@@ -65,42 +116,7 @@
 
         <!-- DASHBOARD VIEW -->
         <section id="dashboard-view" class="view-section active fade-enter-active">
-          <header class="view-header">
-            <h2>Dashboard</h2>
-            <p class="subtitle">Overview of your learning progress and statistics.</p>
-          </header>
-
-          <div class="grid-2col mb-20">
-            <div class="card glass-card">
-              <h3>Daily Targets</h3>
-              <div class="mt-15">
-                <div class="flex justify-between text-sm mb-5"><span>Questions Answered</span> <span id="ds-q-text">0 / 50</span></div>
-                <div class="progress-bar-bg"><div id="ds-q-prog" class="progress-bar-fill bg-brand-500" style="width: 0%"></div></div>
-              </div>
-              <div class="mt-15">
-                <div class="flex justify-between text-sm mb-5"><span>Correct Answers</span> <span id="ds-c-text">0 / 40</span></div>
-                <div class="progress-bar-bg"><div id="ds-c-prog" class="progress-bar-fill bg-success-500" style="width: 0%"></div></div>
-              </div>
-            </div>
-
-            <div class="card glass-card">
-              <h3>Lifetime Stats</h3>
-              <div class="grid-2col mt-15">
-                <div class="stat-box">
-                  <div class="stat-val" id="ds-accuracy">0%</div>
-                  <div class="stat-label">Avg Accuracy</div>
-                </div>
-                <div class="stat-box">
-                  <div class="stat-val" id="ds-tests">0</div>
-                  <div class="stat-label">Tests Taken</div>
-                </div>
-                <div class="stat-box">
-                  <div class="stat-val" id="ds-time">0m</div>
-                  <div class="stat-label">Time Spent</div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <!-- Populated dynamically by dashboard.js for true TSX fidelity -->
         </section>
 
         <!-- MCQ EXTRACTOR VIEW -->
@@ -610,7 +626,26 @@
             <!-- ZIM HTML will go here -->
           </div>
         </div>
-      </main>
+            </main>
+
+      <!-- RIGHT INSPECTOR (New Contextual Sidebar) -->
+      <aside class="right-inspector glass-panel collapsed" id="right-sidebar" style="width: 0; padding: 0; border: none; overflow: hidden; transition: all 0.3s ease;">
+        <div class="flex justify-between items-center mb-4 border-b border-white/10 pb-3" style="min-width: 300px;">
+           <h3 class="font-bold text-brand-400 flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+              Clinical Inspector
+           </h3>
+           <button id="close-inspector-btn" class="text-gray-400 hover:text-white transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+           </button>
+        </div>
+        <div id="inspector-content" class="overflow-y-auto flex-1 pr-2" style="min-width: 300px;">
+           <div class="text-center py-12 opacity-50">
+               <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto mb-4"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+               <p class="text-sm">Start a quiz to view live RAG synthesis and references for each topic.</p>
+           </div>
+        </div>
+      </aside>
 
       <!-- RIGHT INSPECTOR -->
       <aside class="right-inspector">

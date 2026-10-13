@@ -1,149 +1,206 @@
 // ui/js/quiz.js
 
+let quizConfig = {
+    subject: 'all',
+    topic: 'all',
+    keyword: '',
+    count: 10,
+    timeLimit: 0,
+    timeout: 5,
+    mode: 'learn', // 'test', 'learn', 'target'
+    spacedRepetition: true
+};
+
 let currentQuiz = null;
-let currentQuestionIndex = 0;
+let currentIndex = 0;
 let quizAnswers = {};
-let quizTimer = null;
-let questionTimeoutTimer = null;
-let autoAdvanceTimer = null;
-let quizStartTime = null;
-let questionStartTime = null;
-
+let timers = { overall: null, question: null, autoAdvance: null };
+let times = { start: null, questionStart: null };
 let isPaused = false;
-let correctCount = 0;
-let wrongCount = 0;
+let scores = { correct: 0, wrong: 0 };
 
-function escapeHTML(str) {
-    if (typeof str !== 'string') return '';
-    return str.replace(/[&<>'"]/g, tag => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-    }[tag] || tag));
-}
 
-async function loadSubjects() {
+// --- Initialization & Setup UI ---
+
+async function initQuizSetup() {
+    const container = document.getElementById('quiz-view');
+    if (!container) return;
+
+    // Fetch filters
+    let subjects = [], topics = [];
     try {
-        const res = await fetch('/api/mcq/subjects');
-        const subjects = await res.json();
-        const sel = document.getElementById('quiz-subject-select');
-        if(sel) {
-            sel.innerHTML = '<option value="all">All Subjects</option>';
-            subjects.forEach(s => {
-                sel.innerHTML += `<option value="${escapeHTML(s.subject)}">${escapeHTML(s.subject)} (${s.count})</option>`;
+        const [subRes, topRes] = await Promise.all([ fetch('/api/mcq/subjects'), fetch('/api/mcq/topics') ]);
+        if (subRes.ok) subjects = await subRes.json();
+        if (topRes.ok) topics = await topRes.json();
+    } catch (e) { console.error("Failed to load filters", e); }
+
+    container.innerHTML = `
+        <div class="max-w-5xl mx-auto p-6 animate-fade-in">
+            <div class="flex items-center justify-between mb-8">
+                <div>
+                    <h1 class="text-3xl font-bold mb-2 flex items-center gap-3">⚙️ Quiz Configuration</h1>
+                    <p class="opacity-70">Customize your learning session and filter knowledge bases.</p>
+                </div>
+                <button id="toggle-inspector-btn" class="px-4 py-2 bg-gray-800 border border-white/10 rounded-xl text-sm hover:bg-gray-700 transition-colors flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+                    Toggle Inspector
+                </button>
+            </div>
+
+            <div class="grid lg:grid-cols-2 gap-6 mb-8">
+                <!-- Source Filters -->
+                <div class="glass-card card-shade-1 p-6">
+                    <h3 class="text-lg font-semibold mb-4 border-b border-white/10 pb-2 flex items-center gap-2">📂 1. Source Filters</h3>
+
+                    <label class="block text-xs opacity-70 mb-1">Subject</label>
+                    <select id="cfg-subject" class="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 text-sm mb-4 outline-none focus:border-brand-500 transition-colors">
+                        <option value="all">All Subjects</option>
+                        ${subjects.map(s => `<option value="${window.escapeHTML(s.subject)}">${window.escapeHTML(s.subject)} (${s.count})</option>`).join('')}
+                    </select>
+
+                    <label class="block text-xs opacity-70 mb-1">Topic</label>
+                    <select id="cfg-topic" class="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 text-sm mb-4 outline-none focus:border-brand-500 transition-colors">
+                        <option value="all">All Topics</option>
+                        ${topics.map(t => `<option value="${window.escapeHTML(t.topic)}">${window.escapeHTML(t.topic)} (${t.count})</option>`).join('')}
+                    </select>
+
+                    <label class="block text-xs opacity-70 mb-1">Keyword Search</label>
+                    <input type="text" id="cfg-keyword" placeholder="e.g., dyspnea, insulin..." class="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-brand-500 transition-colors">
+                </div>
+
+                <!-- Session Rules -->
+                <div class="glass-card card-shade-2 p-6">
+                    <h3 class="text-lg font-semibold mb-4 border-b border-white/10 pb-2 flex items-center gap-2">🕹️ 2. Session Rules</h3>
+
+                    <label class="block text-xs opacity-70 mb-1">Study Mode</label>
+                    <div class="flex gap-2 mb-4">
+                        <button id="mode-test" class="flex-1 py-2 rounded-lg text-sm font-medium border border-white/10 transition-colors ${quizConfig.mode === 'test' ? 'bg-brand-600 text-white' : 'bg-black/40 text-gray-400 hover:bg-black/60'}">📝 Test</button>
+                        <button id="mode-learn" class="flex-1 py-2 rounded-lg text-sm font-medium border border-white/10 transition-colors ${quizConfig.mode === 'learn' ? 'bg-brand-600 text-white' : 'bg-black/40 text-gray-400 hover:bg-black/60'}">📖 Learn</button>
+                        <button id="mode-target" class="flex-1 py-2 rounded-lg text-sm font-medium border border-white/10 transition-colors ${quizConfig.mode === 'target' ? 'bg-purple-600 text-white' : 'bg-black/40 text-gray-400 hover:bg-black/60'}">🎯 Target</button>
+                    </div>
+
+                    <div class="flex items-center justify-between mb-1">
+                        <label class="text-xs opacity-70">Question Count / Target</label>
+                        <span id="cfg-count-val" class="text-xs font-bold text-brand-400">${quizConfig.count}</span>
+                    </div>
+                    <input type="range" id="cfg-count" min="1" max="100" value="${quizConfig.count}" class="w-full mb-4 accent-brand-500">
+
+                    <div class="flex items-center justify-between mb-1">
+                        <label class="text-xs opacity-70">Total Time Limit (Mins)</label>
+                        <span id="cfg-time-val" class="text-xs font-bold text-brand-400">${quizConfig.timeLimit === 0 ? 'Unlimited' : quizConfig.timeLimit}</span>
+                    </div>
+                    <input type="range" id="cfg-time" min="0" max="120" step="5" value="${quizConfig.timeLimit}" class="w-full mb-4 accent-brand-500">
+
+                    <label class="flex items-center gap-2 cursor-pointer group mt-2">
+                        <input type="checkbox" id="cfg-sr" ${quizConfig.spacedRepetition ? 'checked' : ''} class="w-4 h-4 rounded bg-black/40 border-white/10 text-brand-500 accent-brand-500">
+                        <span class="text-sm opacity-80 group-hover:opacity-100 transition-opacity">🧠 Enable Spaced Repetition (FSRS)</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="glass-card card-shade-3 p-6 text-center">
+                <h2 class="text-3xl font-black text-brand-400 mb-2" id="setup-match-count">...</h2>
+                <p class="opacity-60 text-sm mb-6">Matching Questions Available</p>
+                <button id="btn-start-quiz" class="px-10 py-4 bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-xl transition-all shadow-[0_0_20px_rgba(139,92,246,0.4)] hover:scale-105 disabled:opacity-50 disabled:hover:scale-100 disabled:shadow-none w-full md:w-auto text-lg">
+                    🚀 Launch Session
+                </button>
+            </div>
+        </div>
+    `;
+
+    // Bind Setup Events
+    const updateMatchCount = async () => {
+        try {
+            const res = await fetch('/api/mcq/search_count', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    subjects: quizConfig.subject === 'all' ? null : [quizConfig.subject],
+                    topics: quizConfig.topic === 'all' ? null : [quizConfig.topic],
+                    keyword: quizConfig.keyword || null,
+                    count: 0
+                })
             });
-        }
-    } catch(e) {
-        console.error("Failed to load subjects", e);
-    }
-}
+            const data = await res.json();
+            document.getElementById('setup-match-count').textContent = data.count;
+            document.getElementById('btn-start-quiz').disabled = data.count === 0;
 
-async function loadTopics() {
-    try {
-        const res = await fetch('/api/mcq/topics');
-        const topics = await res.json();
-        const sel = document.getElementById('quiz-topic-select');
-        if(sel) {
-            sel.innerHTML = '<option value="all">All Topics</option>';
-            topics.forEach(t => {
-                sel.innerHTML += `<option value="${escapeHTML(t.topic)}">${escapeHTML(t.topic)} (${t.count})</option>`;
-            });
-        }
-    } catch(e) {
-        console.error("Failed to load topics", e);
-    }
-}
-
-let searchDebounceTimeout = null;
-
-async function updateMatchCount() {
-    const subject = document.getElementById('quiz-subject-select').value;
-    const topic = document.getElementById('quiz-topic-select').value;
-    const keyword = document.getElementById('quiz-keyword').value;
-
-    const payload = {
-        subjects: subject === 'all' ? null : [subject],
-        topics: topic === 'all' ? null : [topic],
-        keyword: keyword ? keyword : null,
-        count: 0
+            // Adjust slider max based on availability (unless Target mode)
+            const countSlider = document.getElementById('cfg-count');
+            if (quizConfig.mode !== 'target') {
+                countSlider.max = Math.max(data.count, 1);
+                if (parseInt(countSlider.value) > data.count) {
+                    countSlider.value = data.count;
+                    quizConfig.count = data.count;
+                    document.getElementById('cfg-count-val').textContent = data.count;
+                }
+            } else {
+                countSlider.max = 100;
+            }
+        } catch (e) { console.error(e); }
     };
 
-    try {
-        const res = await fetch('/api/mcq/search_count', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(payload)
+    const bindInput = (id, key, isInt=false, callback=null) => {
+        const el = document.getElementById(id);
+        if(!el) return;
+        el.addEventListener(el.tagName === 'INPUT' && el.type === 'range' ? 'input' : 'change', (e) => {
+            quizConfig[key] = isInt ? parseInt(e.target.value) : e.target.value;
+            if (callback) callback(e);
         });
-        if(res.ok) {
-            const data = await res.json();
-            const el = document.getElementById('quiz-match-count');
-            if (el) el.textContent = `Matching Questions: ${data.count}`;
-        }
-    } catch(e) {
-        console.error("Failed to fetch match count", e);
-    }
-}
+    };
 
-function handleSearchChange() {
-    if (searchDebounceTimeout) clearTimeout(searchDebounceTimeout);
-    searchDebounceTimeout = setTimeout(updateMatchCount, 300);
-}
+    bindInput('cfg-subject', 'subject', false, updateMatchCount);
+    bindInput('cfg-topic', 'topic', false, updateMatchCount);
 
-// Global reference for Topic Editor to use if needed
-window.pendingQuizData = null;
-
-async function startQuiz() {
-    const subject = document.getElementById('quiz-subject-select').value;
-    const topic = document.getElementById('quiz-topic-select').value;
-    const keyword = document.getElementById('quiz-keyword').value;
-
-    // Retrieve new settings from the UI if they exist, otherwise fallback to defaults
-    const count = parseInt(document.getElementById('quiz-count')?.value) || 10;
-    const timeLimit = parseInt(document.getElementById('quiz-time')?.value) || 0;
-
-    // Default mode logic (assuming UI sets this, but fallback to test)
-    const modeElements = document.querySelectorAll('button[data-mode]');
-    let selectedMode = 'test';
-    modeElements.forEach(btn => {
-        if(btn.classList.contains('bg-brand-600') || btn.classList.contains('bg-purple-600')) {
-            selectedMode = btn.getAttribute('data-mode') || 'test';
-        }
+    let debounce;
+    document.getElementById('cfg-keyword').addEventListener('input', (e) => {
+        quizConfig.keyword = e.target.value;
+        clearTimeout(debounce);
+        debounce = setTimeout(updateMatchCount, 300);
     });
 
-    const questionTimeoutMinutes = 5; // Default to 5 mins if no UI element exists
+    bindInput('cfg-count', 'count', true, (e) => document.getElementById('cfg-count-val').textContent = e.target.value);
+    bindInput('cfg-time', 'timeLimit', true, (e) => document.getElementById('cfg-time-val').textContent = e.target.value === '0' ? 'Unlimited' : e.target.value);
 
+    document.getElementById('cfg-sr').addEventListener('change', (e) => quizConfig.spacedRepetition = e.target.checked);
+
+    ['test', 'learn', 'target'].forEach(m => {
+        document.getElementById(`mode-${m}`).addEventListener('click', () => {
+            quizConfig.mode = m;
+            initQuizSetup(); // Re-render to update classes
+        });
+    });
+
+    document.getElementById('btn-start-quiz').addEventListener('click', startQuiz);
+    document.getElementById('toggle-inspector-btn').addEventListener('click', toggleRightSidebar);
+
+    updateMatchCount();
+}
+
+async function startQuiz() {
     const payload = {
-        subjects: subject === 'all' ? null : [subject],
-        topics: topic === 'all' ? null : [topic],
-        keyword: keyword ? keyword : null,
-        count: selectedMode === 'target' ? 100 : count // Target mode needs a larger pool
+        subjects: quizConfig.subject === 'all' ? null : [quizConfig.subject],
+        topics: quizConfig.topic === 'all' ? null : [quizConfig.topic],
+        keyword: quizConfig.keyword || null,
+        count: quizConfig.mode === 'target' ? 100 : quizConfig.count
     };
 
     try {
         const res = await fetch('/api/mcq/generate_set', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
+        const data = await res.json();
 
-        if(res.ok) {
-            const data = await res.json();
-            if(data.questions && data.questions.length > 0) {
-                window.pendingQuizData = {
-                    config: {
-                        subjectName: subject === 'all' ? 'All Subjects' : subject,
-                        timeLimitMinutes: timeLimit,
-                        questionTimeoutMinutes: questionTimeoutMinutes,
-                        mode: selectedMode,
-                        targetCorrect: selectedMode === 'target' ? count : null
-                    },
-                    questions: data.questions
-                };
-
-                document.getElementById('pre-quiz-modal').style.display = 'flex';
-            } else {
-                alert("No questions found for the selected criteria.");
-            }
+        if (data.status === 'success' && data.questions.length > 0) {
+            currentQuiz = {
+                questions: data.questions,
+                config: { ...quizConfig }
+            };
+            beginQuizRunner();
         } else {
-             alert("Error generating quiz.");
+            alert("No questions found for the selected criteria.");
         }
     } catch(e) {
         console.error(e);
@@ -151,519 +208,514 @@ async function startQuiz() {
     }
 }
 
+// --- Active Quiz Engine ---
+
 function beginQuizRunner() {
-    document.getElementById('pre-quiz-modal').style.display = 'none';
-    if (!window.pendingQuizData) return;
-
-    currentQuiz = window.pendingQuizData;
-    currentQuestionIndex = 0;
+    currentIndex = 0;
     quizAnswers = {};
-    quizStartTime = Date.now();
+    scores = { correct: 0, wrong: 0 };
     isPaused = false;
-    correctCount = 0;
-    wrongCount = 0;
+    times.start = Date.now();
 
-    document.getElementById('quiz-setup').style.display = 'none';
-    document.getElementById('quiz-results').style.display = 'none';
-    document.getElementById('quiz-active').style.display = 'block';
+    if (quizConfig.timeLimit > 0) {
+        let timeLeft = quizConfig.timeLimit * 60;
+        timers.overall = setInterval(() => {
+            if (isPaused) return;
+            timeLeft--;
+            if (timeLeft <= 0) finishQuiz();
+            else {
+                const el = document.getElementById('active-timer');
+                if (el) el.textContent = `${Math.floor(timeLeft/60).toString().padStart(2,'0')}:${(timeLeft%60).toString().padStart(2,'0')}`;
+            }
+        }, 1000);
+    }
+
+    renderQuestion();
+}
+
+function renderQuestion() {
+    const container = document.getElementById('quiz-view');
+    const q = currentQuiz.questions[currentIndex];
+    const isAnswered = !!quizAnswers[q.id];
+
+    if (!isAnswered) {
+        times.questionStart = Date.now();
+        resetQuestionTimeout();
+        // Auto-open and update right inspector for learning context
+        updateInspector(q.topic_name);
+    }
+
+    const isTarget = quizConfig.mode === 'target';
+    const isLearn = quizConfig.mode === 'learn';
+
+    let headerText = isTarget
+        ? `Target: ${scores.correct} / ${quizConfig.count} Correct`
+        : `Question ${currentIndex + 1} of ${currentQuiz.questions.length}`;
+
+    const progressPct = isTarget
+        ? (scores.correct / quizConfig.count) * 100
+        : (Object.keys(quizAnswers).length / currentQuiz.questions.length) * 100;
+
+    let html = `
+        <div class="max-w-4xl mx-auto p-6 animate-fade-in flex flex-col h-full">
+            <div class="flex items-center justify-between mb-6 flex-wrap gap-4">
+                <div class="flex items-center gap-4">
+                    <div class="bg-black/30 border border-white/10 rounded-xl px-5 py-2.5 shadow-inner">
+                        <span class="text-brand-400 font-black text-lg tracking-wide">${headerText}</span>
+                    </div>
+                    <div class="flex items-center gap-4 text-sm font-bold bg-black/20 px-4 py-2.5 rounded-xl border border-white/5">
+                        <span class="text-success-500 flex items-center gap-1.5"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> ${scores.correct}</span>
+                        <span class="opacity-30">|</span>
+                        <span class="text-danger-500 flex items-center gap-1.5"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg> ${scores.wrong}</span>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button id="toggle-inspector-active" class="icon-btn bg-black/20 border border-white/5" title="Toggle Inspector">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
+                    </button>
+                    ${quizConfig.timeLimit > 0 ? `<div id="active-timer" class="px-4 py-2 bg-gray-900 border border-gray-700 rounded-xl font-mono text-lg font-bold text-brand-400 shadow-inner">--:--</div>` : ''}
+                </div>
+            </div>
+
+            <div class="w-full bg-black/40 rounded-full h-2 mb-8 shadow-inner border border-white/5 overflow-hidden">
+                <div class="h-2 rounded-full transition-all duration-500 ${isTarget ? 'bg-gradient-to-r from-purple-500 to-success-500' : 'bg-gradient-to-r from-brand-500 to-purple-500'}" style="width: ${Math.min(progressPct, 100)}%"></div>
+            </div>
+
+            <div class="glass-card card-shade-1 p-8 mb-6 relative overflow-hidden flex-shrink-0">
+                <div class="absolute top-0 left-0 w-1 h-full bg-brand-500"></div>
+                <div class="mb-5 flex items-center gap-2">
+                    <span class="px-3 py-1 bg-brand-500/20 text-brand-300 rounded-full text-[11px] font-bold uppercase tracking-wider border border-brand-500/30">
+                        ${window.escapeHTML(q.topic_name)}
+                    </span>
+                    <span class="px-3 py-1 bg-white/5 text-gray-400 rounded-full text-[11px] font-bold uppercase tracking-wider border border-white/10">
+                        Mode: ${quizConfig.mode}
+                    </span>
+                </div>
+                <h2 class="text-xl font-semibold leading-relaxed mb-8 opacity-90">${window.escapeHTML(q.question)}</h2>
+
+                <div class="space-y-3" id="options-container"></div>
+            </div>
+
+            <div id="feedback-container" class="flex-1 overflow-y-auto pr-2 mb-4"></div>
+
+            <div class="flex justify-between items-center mt-auto pt-4 border-t border-white/10">
+                <button id="btn-prev" class="px-6 py-3 bg-black/40 hover:bg-black/60 border border-white/10 rounded-xl transition-colors disabled:opacity-30 font-medium" ${currentIndex === 0 ? 'disabled' : ''}>
+                    ← Previous
+                </button>
+                <button id="btn-next" class="px-8 py-3 bg-brand-600 hover:bg-brand-500 text-white rounded-xl transition-all shadow-lg font-bold disabled:opacity-30 disabled:shadow-none" ${!isAnswered && !isTarget ? 'disabled' : ''}>
+                    ${currentIndex >= currentQuiz.questions.length - 1 && !isTarget ? 'Finish Quiz 🏁' : 'Next Question →'}
+                </button>
+            </div>
+        </div>
+    `;
+    container.innerHTML = html;
+
+    // Attach Options
+    const optsDiv = document.getElementById('options-container');
+    ['A', 'B', 'C', 'D'].forEach(opt => {
+        const text = q[`option_${opt.toLowerCase()}`];
+        if (!text) return;
+
+        const btn = document.createElement('button');
+        let classes = 'w-full text-left px-5 py-4 rounded-xl border-2 transition-all flex items-center justify-between font-medium shadow-sm ';
+
+        if (!isAnswered) {
+            classes += 'bg-black/40 border-white/10 hover:border-brand-500 hover:bg-black/60 cursor-pointer';
+            btn.onclick = () => handleSelectOption(q, opt);
+        } else {
+            classes += 'cursor-default ';
+            const ans = quizAnswers[q.id];
+            const isCorrectOpt = opt === q.correct_answer.toUpperCase();
+            const isSelected = ans.selected === opt;
+
+            if (ans.timedOut) classes += 'bg-black/20 border-white/5 opacity-50';
+            else if (isCorrectOpt) classes += 'bg-success-500/20 border-success-500 text-success-300';
+            else if (isSelected && !ans.isCorrect) classes += 'bg-danger-500/20 border-danger-500 text-danger-300';
+            else classes += 'bg-black/20 border-white/5 opacity-50';
+        }
+
+        btn.className = classes;
+        btn.innerHTML = `
+            <div class="flex items-center gap-4">
+                <span class="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold bg-white/10 shadow-inner">
+                    ${opt}
+                </span>
+                <span class="opacity-90 leading-snug">${window.escapeHTML(text)}</span>
+            </div>
+            ${isAnswered && !quizAnswers[q.id].timedOut && opt === q.correct_answer.toUpperCase() ? '<svg class="text-success-500" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>' : ''}
+            ${isAnswered && !quizAnswers[q.id].timedOut && quizAnswers[q.id].selected === opt && opt !== q.correct_answer.toUpperCase() ? '<svg class="text-danger-500" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>' : ''}
+        `;
+        optsDiv.appendChild(btn);
+    });
+
+    // Handle Feedback for Learn mode
+    if (isAnswered && isLearn && !quizAnswers[q.id].timedOut) {
+        const rawExplanation = q.explanation || 'No detailed explanation provided.';
+        const cleanExp = window.DOMPurify && window.marked ? window.DOMPurify.sanitize(window.marked.parse(rawExplanation)) : window.escapeHTML(rawExplanation);
+
+        document.getElementById('feedback-container').innerHTML = `
+            <div class="animate-fade-in bg-brand-500/10 border border-brand-500/30 rounded-2xl p-6 shadow-inner">
+                <h4 class="font-bold text-brand-300 mb-3 flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg> Explanation</h4>
+                <div class="prose prose-invert prose-sm max-w-none opacity-90">${cleanExp}</div>
+            </div>
+        `;
+    }
+
+    document.getElementById('btn-prev').onclick = () => { if(currentIndex > 0) { currentIndex--; renderQuestion(); } };
+    const nextBtn = document.getElementById('btn-next');
+    if (isTarget) {
+        nextBtn.textContent = 'Skip';
+        nextBtn.onclick = () => { handleSelectOption(q, null, true); };
+        if (isAnswered) nextBtn.style.display = 'none';
+    } else {
+        nextBtn.onclick = () => {
+            if (currentIndex < currentQuiz.questions.length - 1) { currentIndex++; renderQuestion(); }
+            else finishQuiz();
+        };
+    }
+
+    document.getElementById('toggle-inspector-active').addEventListener('click', toggleRightSidebar);
+}
+
+function handleSelectOption(q, option, isTimeout = false) {
+    clearTimeout(timers.autoAdvance);
+    clearInterval(timers.question);
+
+    const isCorrect = !isTimeout && option === q.correct_answer.toUpperCase();
+    const timeSpentMs = Date.now() - times.questionStart;
+
+    quizAnswers[q.id] = { selected: option, isCorrect, timeSpentMs, timedOut: isTimeout };
+    if (isCorrect) scores.correct++; else scores.wrong++;
+
+    // FSRS Spaced Repetition Scoring
+    if (quizConfig.spacedRepetition && !isTimeout) {
+        const timeSec = timeSpentMs / 1000;
+        let rating = 3; // Good
+        if (!isCorrect) rating = 1; // Again
+        else if (timeSec > 30) rating = 2; // Hard
+        else if (timeSec < 8) rating = 4; // Easy
+
+        fetch('/api/mcq/score', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ mcq_id: parseInt(q.id), rating })
+        }).catch(console.error);
+    }
 
     renderQuestion();
 
-    if (currentQuiz.config.timeLimitMinutes > 0) {
-        startTimer(currentQuiz.config.timeLimitMinutes * 60);
+    if (quizConfig.mode === 'target' && scores.correct >= quizConfig.count) {
+        timers.autoAdvance = setTimeout(finishQuiz, 1500);
+        return;
     }
 
-    window.pendingQuizData = null;
-}
-
-function startTimer(seconds) {
-    let timeLeft = seconds;
-    const timerEl = document.getElementById('quiz-timer-display');
-
-    quizTimer = setInterval(() => {
-        if (isPaused) return; // Freeze timer if taking a break
-
-        timeLeft--;
-        if (timeLeft <= 0) {
-            clearInterval(quizTimer);
-            finishQuiz();
-        } else {
-            const m = Math.floor(timeLeft / 60);
-            const s = timeLeft % 60;
-            if(timerEl) timerEl.textContent = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-        }
-    }, 1000);
+    if (quizConfig.mode !== 'learn') {
+        timers.autoAdvance = setTimeout(() => {
+            if (currentIndex < currentQuiz.questions.length - 1) { currentIndex++; renderQuestion(); }
+            else finishQuiz();
+        }, 1200);
+    }
 }
 
 function resetQuestionTimeout() {
-    if (questionTimeoutTimer) clearInterval(questionTimeoutTimer);
-    if (!currentQuiz || currentQuiz.config.questionTimeoutMinutes <= 0) return;
+    clearInterval(timers.question);
+    if (quizConfig.timeout <= 0) return;
 
-    questionTimeoutTimer = setInterval(() => {
+    timers.question = setInterval(() => {
         if (isPaused) return;
-        const elapsed = Math.floor((Date.now() - questionStartTime) / 1000);
-        if (elapsed >= (currentQuiz.config.questionTimeoutMinutes * 60)) {
-            triggerBreakModal();
-        }
+        const elapsed = Math.floor((Date.now() - times.questionStart) / 1000);
+        if (elapsed >= (quizConfig.timeout * 60)) triggerBreakModal();
     }, 1000);
 }
 
 function triggerBreakModal() {
     isPaused = true;
-    if (questionTimeoutTimer) clearInterval(questionTimeoutTimer);
-
-    // Inject the Break UI into the active quiz container
-    const activeContainer = document.getElementById('quiz-active');
-    activeContainer.innerHTML = `
-        <div class="bg-gray-800/60 border border-warning-500/30 rounded-2xl p-8 text-center animate-fade-in">
-            <div class="text-warning-500 mb-4 flex justify-center">
-                <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"></path><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"></path><line x1="6" y1="2" x2="6" y2="4"></line><line x1="10" y1="2" x2="10" y2="4"></line><line x1="14" y1="2" x2="14" y2="4"></line></svg>
-            </div>
-            <h2 class="text-2xl font-bold text-gray-100 mb-2">Need a Break?</h2>
-            <p class="text-gray-400 mb-6">
-                No answer was given for ${currentQuiz.config.questionTimeoutMinutes} minutes.
-                Take a moment if you need to - your progress is saved.
-            </p>
-            <div class="flex flex-col gap-3 max-w-md mx-auto">
-                <button onclick="resumeQuiz()" class="w-full py-3 bg-brand-600 text-white font-bold rounded-xl hover:bg-brand-500 transition-all flex items-center justify-center gap-2">
-                    Continue Quiz
-                </button>
-                <button onclick="skipQuestionDueToTimeout()" class="w-full py-3 bg-gray-700 text-gray-300 font-medium rounded-xl hover:bg-gray-600 transition-all">
-                    Skip This Question
-                </button>
-                <button onclick="finishQuiz()" class="w-full py-2 text-gray-500 hover:text-gray-300 transition-colors text-sm border-none bg-transparent">
-                    End Quiz & See Results
-                </button>
+    clearInterval(timers.question);
+    const container = document.getElementById('quiz-view');
+    container.innerHTML = `
+        <div class="max-w-2xl mx-auto p-6 flex items-center h-full">
+            <div class="glass-card card-shade-3 border-warning-500/30 w-full text-center p-10 animate-fade-in shadow-[0_0_40px_rgba(245,158,11,0.1)]">
+                <div class="w-20 h-20 bg-warning-500/20 rounded-full flex items-center justify-center mx-auto mb-6 border border-warning-500/40">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-warning-500"><path d="M17 8h1a4 4 0 1 1 0 8h-1"></path><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"></path><line x1="6" y1="2" x2="6" y2="4"></line><line x1="10" y1="2" x2="10" y2="4"></line><line x1="14" y1="2" x2="14" y2="4"></line></svg>
+                </div>
+                <h2 class="text-3xl font-black text-gray-100 mb-4">Need a Break?</h2>
+                <p class="opacity-60 mb-8 text-lg">No answer given for ${quizConfig.timeout} minutes. Your progress is saved safely.</p>
+                <div class="flex flex-col gap-3 max-w-sm mx-auto">
+                    <button id="break-resume" class="w-full py-4 bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-xl shadow-lg transition-all">▶️ Resume Session</button>
+                    <button id="break-skip" class="w-full py-3 bg-black/40 hover:bg-black/60 border border-white/10 rounded-xl transition-all">⏭️ Skip Question</button>
+                    <button id="break-end" class="w-full py-2 text-gray-500 hover:text-white transition-colors mt-2">End Session & View Results</button>
+                </div>
             </div>
         </div>
     `;
+
+    document.getElementById('break-resume').onclick = () => { isPaused = false; times.questionStart = Date.now(); renderQuestion(); };
+    document.getElementById('break-skip').onclick = () => { isPaused = false; handleSelectOption(currentQuiz.questions[currentIndex], null, true); };
+    document.getElementById('break-end').onclick = finishQuiz;
 }
 
-window.resumeQuiz = function() {
-    isPaused = false;
-    questionStartTime = Date.now(); // Reset question start time so they get a fresh window
-    renderQuestion(); // Re-render the normal question view
-};
-
-window.skipQuestionDueToTimeout = function() {
-    isPaused = false;
-    const q = currentQuiz.questions[currentQuestionIndex];
-    const qId = q.id || currentQuestionIndex;
-
-    quizAnswers[qId] = {
-        selected: '',
-        isCorrect: false,
-        timeSpent: Date.now() - questionStartTime,
-        timedOut: true
-    };
-
-    wrongCount++;
-    nextQuestion();
-};
-
-function renderQuestion() {
-    if (autoAdvanceTimer) clearTimeout(autoAdvanceTimer);
-
-    const activeContainer = document.getElementById('quiz-active');
-    const q = currentQuiz.questions[currentQuestionIndex];
-    const qId = q.id || currentQuestionIndex;
-    const isAnswered = !!quizAnswers[qId];
-
-    // Reset exact timestamp for accurate FSRS elapsed time calculation
-    if (!isAnswered) {
-        questionStartTime = Date.now();
-        resetQuestionTimeout();
-    }
-
-    const isTestMode = currentQuiz.config.mode === 'test';
-    const isTargetMode = currentQuiz.config.mode === 'target';
-
-    let headerText = '';
-    if (isTargetMode) {
-        headerText = `Target: ${correctCount} / ${currentQuiz.config.targetCorrect} Correct`;
-    } else {
-        headerText = `Question ${currentQuestionIndex + 1} of ${currentQuiz.questions.length}`;
-    }
-
-    // Build the UI dynamically
-    let html = `
-        <div class="flex justify-between items-center mb-10 flex-wrap gap-4">
-            <div class="flex items-center gap-4">
-                <div class="bg-gray-800 rounded-xl px-4 py-2">
-                    <span class="text-brand-400 font-bold text-lg">${headerText}</span>
-                </div>
-                <div class="flex items-center gap-3 text-sm">
-                    <span class="text-success-500 flex items-center gap-1">✓ ${correctCount}</span>
-                    <span class="text-danger-500 flex items-center gap-1">✗ ${wrongCount}</span>
-                </div>
-            </div>
-            <div class="flex items-center gap-3">
-                <span class="px-3 py-1 rounded-full text-xs font-medium bg-brand-500/20 text-brand-400 uppercase">
-                    ${currentQuiz.config.mode}
-                </span>
-                <div id="quiz-timer-display" class="text-xl font-mono text-brand-400 font-bold"></div>
-            </div>
-        </div>
-
-        <div class="bg-gray-800/60 backdrop-blur-sm rounded-2xl border border-gray-700 p-8 mb-6">
-            <div class="mb-4">
-                <span class="px-3 py-1 bg-brand-600/20 text-brand-400 rounded-full text-xs font-medium">
-                    ${escapeHTML(q.topic_name || 'General')}
-                </span>
-            </div>
-            <h2 class="text-xl font-semibold text-gray-100 leading-relaxed mb-8">
-                ${escapeHTML(q.question_text || q.question)}
-            </h2>
-            <div id="quiz-options" class="flex flex-col gap-3"></div>
-        </div>
-
-        <div id="quiz-feedback-container"></div>
-
-        <div class="flex justify-between mt-6">
-            <button id="quiz-prev-btn" class="secondary-btn" ${currentQuestionIndex === 0 ? 'disabled' : ''}>Previous</button>
-            <button id="quiz-next-btn" class="secondary-btn" ${!isAnswered && !isTestMode ? 'disabled' : ''}>Next Question</button>
-        </div>
-    `;
-
-    activeContainer.innerHTML = html;
-
-    // Attach Options
-    const optsContainer = document.getElementById('quiz-options');
-    ['a', 'b', 'c', 'd'].forEach(opt => {
-        const optText = q[`option_${opt}`] || q[opt];
-        if(optText) {
-            const btn = document.createElement('button');
-            const upperOpt = opt.toUpperCase();
-
-            let btnClass = 'quiz-option-btn w-full text-left p-4 rounded-xl border-2 transition-all flex items-center justify-between ';
-
-            if (!isAnswered) {
-                btnClass += 'bg-gray-800 border-gray-600 hover:border-brand-400 hover:bg-gray-700 cursor-pointer';
-            } else {
-                btnClass += 'cursor-default ';
-                const prevAns = quizAnswers[qId];
-                const isCorrectOpt = upperOpt === q.correct_answer?.toUpperCase();
-                const isSelected = prevAns.selected === upperOpt;
-
-                if (prevAns.timedOut) {
-                    btnClass += 'bg-gray-800/50 border-gray-700 text-gray-500';
-                } else if (isCorrectOpt) {
-                    btnClass += 'bg-success-500/20 border-success-500 text-success-500';
-                } else if (isSelected && !prevAns.isCorrect) {
-                    btnClass += 'bg-danger-500/20 border-danger-500 text-danger-500';
-                } else {
-                    btnClass += 'bg-gray-800/50 border-gray-700 text-gray-500';
-                }
-            }
-
-            btn.className = btnClass;
-            btn.innerHTML = `
-                <div class="flex items-center gap-4">
-                    <span class="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold bg-gray-700 text-gray-300">
-                        ${upperOpt}
-                    </span>
-                    <span class="text-sm">${escapeHTML(optText)}</span>
-                </div>
-            `;
-
-            if (!isAnswered) {
-                btn.onclick = () => selectOption(qId, upperOpt);
-            }
-            optsContainer.appendChild(btn);
-        }
-    });
-
-    // Attach Navigation
-    document.getElementById('quiz-prev-btn').onclick = prevQuestion;
-    const nextBtn = document.getElementById('quiz-next-btn');
-
-    if (isTargetMode) {
-        nextBtn.textContent = 'Skip';
-        nextBtn.onclick = skipQuestionDueToTimeout;
-        if (isAnswered) nextBtn.style.display = 'none'; // Auto advance handles it
-    } else if (currentQuestionIndex >= currentQuiz.questions.length - 1) {
-        nextBtn.textContent = 'Finish Quiz';
-        nextBtn.classList.replace('secondary-btn', 'primary-btn');
-        nextBtn.onclick = finishQuiz;
-    } else {
-        nextBtn.onclick = nextQuestion;
-    }
-
-    // Handle Feedback & Explanations (Learn Mode)
-    if (isAnswered && !isTestMode && !isTargetMode) {
-        const fbContainer = document.getElementById('quiz-feedback-container');
-        const ans = quizAnswers[qId];
-
-        let explanationHtml = `
-            <div class="animate-fade-in bg-brand-600/10 border border-brand-500/30 rounded-2xl p-6 mb-6">
-                <h4 class="font-semibold text-brand-400 mb-2">Explanation</h4>
-                <div class="text-gray-300 text-sm leading-relaxed">
-                    ${window.DOMPurify && window.marked ? window.DOMPurify.sanitize(window.marked.parse(q.explanation || 'No explanation provided.')) : escapeHTML(q.explanation || 'No explanation provided.')}
-                </div>
-            </div>
-        `;
-        fbContainer.innerHTML = explanationHtml;
-    }
-}
-
-function selectOption(qId, option) {
-    if (questionTimeoutTimer) clearInterval(questionTimeoutTimer);
-
-    const q = currentQuiz.questions[currentQuestionIndex];
-    const isCorrect = option.toUpperCase() === (q.correct_answer || '').toUpperCase();
-    const timeSpent = Date.now() - questionStartTime;
-
-    quizAnswers[qId] = {
-        selected: option,
-        isCorrect: isCorrect,
-        timeSpent: timeSpent,
-        timedOut: false
-    };
-
-    if (isCorrect) correctCount++;
-    else wrongCount++;
-
-    const isTestMode = currentQuiz.config.mode === 'test';
-    const isTargetMode = currentQuiz.config.mode === 'target';
-
-    renderQuestion(); // Re-render to show correct/wrong colors
-
-    // Target Mode Completion Check
-    if (isTargetMode && correctCount >= currentQuiz.config.targetCorrect) {
-        autoAdvanceTimer = setTimeout(finishQuiz, 1500);
-        return;
-    }
-
-    // Auto Advance Logic
-    if (isTestMode || isTargetMode) {
-        autoAdvanceTimer = setTimeout(() => {
-            if (currentQuestionIndex < currentQuiz.questions.length - 1) {
-                nextQuestion();
-            } else {
-                finishQuiz();
-            }
-        }, 1500);
-    }
-}
-
-function nextQuestion() {
-    if (currentQuestionIndex < currentQuiz.questions.length - 1) {
-        currentQuestionIndex++;
-        renderQuestion();
-    } else {
-        finishQuiz();
-    }
-}
-
-function prevQuestion() {
-    if (currentQuestionIndex > 0) {
-        currentQuestionIndex--;
-        renderQuestion();
-    }
-}
+// --- Results & Inspector ---
 
 async function finishQuiz() {
-    if (quizTimer) clearInterval(quizTimer);
-    if (questionTimeoutTimer) clearInterval(questionTimeoutTimer);
-    if (autoAdvanceTimer) clearTimeout(autoAdvanceTimer);
+    clearInterval(timers.overall);
+    clearInterval(timers.question);
+    clearTimeout(timers.autoAdvance);
 
-    const answersList = [];
-    const scorePromises = [];
-
-    // Filter questions that were actually answered/viewed
     const answeredQuestions = [];
+    const answersList = [];
 
-    currentQuiz.questions.forEach((q, idx) => {
-        const qId = q.id || idx;
-        const ans = quizAnswers[qId];
-
+    currentQuiz.questions.forEach(q => {
+        const ans = quizAnswers[q.id];
         if (ans) {
             answeredQuestions.push(q);
-            answersList.push({
-                questionId: qId.toString(),
-                selectedOption: ans.selected,
-                isCorrect: ans.isCorrect,
-                timeSpentSeconds: ans.timeSpent
-            });
-
-            // FSRS Algorithmic Scoring Linkage
-            const numericMcqId = parseInt(qId, 10);
-            if (!isNaN(numericMcqId) && String(numericMcqId) === String(qId)) {
-                let rating = 3; // Default: 3 = Good
-
-                if (!ans.isCorrect) {
-                    rating = 1; // 1 = Again (Failed)
-                } else {
-                    const timeSec = ans.timeSpent / 1000;
-                    if (timeSec > 30) rating = 2; // 2 = Hard (Struggled)
-                    else if (timeSec < 8) rating = 4; // 4 = Easy (Instant Recall)
-                }
-
-                scorePromises.push(
-                    fetch('/api/mcq/score', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ mcq_id: numericMcqId, rating: rating })
-                    }).catch(e => console.error("FSRS Score Error:", e))
-                );
-            }
+            answersList.push({ questionId: q.id.toString(), selectedOption: ans.selected, isCorrect: ans.isCorrect, timeSpentSeconds: ans.timeSpentMs });
         }
     });
 
-    const timeUsed = Math.floor((Date.now() - quizStartTime) / 1000);
-    const accuracy = answeredQuestions.length > 0 ? (correctCount / answeredQuestions.length) * 100 : 0;
+    const timeUsed = Math.floor((Date.now() - times.start) / 1000);
+    const accuracy = answeredQuestions.length > 0 ? (scores.correct / answeredQuestions.length) * 100 : 0;
 
     const result = {
         id: crypto.randomUUID(),
-        subjectName: currentQuiz.config.subjectName,
+        subjectName: quizConfig.subject === 'all' ? 'Mixed Topics' : quizConfig.subject,
         timestamp: Date.now(),
         totalQuestions: answeredQuestions.length,
-        correctAnswers: correctCount,
+        correctAnswers: scores.correct,
+        wrongAnswers: scores.wrong,
         accuracy: accuracy,
         timeUsedSeconds: timeUsed,
-        mode: currentQuiz.config.mode,
+        mode: quizConfig.mode,
         answers: answersList
     };
 
-    // Update Habit State natively
-    const state = window.AppState.get();
-    const today = new Date().toISOString().split('T')[0];
-    let habit = state.habitLog.find(h => h.date === today);
-    if (!habit) {
-        habit = { date: today, questionsAnswered: 0, correctAnswers: 0, timeSpentSeconds: 0 };
-        state.habitLog.push(habit);
-    }
-    habit.questionsAnswered += answeredQuestions.length;
-    habit.correctAnswers += correctCount;
-    habit.timeSpentSeconds += timeUsed;
-
-    state.testResults.push(result);
-    window.AppState.update({ habitLog: state.habitLog, testResults: state.testResults });
-
-    // Execute background APIs concurrently
     try {
-        await Promise.all([
-            fetch('/api/sessions/save', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ ...result, questions: answeredQuestions })
-            }),
-            ...scorePromises
-        ]);
-    } catch(e) {
-        console.error("Failed to save session or FSRS scores to backend", e);
+        await fetch('/api/sessions/save', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ ...result, questions: answeredQuestions })
+        });
+    } catch(e) { console.error("Failed to save session", e); }
+
+    // Update global state optimistically to power dashboard metrics
+    if (window.AppState) {
+        const state = window.AppState.get();
+        state.testResults.push(result);
+        const today = new Date().toISOString().split('T')[0];
+        let habit = state.habitLog.find(h => h.date === today);
+        if(!habit) { habit = { date: today, questionsAnswered:0, correctAnswers:0, timeSpentSeconds:0 }; state.habitLog.push(habit); }
+        habit.questionsAnswered += answeredQuestions.length;
+        habit.correctAnswers += scores.correct;
+        habit.timeSpentSeconds += timeUsed;
+        window.AppState.update({ testResults: state.testResults, habitLog: state.habitLog, totalQuestionsEver: (state.totalQuestionsEver||0) + answeredQuestions.length });
     }
 
-    showResults(result, answeredQuestions);
+    renderResults(result, answeredQuestions);
 }
 
-function showResults(result, answeredQuestions) {
-    document.getElementById('quiz-active').style.display = 'none';
-    document.getElementById('quiz-results').style.display = 'block';
+function renderResults(result, answeredQs) {
+    const container = document.getElementById('quiz-view');
+    const wrongQs = answeredQs.filter(q => { const a = quizAnswers[q.id]; return a && !a.isCorrect && !a.timedOut; });
 
-    document.getElementById('res-score').textContent = `${result.accuracy.toFixed(1)}%`;
-    document.getElementById('res-correct').textContent = `${result.correctAnswers} / ${result.totalQuestions}`;
+    container.innerHTML = `
+        <div class="max-w-4xl mx-auto p-6 animate-fade-in">
+            <div class="text-center mb-10">
+                <div class="inline-flex items-center justify-center w-24 h-24 rounded-full ${result.accuracy >= 70 ? 'bg-success-500/20 text-success-400' : 'bg-warning-500/20 text-warning-400'} mb-4 shadow-inner border border-white/5">
+                    <span class="text-4xl font-black">${result.accuracy >= 90 ? 'A+' : result.accuracy >= 80 ? 'A' : result.accuracy >= 70 ? 'B' : result.accuracy >= 60 ? 'C' : 'D'}</span>
+                </div>
+                <h1 class="text-4xl font-black mb-2">${result.accuracy >= 70 ? '🎉 Excellent Work!' : '💪 Keep Practicing!'}</h1>
+                <p class="opacity-60 text-lg">Session completed for <span class="text-brand-400 font-bold">${window.escapeHTML(result.subjectName)}</span></p>
+            </div>
 
-    const m = Math.floor(result.timeUsedSeconds / 60);
-    const s = result.timeUsedSeconds % 60;
-    document.getElementById('res-time').textContent = `${m}m ${s}s`;
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
+                <div class="glass-card card-shade-1 text-center p-6 border-brand-500/30 shadow-[0_0_15px_rgba(139,92,246,0.15)]">
+                    <p class="text-3xl font-black text-brand-400 mb-1">${result.accuracy.toFixed(1)}%</p>
+                    <p class="text-xs opacity-70 uppercase tracking-widest">Accuracy</p>
+                </div>
+                <div class="glass-card card-shade-2 text-center p-6 border-success-500/30">
+                    <p class="text-3xl font-black text-success-500 mb-1">${result.correctAnswers}</p>
+                    <p class="text-xs opacity-70 uppercase tracking-widest">Correct</p>
+                </div>
+                <div class="glass-card card-shade-3 text-center p-6 border-danger-500/30">
+                    <p class="text-3xl font-black text-danger-500 mb-1">${result.wrongAnswers}</p>
+                    <p class="text-xs opacity-70 uppercase tracking-widest">Wrong</p>
+                </div>
+                <div class="glass-card card-shade-4 text-center p-6 border-white/10">
+                    <p class="text-3xl font-black mb-1">${Math.floor(result.timeUsedSeconds/60)}m ${result.timeUsedSeconds%60}s</p>
+                    <p class="text-xs opacity-70 uppercase tracking-widest">Time Taken</p>
+                </div>
+            </div>
 
-    // Extract wrong questions for the "Practice Wrong Answers" feature
-    const wrongAnswers = result.answers.filter(a => !a.isCorrect && !a.timedOut);
-    const wrongQuestions = wrongAnswers.map(ans => answeredQuestions.find(q => String(q.id) === String(ans.questionId))).filter(Boolean);
+            <div class="flex flex-wrap gap-4 justify-center mb-10 pb-10 border-b border-white/10">
+                <button id="res-home" class="px-8 py-3 bg-black/40 hover:bg-black/60 border border-white/10 rounded-xl transition-colors font-medium">🏠 Dashboard</button>
+                <button id="res-retake" class="px-8 py-3 bg-gray-800 hover:bg-gray-700 rounded-xl transition-colors font-medium border border-white/5">🔄 Retake Set</button>
+                ${wrongQs.length > 0 ? `<button id="res-wrong" class="px-8 py-3 bg-purple-600 hover:bg-purple-500 text-white shadow-lg rounded-xl transition-all font-bold">🧠 Practice Wrong (${wrongQs.length})</button>` : ''}
+                <button id="res-setup" class="px-8 py-3 bg-brand-600 hover:bg-brand-500 text-white shadow-lg rounded-xl transition-all font-bold">⚙️ New Config</button>
+            </div>
 
-    const practiceWrongBtn = document.getElementById('practice-wrong-btn');
-    if (practiceWrongBtn) {
-        if (wrongQuestions.length > 0) {
-            practiceWrongBtn.style.display = 'inline-flex';
-            practiceWrongBtn.onclick = () => {
-                window.pendingQuizData = {
-                    config: {
-                        subjectName: `${result.subjectName} (Review)`,
-                        timeLimitMinutes: 0,
-                        questionTimeoutMinutes: 5,
-                        mode: 'learn',
-                        targetCorrect: null
-                    },
-                    questions: wrongQuestions
-                };
-                beginQuizRunner();
-            };
-        } else {
-            practiceWrongBtn.style.display = 'none';
-        }
+            <h3 class="text-2xl font-bold mb-6 flex items-center gap-3"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-brand-400"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg> Detailed Breakdown</h3>
+            <div class="space-y-6">
+                ${answeredQs.map((q, i) => {
+                    const a = quizAnswers[q.id];
+                    const bgBorder = a.timedOut ? 'border-white/10 bg-black/20' : a.isCorrect ? 'border-success-500/30 bg-success-900/10' : 'border-danger-500/30 bg-danger-900/10';
+                    const icon = a.timedOut ? '⏭️' : a.isCorrect ? '<span class="text-success-500 font-bold">✓</span>' : '<span class="text-danger-500 font-bold">✗</span>';
+                    const cleanExp = window.DOMPurify && window.marked ? window.DOMPurify.sanitize(window.marked.parse(q.explanation || 'No explanation.')) : window.escapeHTML(q.explanation);
+
+                    return `
+                    <div class="rounded-2xl border ${bgBorder} p-6">
+                        <div class="flex items-start justify-between mb-4">
+                            <h4 class="font-semibold text-lg opacity-90 leading-snug flex-1 pr-4"><span class="opacity-50 font-mono text-sm mr-2">Q${i+1}.</span>${window.escapeHTML(q.question)}</h4>
+                            <div class="flex items-center gap-3 shrink-0">
+                                <span class="text-xs font-mono bg-black/40 px-2 py-1 rounded border border-white/5 opacity-70">⏱️ ${(a.timeSpentMs/1000).toFixed(1)}s</span>
+                                <div class="w-8 h-8 rounded-full bg-black/40 border border-white/10 flex items-center justify-center text-lg shadow-inner">${icon}</div>
+                            </div>
+                        </div>
+
+                        ${!a.timedOut ? `
+                        <div class="flex flex-wrap gap-4 mb-6">
+                            <div class="flex items-center gap-2 text-sm bg-black/20 px-3 py-1.5 rounded-lg border border-white/5">
+                                <span class="opacity-60">Your Answer:</span>
+                                <span class="font-bold ${a.isCorrect ? 'text-success-400' : 'text-danger-400'}">${a.selected}</span>
+                            </div>
+                            ${!a.isCorrect ? `
+                            <div class="flex items-center gap-2 text-sm bg-success-500/10 px-3 py-1.5 rounded-lg border border-success-500/20">
+                                <span class="opacity-60">Correct Answer:</span>
+                                <span class="font-bold text-success-400">${q.correct_answer}</span>
+                            </div>` : ''}
+                        </div>
+
+                        <div class="bg-black/30 rounded-xl p-5 border border-white/5 shadow-inner">
+                            <p class="text-xs font-bold text-brand-400 uppercase tracking-widest mb-3">Explanation</p>
+                            <div class="prose prose-invert prose-sm max-w-none opacity-80">${cleanExp}</div>
+                        </div>
+                        ` : '<p class="text-sm opacity-50 italic">Skipped due to timeout.</p>'}
+                    </div>`;
+                }).join('')}
+            </div>
+        </div>
+    `;
+
+    document.getElementById('res-home').onclick = () => document.querySelector('.nav-btn[data-target="dashboard-view"]')?.click();
+    document.getElementById('res-setup').onclick = initQuizSetup;
+    document.getElementById('res-retake').onclick = () => { currentQuiz.questions = answeredQs; beginQuizRunner(); };
+    const wBtn = document.getElementById('res-wrong');
+    if (wBtn) wBtn.onclick = () => { quizConfig.mode = 'learn'; currentQuiz.questions = wrongQs; beginQuizRunner(); };
+
+    // Close Inspector when viewing results
+    const sidebar = document.getElementById('right-sidebar');
+    if (sidebar && !sidebar.classList.contains('collapsed')) sidebar.classList.add('collapsed');
+}
+
+// --- Right Inspector (RAG Synthesis) ---
+
+function toggleRightSidebar() {
+    const sidebar = document.getElementById('right-sidebar');
+    if (sidebar) sidebar.classList.toggle('collapsed');
+}
+
+document.getElementById('close-inspector-btn')?.addEventListener('click', toggleRightSidebar);
+
+// Make available globally for document clicks on citation badges
+window.openLocalResource = async (type, path, extra) => {
+    if (type === 'pdf') {
+        fetch('/api/sources/open_pdf', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ file_path: path, page: parseInt(extra)||1 }) });
+    } else if (type === 'obsidian') {
+        window.location.href = `obsidian://open?path=${encodeURIComponent(path)}`;
+    } else if (type === 'zim') {
+        alert("ZIM article viewer coming soon to vanilla JS port! Query: " + path);
     }
+};
 
-    // Safe Explanation Injection via DOMPurify
-    const container = document.getElementById('res-explanations');
-    container.innerHTML = '';
+function updateInspector(topic) {
+    const sidebar = document.getElementById('right-sidebar');
+    const content = document.getElementById('inspector-content');
+    if (!sidebar || !content) return;
 
-    answeredQuestions.forEach((q, idx) => {
-        const ans = result.answers.find(a => a.questionId === String(q.id || idx));
-        const isCorrect = ans ? ans.isCorrect : false;
+    // Auto open on new question if closed
+    if (sidebar.classList.contains('collapsed')) sidebar.classList.remove('collapsed');
 
-        const div = document.createElement('div');
-        div.className = `p-4 mb-4 rounded border ${isCorrect ? 'border-success-500 bg-success-900/20' : 'border-danger-500 bg-danger-900/20'}`;
+    content.innerHTML = `
+        <div class="flex flex-col items-center justify-center py-16 text-brand-400 animate-pulse">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mb-3 animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>
+            <p class="text-sm font-medium">Extracting Local Context...</p>
+            <p class="text-xs opacity-60 mt-1">${window.escapeHTML(topic)}</p>
+        </div>
+    `;
 
-        const rawExplanation = q.explanation || 'No explanation provided.';
-        const cleanExplanation = window.DOMPurify && window.marked
-            ? window.DOMPurify.sanitize(window.marked.parse(rawExplanation))
-            : escapeHTML(rawExplanation);
+    fetch(`/api/mcq/synthesis?topic=${encodeURIComponent(topic)}`)
+        .then(res => { if(!res.ok) throw new Error("Not processed"); return res.json(); })
+        .then(data => {
+            let html = `<div class="space-y-4 text-[13px] pb-6">`;
 
-        div.innerHTML = `
-            <div class="flex justify-between items-start mb-2">
-                <h4 class="font-bold text-gray-200 flex-1 pr-4">Q: ${escapeHTML(q.question_text || q.question)}</h4>
-                <span class="text-xs text-gray-500 shrink-0">⏱️ ${ans && ans.timeSpentSeconds ? (ans.timeSpentSeconds/1000).toFixed(1) + 's' : '0s'}</span>
-            </div>
-            <p class="text-sm mb-1 text-gray-300">Your Answer: <span class="font-bold">${ans ? escapeHTML(ans.selectedOption || 'Skipped') : 'Skipped'}</span></p>
-            <p class="text-sm mb-3 text-gray-300">Correct Answer: <span class="font-bold">${escapeHTML(q.correct_option || q.answer || q.correct_answer)}</span></p>
-            <div class="text-sm text-gray-300 bg-gray-900 p-4 rounded border border-gray-700">
-                <strong class="text-brand-400 block mb-1">Explanation:</strong>
-                <div class="prose prose-sm prose-invert max-w-none">${cleanExplanation}</div>
-            </div>
-            ${q.topic_name ? `<div class="mt-3 text-xs font-semibold text-brand-400 uppercase tracking-wider">Topic: ${escapeHTML(q.topic_name)}</div>` : ''}
-        `;
-        container.appendChild(div);
-    });
+            if (data.enhanced_explanation) {
+                html += `
+                <div class="bg-brand-500/10 border border-brand-500/30 rounded-xl p-4 shadow-inner">
+                    <h4 class="font-bold text-brand-300 mb-2 flex items-center gap-1.5"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg> High-Yield Synopsis</h4>
+                    <div class="opacity-90 prose prose-invert prose-sm leading-relaxed">${window.escapeHTML(data.enhanced_explanation)}</div>
+                </div>`;
+            }
+
+            const varMatch = data.unified_article ? data.unified_article.match(/### Discrepancies(?:\s*&\s*Variances)?\n([\s\S]*)/i) : null;
+            if (varMatch) {
+                html += `
+                <div class="bg-warning-500/10 border border-warning-500/30 rounded-xl p-4 shadow-inner">
+                    <h4 class="font-bold text-warning-400 mb-2 flex items-center gap-1.5"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> Clinical Variance</h4>
+                    <div class="opacity-90 font-mono text-[11px] leading-relaxed text-warning-200">${window.escapeHTML(varMatch[1].trim())}</div>
+                </div>`;
+            }
+
+            if (data.references && Object.keys(data.references).length > 0) {
+                html += `<div class="mt-6"><h4 class="font-bold text-gray-300 mb-3 text-sm px-1">Verified Reference Materials</h4><div class="space-y-2">`;
+
+                if (data.references.pdf) {
+                    data.references.pdf.forEach(pdf => {
+                        html += `
+                        <button onclick="window.openLocalResource('pdf', '${window.escapeHTML(pdf.file_path)}', ${pdf.page})" class="w-full text-left p-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl transition-all group flex items-center gap-3">
+                            <div class="p-2 bg-red-500/20 rounded-lg text-red-400 group-hover:scale-110 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg></div>
+                            <div class="flex-1 overflow-hidden">
+                                <p class="font-medium text-red-400 truncate text-sm">${window.escapeHTML(pdf.title)}</p>
+                                <p class="text-[10px] opacity-60 mt-0.5">SumatraPDF • Page ${pdf.page || 1}</p>
+                            </div>
+                        </button>`;
+                    });
+                }
+
+                if (data.references.obsidian) {
+                    data.references.obsidian.forEach(obs => {
+                        html += `
+                        <button onclick="window.openLocalResource('obsidian', '${window.escapeHTML(obs.file_path)}') class="w-full text-left p-3 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 rounded-xl transition-all group flex items-center gap-3">
+                            <div class="p-2 bg-purple-500/20 rounded-lg text-purple-400 group-hover:scale-110 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg></div>
+                            <div class="flex-1 overflow-hidden">
+                                <p class="font-medium text-purple-400 truncate text-sm">${window.escapeHTML(obs.title)}</p>
+                                <p class="text-[10px] opacity-60 mt-0.5">Obsidian Vault Note</p>
+                            </div>
+                        </button>`;
+                    });
+                }
+                html += `</div></div>`;
+            }
+
+            html += `</div>`;
+            content.innerHTML = html;
+        })
+        .catch(err => {
+            content.innerHTML = `
+                <div class="text-center py-10 opacity-60 px-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mx-auto mb-3 opacity-50"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                    <p class="text-sm font-medium">Topic Not Synthesized</p>
+                    <p class="text-xs mt-2 leading-relaxed">LM Studio has not processed <strong>${window.escapeHTML(topic)}</strong> yet. Check the Processing Queue tab to track offline background generation progress.</p>
+                </div>
+            `;
+        });
 }
 
-function resetQuizView() {
-    document.getElementById('quiz-results').style.display = 'none';
-    document.getElementById('quiz-setup').style.display = 'block';
-    currentQuiz = null;
-    if (quizTimer) clearInterval(quizTimer);
-    if (questionTimeoutTimer) clearInterval(questionTimeoutTimer);
-}
-
+// Bind to event lifecycle
 document.addEventListener('DOMContentLoaded', () => {
-    loadSubjects();
-    loadTopics();
-
-    document.getElementById('start-quiz-btn')?.addEventListener('click', startQuiz);
-    document.getElementById('quiz-next-btn')?.addEventListener('click', nextQuestion);
-    document.getElementById('quiz-prev-btn')?.addEventListener('click', prevQuestion);
-    document.getElementById('quiz-done-btn')?.addEventListener('click', resetQuizView);
-
-    // Search bindings
-    document.getElementById('quiz-subject-select')?.addEventListener('change', handleSearchChange);
-    document.getElementById('quiz-topic-select')?.addEventListener('change', handleSearchChange);
-    document.getElementById('quiz-keyword')?.addEventListener('input', handleSearchChange);
-
-    // Modal bindings
-    document.getElementById('start-mcq-directly-btn')?.addEventListener('click', beginQuizRunner);
-    document.getElementById('cancel-pre-quiz-btn')?.addEventListener('click', () => {
-        document.getElementById('pre-quiz-modal').style.display = 'none';
-        window.pendingQuizData = null;
+    const navBtns = document.querySelectorAll('.nav-btn');
+    navBtns.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            if (e.currentTarget.getAttribute('data-target') === 'quiz-view') {
+                if (!currentQuiz) initQuizSetup();
+            }
+        });
     });
-
-    // Make sure we inject the Practice Wrong button into the Results view if it doesn't exist
-    const resultsContainer = document.getElementById('quiz-results');
-    if (resultsContainer && !document.getElementById('practice-wrong-btn')) {
-        const actionsDiv = document.createElement('div');
-        actionsDiv.className = "flex gap-4 mt-6 justify-center";
-        actionsDiv.innerHTML = `
-            <button id="practice-wrong-btn" class="primary-btn" style="display: none; background: #9333ea;">🧠 Practice Wrong Answers</button>
-        `;
-        resultsContainer.insertBefore(actionsDiv, document.getElementById('quiz-done-btn'));
-    }
 });

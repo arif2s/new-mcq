@@ -99,9 +99,9 @@ def get_cpu_embedding_models():
     active_model = app_state.get("embeddingModel", "tavakolih/all-MiniLM-L6-v2-pubmed-full")
 
     models = [
-        {"id": "tavakolih/all-MiniLM-L6-v2-pubmed-full", "name": "all-MiniLM-L6-v2-pubmed-full (PubMed Clinical)"},
-        {"id": "Xenova/all-MiniLM-L6-v2", "name": "all-MiniLM-L6-v2 (Generic Standard)"},
-        {"id": "TaylorAI/bge-micro-v2", "name": "bge-micro-v2 (Ultra Fast)"}
+        {"id": "Xenova/SapBERT-from-PubMedBERT-fulltext", "name": "SapBERT (PubMed/UMLS Clinical)"},
+        {"id": "onnx-community/Bio_ClinicalBERT-ONNX", "name": "Bio_ClinicalBERT (MIMIC-III)"},
+        {"id": "Xenova/bge-small-en-v1.5", "name": "BGE Small (Fast Hybrid)"}
     ]
     return {"models": models, "active": active_model}
 
@@ -111,8 +111,10 @@ def get_flashrank_models():
     active_model = app_state.get("flashrankModel", "ms-marco-TinyBERT-L-2-v2")
 
     models = [
-        {"id": "ms-marco-TinyBERT-L-2-v2", "name": "ms-marco-TinyBERT-L-2-v2 (Fast Default)"},
-        {"id": "ms-marco-MiniLM-L-12-v2", "name": "ms-marco-MiniLM-L-12-v2 (Highly Accurate)"}
+        {"id": "ms-marco-MiniLM-L-12-v2", "name": "ms-marco-MiniLM-L-12-v2 (Best balance of speed and accuracy)"},
+        {"id": "bge-reranker-base", "name": "bge-reranker-base (State-of-the-art open-source cross-encoding)"},
+        {"id": "bge-reranker-v2-m3", "name": "bge-reranker-v2-m3 (Multi-lingual and dense reranker)"},
+        {"id": "ms-marco-TinyBERT-L-2-v2", "name": "ms-marco-TinyBERT-L-2-v2 (Fast Default)"}
     ]
     return {"models": models, "active": active_model}
 
