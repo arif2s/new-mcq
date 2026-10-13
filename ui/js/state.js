@@ -23,8 +23,6 @@ async function fetchState() {
         const data = await res.json();
         if (data.app_persistence) {
             appState = { ...DEFAULT_PERSISTENCE, ...data.app_persistence };
-            // Ensure habit log is parsed properly if needed
-            return appState;
         }
     } catch (e) {
         console.error('Failed to fetch state', e);
@@ -51,9 +49,36 @@ function updateState(updates) {
     document.dispatchEvent(new CustomEvent('stateUpdated', { detail: appState }));
 }
 
+function exportState() {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appState, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", `medisearch_backup_${new Date().toISOString().split('T')[0]}.json`);
+    document.body.appendChild(downloadAnchorNode); // Required for Firefox
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+}
+
+async function importState(jsonString) {
+    try {
+        const parsed = JSON.parse(jsonString);
+        if (parsed && typeof parsed === 'object') {
+            appState = { ...DEFAULT_PERSISTENCE, ...parsed };
+            await saveState();
+            document.dispatchEvent(new CustomEvent('stateUpdated', { detail: appState }));
+            return true;
+        }
+    } catch (e) {
+        console.error("Invalid JSON file", e);
+    }
+    return false;
+}
+
 window.AppState = {
     get: () => appState,
     fetch: fetchState,
     save: saveState,
-    update: updateState
+    update: updateState,
+    exportData: exportState,
+    importData: importState
 };

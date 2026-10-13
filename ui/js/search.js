@@ -80,7 +80,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             try {
-                const response = await fetch('/api/sources/run_indexing', {
+                // FIXED: Changed from /api/sources/run_indexing to /api/sources/index
+                const response = await fetch('/api/sources/index', {
                     method: 'POST'
                 });
                 const data = await response.json();

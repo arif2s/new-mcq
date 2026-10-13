@@ -125,7 +125,7 @@ function renderHub() {
 
         cardNode.querySelector('.btn-retake').addEventListener('click', (e) => {
             e.stopPropagation();
-            alert("Retake feature is integrated via Quiz Engine.");
+            retakeSession(session.id, session.subject_name);
         });
 
         gridEl.appendChild(cardNode);
@@ -163,6 +163,53 @@ async function deleteSelectedSessions() {
             console.error(e);
             alert("Failed to delete sessions");
         }
+    }
+}
+
+// --- Retake Session Logic ---
+async function retakeSession(sessionId, subjectName) {
+    try {
+        const res = await fetch(`/api/sessions/${sessionId}/questions`);
+        if (res.ok) {
+            const sessionQuestions = await res.json();
+
+            // Map session questions back to the format expected by the Quiz Engine
+            const mappedQuestions = sessionQuestions.map(sq => ({
+                id: sq.question_id,
+                topic_name: sq.topic,
+                question: sq.question_text,
+                option_a: sq.opt_a,
+                option_b: sq.opt_b,
+                option_c: sq.opt_c,
+                option_d: sq.opt_d,
+                correct_answer: sq.correct_answer,
+                explanation: sq.explanation
+            }));
+
+            // Assign to the global pendingQuizData object used in quiz.js
+            window.pendingQuizData = {
+                config: {
+                    subjectName: `${subjectName || 'Mixed'} (Retake)`,
+                    timeLimitMinutes: 0,
+                    mode: 'test'
+                },
+                questions: mappedQuestions
+            };
+
+            // Programmatically navigate to the Quiz Engine tab
+            const navBtn = document.querySelector('.nav-btn[data-target="quiz-view"]');
+            if (navBtn) navBtn.click();
+
+            // Display the pre-quiz setup modal
+            const preQuizModal = document.getElementById('pre-quiz-modal');
+            if (preQuizModal) preQuizModal.style.display = 'flex';
+
+        } else {
+            alert("Failed to load questions from this session.");
+        }
+    } catch(e) {
+        console.error("Error preparing retake session:", e);
+        alert("Error connecting to server to prepare retake.");
     }
 }
 

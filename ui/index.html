@@ -17,10 +17,15 @@
       <nav class="left-rail">
         <div class="app-header">
           <div class="app-logo">Medisearch</div>
-          <button id="theme-toggle" class="icon-btn" aria-label="Toggle Theme">
-            <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
-            <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
-          </button>
+          <div class="flex gap-2">
+            <button id="open-help-btn" class="icon-btn" aria-label="Help & Documentation">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            </button>
+            <button id="theme-toggle" class="icon-btn" aria-label="Toggle Theme">
+              <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+              <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+            </button>
+          </div>
         </div>
 
         <div class="search-container">
@@ -572,6 +577,25 @@
               </select>
             </div>
           </div>
+
+          <!-- Data Management -->
+          <div class="p-4 border-t border-gray-700 mt-8">
+            <h3 class="text-lg font-semibold text-gray-200 mb-4 flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success-400"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+              Backup & Transfer
+            </h3>
+            <div class="grid md:grid-cols-2 gap-4">
+              <button id="export-data-btn" class="w-full py-3 bg-gray-800 text-gray-300 rounded-lg hover:bg-gray-700 transition-colors flex items-center justify-center gap-2 border border-gray-700">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                Export Backup (JSON)
+              </button>
+              <input type="file" id="import-data-file" accept=".json" class="hidden" />
+              <button id="import-data-btn" class="w-full py-3 bg-gray-800 text-gray-300 rounded-lg hover:bg-gray-700 transition-colors flex items-center justify-center gap-2 border border-gray-700">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                Import Backup (JSON)
+              </button>
+            </div>
+          </div>
         </section>
 
         <!-- ZIM VIEWER OVERLAY -->
@@ -591,8 +615,8 @@
       <!-- RIGHT INSPECTOR -->
       <aside class="right-inspector">
         <h3 class="inspector-title">Details Inspector</h3>
-        <div class="card glass-card inspector-card">
-            <p id="inspector-content" class="text-muted">Select a topic or entity to view details here.</p>
+        <div class="card glass-card inspector-card" id="inspector-content">
+            <p class="text-muted">Select a topic or entity to view details here.</p>
         </div>
       </aside>
     </div>
@@ -672,6 +696,34 @@
         <div class="modal-actions mt-24 flex gap-4 justify-end">
           <button id="close-modal-btn" class="secondary-btn">Close</button>
           <button id="go-to-settings-btn" class="primary-btn">Go to Settings</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- HELP MODAL -->
+    <div id="help-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 200;">
+      <div class="modal glass-modal w-full max-w-3xl max-h-[85vh] flex flex-col text-left p-0">
+        <div class="flex items-center justify-between p-4 border-b border-gray-700 bg-gray-800/50 rounded-t-24">
+          <h2 class="text-xl font-bold text-gray-100 flex items-center gap-2">📚 Help & Documentation</h2>
+          <button id="close-help-btn" class="p-2 text-gray-400 hover:text-white bg-transparent border-none cursor-pointer"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-6 space-y-8 text-sm text-gray-300">
+          <section>
+            <h3 class="text-lg font-semibold text-brand-400 mb-2">🎮 Quiz Modes</h3>
+            <ul class="space-y-2">
+              <li><strong>📝 Test Mode:</strong> Auto-advances quickly. Explanations shown at the end.</li>
+              <li><strong>📖 Learn Mode:</strong> Shows detailed explanations immediately after answering.</li>
+              <li><strong>🎯 Target Mode:</strong> Quiz runs infinitely until you hit your target correct count.</li>
+            </ul>
+          </section>
+          <section>
+            <h3 class="text-lg font-semibold text-brand-400 mb-2">🧠 Spaced Repetition</h3>
+            <p>Uses the FSRS algorithm. Questions answered incorrectly or slowly will appear more frequently in future sets. Toggle this in the Quiz Configuration menu.</p>
+          </section>
+          <section>
+            <h3 class="text-lg font-semibold text-brand-400 mb-2">🏅 Rank Simulation</h3>
+            <p>Estimates exam percentiles based on projected marks. Click "Edit Rank Data" in the Dashboard to map your own competitive exam cutoffs.</p>
+          </section>
         </div>
       </div>
     </div>

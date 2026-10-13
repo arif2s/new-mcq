@@ -48,6 +48,125 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('theme', newTheme);
     });
 
+    // --- Help Modal Logic ---
+    const helpModal = document.getElementById('help-modal');
+    const openHelpBtn = document.getElementById('open-help-btn');
+    const closeHelpBtn = document.getElementById('close-help-btn');
+
+    if (openHelpBtn && helpModal) {
+        openHelpBtn.addEventListener('click', () => helpModal.style.display = 'flex');
+    }
+    if (closeHelpBtn && helpModal) {
+        closeHelpBtn.addEventListener('click', () => helpModal.style.display = 'none');
+    }
+    // Close modal on click outside
+    if (helpModal) {
+        helpModal.addEventListener('click', (e) => {
+            if (e.target === helpModal) helpModal.style.display = 'none';
+        });
+    }
+
+    // --- Synthesis Inspector Fetch Logic ---
+    async function fetchAndDisplaySynthesis(topic) {
+        const inspectorContent = document.getElementById('inspector-content');
+        if (!inspectorContent) return;
+
+        inspectorContent.innerHTML = `<div class="text-center text-gray-400 mt-10">
+            <svg class="animate-spin h-8 w-8 mx-auto text-brand-500 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Synthesizing local notes for <strong>${escapeHTML(topic)}</strong>...
+        </div>`;
+
+        try {
+            const res = await fetch(`/api/mcq/synthesis?topic=${encodeURIComponent(topic)}`);
+            if (!res.ok) throw new Error('Synthesis fetch failed or topic is not yet processed.');
+            const data = await res.json();
+
+            let html = `<div class="space-y-4 text-xs">`;
+
+            if (data.enhanced_explanation) {
+                html += `
+                    <div class="bg-gray-800/80 border border-gray-700 rounded-xl p-3">
+                        <h4 class="font-semibold text-brand-300 mb-2">📖 High-Yield Synopsis</h4>
+                        <div class="text-gray-300 leading-relaxed whitespace-pre-wrap">${escapeHTML(data.enhanced_explanation)}</div>
+                    </div>
+                `;
+            }
+
+            if (data.distractor_analysis && data.distractor_analysis !== 'N/A') {
+                html += `
+                    <div class="bg-gray-800/80 border border-gray-700 rounded-xl p-3">
+                        <h4 class="font-semibold text-purple-300 mb-2">✨ Distractor Rationale</h4>
+                        <div class="text-gray-300 leading-relaxed whitespace-pre-wrap">${escapeHTML(data.distractor_analysis)}</div>
+                    </div>
+                `;
+            }
+
+            // Extract Discrepancies if they exist in the unified article
+            const variancesMatch = data.unified_article ? data.unified_article.match(/### Discrepancies(?:\s*&\s*Variances)?\n([\s\S]*)/i) : null;
+            if (variancesMatch) {
+                html += `
+                    <div class="bg-warning-500/10 border border-warning-500/30 rounded-xl p-3">
+                        <h4 class="font-semibold text-warning-400 mb-1 flex items-center gap-1.5">⚠️ Clinical Variance Detected</h4>
+                        <p class="text-gray-300 text-[11px] leading-relaxed whitespace-pre-wrap">${escapeHTML(variancesMatch[1].trim())}</p>
+                    </div>
+                `;
+            }
+
+            if (data.references && Object.keys(data.references).length > 0) {
+                html += `<div class="bg-gray-800/80 border border-gray-700 rounded-xl p-3">
+                    <h4 class="font-semibold text-gray-300 mb-2">📄 Verified Source References</h4>
+                    <div class="space-y-2">`;
+
+                if (data.references.pdf) {
+                    data.references.pdf.forEach(pdf => {
+                        html += `<button class="citation-pdf w-full text-left p-2 bg-gray-900/60 hover:bg-gray-900 rounded-lg border border-gray-700/50 flex items-center justify-between transition-colors" data-filepath="${escapeHTML(pdf.file_path)}" data-page="${pdf.page || 1}">
+                            <div class="overflow-hidden">
+                                <p class="font-medium text-brand-400 truncate">${escapeHTML(pdf.title)}</p>
+                                <p class="text-[10px] text-gray-500">SumatraPDF • Page ${pdf.page || 1}</p>
+                            </div>
+                        </button>`;
+                    });
+                }
+                if (data.references.obsidian) {
+                    data.references.obsidian.forEach(obs => {
+                        html += `<button class="citation-obsidian w-full text-left p-2 bg-gray-900/60 hover:bg-gray-900 rounded-lg border border-gray-700/50 flex items-center justify-between transition-colors" data-file="${escapeHTML(obs.title)}">
+                            <div class="overflow-hidden">
+                                <p class="font-medium text-purple-400 truncate">${escapeHTML(obs.title)}</p>
+                                <p class="text-[10px] text-gray-500">Obsidian Vault Note</p>
+                            </div>
+                        </button>`;
+                    });
+                }
+                if (data.references.zim) {
+                     data.references.zim.forEach(zim => {
+                        html += `<button class="citation-zim w-full text-left p-2 bg-gray-900/60 hover:bg-gray-900 rounded-lg border border-gray-700/50 flex items-center justify-between transition-colors" data-article-id="${escapeHTML(zim.file_path || zim.title)}">
+                            <div class="overflow-hidden">
+                                <p class="font-medium text-blue-400 truncate">${escapeHTML(zim.title)}</p>
+                                <p class="text-[10px] text-gray-500">ZIM Article</p>
+                            </div>
+                        </button>`;
+                    });
+                }
+
+                html += `</div></div>`;
+            }
+
+            html += `</div>`;
+            inspectorContent.innerHTML = html;
+
+        } catch (err) {
+            console.error("Inspector Panel Error:", err);
+            inspectorContent.innerHTML = `<div class="text-danger-500 p-4 bg-danger-500/10 border border-danger-500/30 rounded-lg">
+                <p class="font-bold">Error loading synthesis</p>
+                <p class="text-xs text-gray-400 mt-1">${escapeHTML(err.message)}</p>
+                <p class="text-xs text-gray-500 mt-2">Check the Processing Queue to see if LM Studio has finished generating notes for this topic.</p>
+            </div>`;
+        }
+    }
+
     // --- MCQ Topic Extraction Logic ---
     const extractBtn = document.getElementById('extract-btn');
     const topicsContainer = document.getElementById('topics-container');
@@ -66,11 +185,9 @@ document.addEventListener('DOMContentLoaded', () => {
             chip.className = 'topic-chip';
             chip.textContent = topic; // Safe text injection
 
+            // Wire up the click to fetch synthesis instead of just echoing text
             chip.addEventListener('click', () => {
-                const inspectorContent = document.getElementById('inspector-content');
-                if (inspectorContent) {
-                    inspectorContent.innerHTML = `<strong>Selected Entity:</strong><br/>${escapeHTML(topic)}<br/><br/>You can perform further actions on this entity here.`;
-                }
+                fetchAndDisplaySynthesis(topic);
             });
             fragment.appendChild(chip);
         });
@@ -124,7 +241,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const filePath = pdfBtn.dataset.filepath;
             const page = pdfBtn.dataset.page || 1;
             try {
-                const res = await fetch(`/api/notes/launch-sumatra?file_path=${encodeURIComponent(filePath)}&page=${page}`);
+                const res = await fetch('/api/sources/open_pdf', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ file_path: filePath, page: parseInt(page) })
+                });
                 const data = await res.json();
                 if (data.status !== 'success') console.error('Error launching SumatraPDF:', data.message);
             } catch (err) {
@@ -133,7 +254,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Handle Obsidian Links (Bug fixed: removed duplicate 'file' declaration)
+        // Handle Obsidian Links
         const obsBtn = target.closest('.citation-obsidian');
         if (obsBtn) {
             e.preventDefault();
