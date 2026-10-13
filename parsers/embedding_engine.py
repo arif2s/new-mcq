@@ -2,19 +2,22 @@ import os
 import logging
 from huggingface_hub import hf_hub_download
 from tokenizers import Tokenizer
-import onnxruntime as ort
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 class CPUEmbeddingEngine:
-    def __init__(self, model_id: str = "tavakolih/all-MiniLM-L6-v2-pubmed-full"):
+    # 1. Updated default model_id to match the downloaded Xenova model
+    def __init__(self, model_id: str = "Xenova/all-MiniLM-L6-v2"):
         self.model_id = model_id
         self.tokenizer = None
         self.session = None
-        self._load_model()
+        # 2. Removed self._load_model() to prevent Uvicorn from loading ONNX in a background worker thread
 
     def _load_model(self):
+        # 3. Lazy import onnxruntime here to prevent the Windows Access Violation segfault
+        import onnxruntime as ort
+
         try:
             logger.info(f"Loading tokenizer for {self.model_id}")
             # Ensure we have tokenizer.json
@@ -47,6 +50,10 @@ class CPUEmbeddingEngine:
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
+
+        # 4. Trigger the model load exactly when the first embedding is requested (safely on the main thread)
+        if self.session is None:
+            self._load_model()
 
         try:
             # Tokenize texts

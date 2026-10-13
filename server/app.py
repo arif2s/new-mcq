@@ -1,3 +1,8 @@
+# Add these to the VERY TOP of server/app.py to pre-warm Windows DLLs safely
+import onnxruntime
+import lancedb
+import tantivy
+
 import json
 import asyncio
 from contextlib import asynccontextmanager
