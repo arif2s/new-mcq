@@ -167,5 +167,125 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // ==========================================
+    // 4. GLOBAL EVENT DELEGATION (CITATIONS & MODALS)
+    // ==========================================
 
+    // Help Modal Logic
+    const helpModal = document.getElementById('help-modal');
+    document.getElementById('open-help-btn')?.addEventListener('click', () => {
+        if(helpModal) helpModal.style.display = 'flex';
+    });
+    document.getElementById('close-help-btn')?.addEventListener('click', () => {
+        if(helpModal) helpModal.style.display = 'none';
+    });
+    helpModal?.addEventListener('click', (e) => {
+        if (e.target === helpModal) helpModal.style.display = 'none';
+    });
+
+    // Global Citation Click Handler (Makes PDF, Obsidian, ZIM links work anywhere)
+    document.addEventListener('click', async (e) => {
+        const target = e.target;
+
+        // 1. SumatraPDF Launcher
+        const pdfBtn = target.closest('.citation-pdf');
+        if (pdfBtn) {
+            e.preventDefault();
+            const filePath = pdfBtn.dataset.filepath;
+            const page = pdfBtn.dataset.page || 1;
+            try {
+                const res = await fetch('/api/sources/open_pdf', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ file_path: filePath, page: parseInt(page) })
+                });
+                const data = await res.json();
+                if (data.status !== 'success') console.error('Error launching SumatraPDF:', data.message);
+            } catch (err) {
+                console.error('Failed to launch PDF:', err);
+            }
+            return;
+        }
+
+        // 2. Obsidian Deep Linker
+        const obsBtn = target.closest('.citation-obsidian');
+        if (obsBtn) {
+            e.preventDefault();
+            const vault = obsBtn.dataset.vault || 'Primary';
+            const file = obsBtn.dataset.file;
+            window.location.href = `obsidian://open?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(file)}`;
+            return;
+        }
+
+        // 3. Local ZIM Article Viewer
+        const zimBtn = target.closest('.citation-zim');
+        if (zimBtn) {
+            e.preventDefault();
+            const articleId = zimBtn.dataset.articleId;
+            try {
+                const res = await fetch(`/api/notes/zim-article?article_id=${encodeURIComponent(articleId)}`);
+                const data = await res.json();
+                if (data.status === 'success') {
+                    const viewerContainer = document.getElementById('zim-viewer-container');
+                    const contentArea = document.getElementById('zim-content-area');
+                    if (viewerContainer && contentArea) {
+                        const safeHTML = window.DOMPurify ? window.DOMPurify.sanitize(data.html) : window.escapeHTML(data.html);
+                        contentArea.innerHTML = safeHTML;
+                        viewerContainer.style.display = 'flex';
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to load ZIM article:', err);
+            }
+            return;
+        }
+
+        // 4. Close ZIM Viewer
+        const closeZimBtn = target.closest('#close-zim-viewer-btn');
+        if (closeZimBtn) {
+            const viewerContainer = document.getElementById('zim-viewer-container');
+            if (viewerContainer) viewerContainer.style.display = 'none';
+            const contentArea = document.getElementById('zim-content-area');
+            if (contentArea) contentArea.innerHTML = '';
+        }
+    });
+
+    // ==========================================
+    // 5. SETTINGS DATA LOADERS
+    // ==========================================
+
+    const loadModels = (endpoint, selectId, apiRoute) => {
+        const selectEl = document.getElementById(selectId);
+        if (!selectEl) return;
+
+        fetch(endpoint)
+            .then(res => res.json())
+            .then(data => {
+                selectEl.innerHTML = '';
+                const fragment = document.createDocumentFragment();
+                data.models.forEach(model => {
+                    const opt = document.createElement('option');
+                    opt.value = model.id;
+                    opt.textContent = model.name;
+                    opt.selected = (model.id === data.active);
+                    fragment.appendChild(opt);
+                });
+                selectEl.appendChild(fragment);
+            })
+            .catch(() => {
+                selectEl.innerHTML = '<option value="">Error loading models</option>';
+            });
+
+        selectEl.addEventListener('change', (e) => {
+            fetch(apiRoute, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model_name: e.target.value })
+            });
+        });
+    };
+
+    // Load dynamic models into the settings pane
+    loadModels('/api/models/cpu_embedding_models', 'cpu-embed-model-select', '/api/models/set_embedding_model');
+    loadModels('/api/models/flashrank_models', 'flashrank-model-select', '/api/models/set_flashrank_model');
 });
