@@ -121,91 +121,95 @@ tailwind.config = {
 
         <!-- MCQ EXTRACTOR VIEW -->
         <section id="home-view" class="view-section fade-enter">
-          <header class="view-header">
-            <h2>Medical Entity Extractor & MCQ</h2>
-            <p class="subtitle">Extract clinical entities and analyze MCQ questions.</p>
-          </header>
+          <div class="max-w-5xl mx-auto">
+            <header class="view-header">
+              <h2>Medical Entity Extractor & MCQ</h2>
+              <p class="subtitle">Extract clinical entities and analyze MCQ questions.</p>
+            </header>
 
-          <div class="card glass-card">
-            <textarea id="mcq-text" class="glass-input large-textarea" placeholder="Enter MCQ stem text here...">The patient has dyspnea but no asthma. They were prescribed amoxicillin.</textarea>
-            <div class="action-bar">
-              <button id="extract-btn" class="primary-btn pulse-on-hover">Extract Entities</button>
+            <div class="card glass-card">
+              <textarea id="mcq-text" class="glass-input large-textarea" placeholder="Enter MCQ stem text here...">The patient has dyspnea but no asthma. They were prescribed amoxicillin.</textarea>
+              <div class="action-bar">
+                <button id="extract-btn" class="primary-btn pulse-on-hover">Extract Entities</button>
+              </div>
             </div>
-          </div>
 
-          <div class="card glass-card topics-section">
-            <h3>Extracted Entities</h3>
-            <div id="topics-container" class="chip-container">
-              <!-- Extracted topics will be dynamically rendered here as chips -->
+            <div class="card glass-card topics-section">
+              <h3>Extracted Entities</h3>
+              <div id="topics-container" class="chip-container">
+                <!-- Extracted topics will be dynamically rendered here as chips -->
+              </div>
             </div>
-          </div>
 
-          <div class="card glass-card explanation-section" style="margin-top: 20px;">
-            <h3>Explanation & Topics</h3>
-            <div id="explanation-container" class="content-placeholder">
-              <p>Analyze an MCQ to view explanations and relevant medical topics here.</p>
+            <div class="card glass-card explanation-section" style="margin-top: 20px;">
+              <h3>Explanation & Topics</h3>
+              <div id="explanation-container" class="content-placeholder">
+                <p>Analyze an MCQ to view explanations and relevant medical topics here.</p>
+              </div>
             </div>
           </div>
         </section>
 
         <!-- QUIZ ENGINE VIEW -->
         <section id="quiz-view" class="view-section fade-enter">
-          <header class="view-header">
-            <h2>Quiz Engine</h2>
-            <p class="subtitle">Test your knowledge against your database.</p>
-          </header>
+          <div class="max-w-5xl mx-auto">
+            <header class="view-header">
+              <h2>Quiz Engine</h2>
+              <p class="subtitle">Test your knowledge against your database.</p>
+            </header>
 
-          <div id="quiz-setup" class="card glass-card">
-            <h3>Setup Quiz</h3>
-            <div class="grid-2col mt-15">
-              <div class="form-group mt-5">
-                <label>Subject</label>
-                <select id="quiz-subject-select" class="glass-select"><option value="all">Loading...</option></select>
+            <div id="quiz-setup" class="card glass-card">
+              <h3>Setup Quiz</h3>
+              <div class="grid-2col mt-15">
+                <div class="form-group mt-5">
+                  <label>Subject</label>
+                  <select id="quiz-subject-select" class="glass-select"><option value="all">Loading...</option></select>
+                </div>
+                <div class="form-group mt-5">
+                  <label>Topic</label>
+                  <select id="quiz-topic-select" class="glass-select"><option value="all">Loading...</option></select>
+                </div>
+                <div class="form-group mt-5">
+                  <label>Keyword Search</label>
+                  <input type="text" id="quiz-keyword" class="glass-input" placeholder="Optional keyword...">
+                </div>
+                <div class="form-group mt-5">
+                  <label>Question Count</label>
+                  <input type="number" id="quiz-count" class="glass-input" value="10" min="1" max="100">
+                </div>
+                <div class="form-group mt-5">
+                  <label>Time Limit (Minutes, 0 for infinite)</label>
+                  <input type="number" id="quiz-time" class="glass-input" value="0" min="0">
+                </div>
               </div>
-              <div class="form-group mt-5">
-                <label>Topic</label>
-                <select id="quiz-topic-select" class="glass-select"><option value="all">Loading...</option></select>
-              </div>
-              <div class="form-group mt-5">
-                <label>Keyword Search</label>
-                <input type="text" id="quiz-keyword" class="glass-input" placeholder="Optional keyword...">
-              </div>
-              <div class="form-group mt-5">
-                <label>Question Count</label>
-                <input type="number" id="quiz-count" class="glass-input" value="10" min="1" max="100">
-              </div>
-              <div class="form-group mt-5">
-                <label>Time Limit (Minutes, 0 for infinite)</label>
-                <input type="number" id="quiz-time" class="glass-input" value="0" min="0">
-              </div>
+              <p id="quiz-match-count" class="text-sm text-brand-400 mt-10">Matching Questions: 0</p>
+              <button id="start-quiz-btn" class="primary-btn mt-20">Start Quiz</button>
             </div>
-            <p id="quiz-match-count" class="text-sm text-brand-400 mt-10">Matching Questions: 0</p>
-            <button id="start-quiz-btn" class="primary-btn mt-20">Start Quiz</button>
-          </div>
 
-          <div id="quiz-active" class="card glass-card" style="display: none;">
-            <div class="flex justify-between items-center mb-10">
-                <h3 id="quiz-progress">Question 1 of 10</h3>
-                <div id="quiz-timer-display" class="text-xl font-mono text-brand-400"></div>
+            <div id="quiz-active" class="card glass-card" style="display: none;">
+              <div class="flex justify-between items-center mb-10">
+                  <h3 id="quiz-progress">Question 1 of 10</h3>
+                  <div id="quiz-timer-display" class="text-xl font-mono text-brand-400"></div>
+              </div>
+              <div class="mb-20 text-lg p-4 bg-gray-900 rounded border border-gray-700" id="quiz-stem"></div>
+              <div id="quiz-options" class="flex flex-col gap-3"></div>
+              <div class="flex justify-between mt-20">
+                  <button id="quiz-prev-btn" class="secondary-btn" disabled>Previous</button>
+                  <button id="quiz-next-btn" class="secondary-btn">Next</button>
+              </div>
             </div>
-            <div class="mb-20 text-lg p-4 bg-gray-900 rounded border border-gray-700" id="quiz-stem"></div>
-            <div id="quiz-options" class="flex flex-col gap-3"></div>
-            <div class="flex justify-between mt-20">
-                <button id="quiz-prev-btn" class="secondary-btn" disabled>Previous</button>
-                <button id="quiz-next-btn" class="secondary-btn">Next</button>
-            </div>
-          </div>
 
-          <div id="quiz-results" class="card glass-card" style="display: none;">
-            <h3 class="text-center text-2xl mb-10">Quiz Completed</h3>
-            <div class="flex justify-center gap-10 mb-20">
-                <div class="text-center"><div class="text-3xl text-brand-400 font-bold" id="res-score"></div><div>Score</div></div>
-                <div class="text-center"><div class="text-3xl font-bold" id="res-correct"></div><div>Correct</div></div>
-                <div class="text-center"><div class="text-3xl font-bold" id="res-time"></div><div>Time</div></div>
+            <div id="quiz-results" class="card glass-card" style="display: none;">
+              <h3 class="text-center text-2xl mb-10">Quiz Completed</h3>
+              <div class="flex justify-center gap-10 mb-20">
+                  <div class="text-center"><div class="text-3xl text-brand-400 font-bold" id="res-score"></div><div>Score</div></div>
+                  <div class="text-center"><div class="text-3xl font-bold" id="res-correct"></div><div>Correct</div></div>
+                  <div class="text-center"><div class="text-3xl font-bold" id="res-time"></div><div>Time</div></div>
+              </div>
+              <h4 class="mb-10 text-lg">Review</h4>
+              <div id="res-explanations" class="flex flex-col gap-4 max-h-[500px] overflow-y-auto pr-2"></div>
+              <button id="quiz-done-btn" class="primary-btn w-full mt-20">Back to Setup</button>
             </div>
-            <h4 class="mb-10 text-lg">Review</h4>
-            <div id="res-explanations" class="flex flex-col gap-4 max-h-[500px] overflow-y-auto pr-2"></div>
-            <button id="quiz-done-btn" class="primary-btn w-full mt-20">Back to Setup</button>
           </div>
         </section>
 
@@ -426,190 +430,198 @@ tailwind.config = {
 
         <!-- HABIT TRACKER VIEW -->
         <section id="habit-tracker-view" class="view-section fade-enter">
-          <header class="view-header">
-            <h2>Habit Tracker</h2>
-            <p class="subtitle">Track your learning and review habits over time.</p>
-          </header>
-          <div class="card glass-card">
-             <div class="grid-2col mb-20">
-                <div class="stat-box"><div class="stat-val text-brand-400" id="ht-active-streak">0 Days</div><div class="stat-label">Active Streak</div></div>
-                <div class="stat-box"><div class="stat-val text-brand-400" id="ht-longest-streak">0 Days</div><div class="stat-label">Longest Streak</div></div>
-                <div class="stat-box"><div class="stat-val" id="ht-week-q">0</div><div class="stat-label">Questions (Last 7 Days)</div></div>
-                <div class="stat-box"><div class="stat-val" id="ht-month-q">0</div><div class="stat-label">Questions (Last 30 Days)</div></div>
-             </div>
-             <div class="mt-20 overflow-x-auto">
-                 <h4 class="mb-10 text-sm text-gray-400">Activity Calendar (Last 365 Days)</h4>
-                 <div id="ht-calendar" class="min-w-[800px] p-4 bg-gray-900 rounded border border-gray-700"></div>
-             </div>
+          <div class="max-w-5xl mx-auto">
+            <header class="view-header">
+              <h2>Habit Tracker</h2>
+              <p class="subtitle">Track your learning and review habits over time.</p>
+            </header>
+            <div class="card glass-card">
+               <div class="grid-2col mb-20">
+                  <div class="stat-box"><div class="stat-val text-brand-400" id="ht-active-streak">0 Days</div><div class="stat-label">Active Streak</div></div>
+                  <div class="stat-box"><div class="stat-val text-brand-400" id="ht-longest-streak">0 Days</div><div class="stat-label">Longest Streak</div></div>
+                  <div class="stat-box"><div class="stat-val" id="ht-week-q">0</div><div class="stat-label">Questions (Last 7 Days)</div></div>
+                  <div class="stat-box"><div class="stat-val" id="ht-month-q">0</div><div class="stat-label">Questions (Last 30 Days)</div></div>
+               </div>
+               <div class="mt-20 overflow-x-auto">
+                   <h4 class="mb-10 text-sm text-gray-400">Activity Calendar (Last 365 Days)</h4>
+                   <div id="ht-calendar" class="min-w-[800px] p-4 bg-gray-900 rounded border border-gray-700"></div>
+               </div>
+            </div>
           </div>
         </section>
 
         <!-- EXPERTISE MAP VIEW -->
         <section id="expertise-view" class="view-section fade-enter">
-          <header class="view-header flex justify-between items-center">
-            <div>
-              <h2>Expertise Map</h2>
-              <p class="subtitle">Track your mastery level across all topics and subjects.</p>
+          <div class="max-w-6xl mx-auto">
+            <header class="view-header flex justify-between items-center mb-6">
+              <div>
+                <h2>Expertise Map</h2>
+                <p class="subtitle">Track your mastery level across all topics and subjects.</p>
+              </div>
+            </header>
+
+            <div id="expertise-empty" class="text-center py-20 hidden">
+                <h2 class="text-xl text-gray-400 mb-2">No expertise data yet</h2>
+                <p class="text-gray-500">Complete quizzes to start building your expertise map!</p>
             </div>
-          </header>
 
-          <div id="expertise-empty" class="text-center py-20 hidden">
-              <h2 class="text-xl text-gray-400 mb-2">No expertise data yet</h2>
-              <p class="text-gray-500">Complete quizzes to start building your expertise map!</p>
-          </div>
+            <div id="expertise-content" class="hidden">
+                <!-- Overall Distribution -->
+                <div class="bg-gray-800/60 rounded-xl p-6 border border-gray-700 mb-8">
+                    <h3 class="text-lg font-semibold text-gray-200 mb-4">📊 Expertise Distribution</h3>
+                    <div id="expertise-distribution-grid" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"></div>
+                    <div class="w-full h-6 rounded-full overflow-hidden flex" id="expertise-distribution-bar"></div>
+                </div>
 
-          <div id="expertise-content" class="hidden max-w-6xl mx-auto">
-              <!-- Overall Distribution -->
-              <div class="bg-gray-800/60 rounded-xl p-6 border border-gray-700 mb-8">
-                  <h3 class="text-lg font-semibold text-gray-200 mb-4">📊 Expertise Distribution</h3>
-                  <div id="expertise-distribution-grid" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"></div>
-                  <div class="w-full h-6 rounded-full overflow-hidden flex" id="expertise-distribution-bar"></div>
-              </div>
+                <!-- Recommendations -->
+                <div class="bg-gradient-to-r from-purple-600/20 to-brand-600/20 rounded-xl p-6 border border-purple-500/30 mb-8">
+                    <h3 class="text-lg font-semibold text-gray-200 mb-4">🎯 Focus Recommendations</h3>
+                    <div id="expertise-recommendations" class="space-y-3"></div>
+                </div>
 
-              <!-- Recommendations -->
-              <div class="bg-gradient-to-r from-purple-600/20 to-brand-600/20 rounded-xl p-6 border border-purple-500/30 mb-8">
-                  <h3 class="text-lg font-semibold text-gray-200 mb-4">🎯 Focus Recommendations</h3>
-                  <div id="expertise-recommendations" class="space-y-3"></div>
-              </div>
-
-              <!-- By Subject -->
-              <div id="expertise-subjects-container"></div>
+                <!-- By Subject -->
+                <div id="expertise-subjects-container"></div>
+            </div>
           </div>
         </section>
 
         <!-- PROCESSING QUEUE VIEW -->
         <section id="queue-view" class="view-section fade-enter">
-          <header class="view-header">
-            <h2>Processing Queue <span id="queue-worker-status" class="badge bg-warning ml-2">Checking...</span></h2>
-            <p class="subtitle">Monitor background tasks and LLM generation queue.</p>
-          </header>
+          <div class="max-w-5xl mx-auto">
+            <header class="view-header">
+              <h2>Processing Queue <span id="queue-worker-status" class="badge bg-warning ml-2">Checking...</span></h2>
+              <p class="subtitle">Monitor background tasks and LLM generation queue.</p>
+            </header>
 
-          <div class="grid-4col mb-20 gap-4" style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr;">
-            <div class="card glass-card text-center p-4">
-                <div class="text-3xl font-bold text-gray-200" id="queue-pending">0</div>
-                <div class="text-sm text-gray-400">Pending</div>
+            <div class="grid-4col mb-20 gap-4" style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr;">
+              <div class="card glass-card text-center p-4">
+                  <div class="text-3xl font-bold text-gray-200" id="queue-pending">0</div>
+                  <div class="text-sm text-gray-400">Pending</div>
+              </div>
+              <div class="card glass-card text-center p-4">
+                  <div class="text-3xl font-bold text-brand-400" id="queue-processing">0</div>
+                  <div class="text-sm text-gray-400">Processing</div>
+              </div>
+              <div class="card glass-card text-center p-4">
+                  <div class="text-3xl font-bold text-success-400" id="queue-completed">0</div>
+                  <div class="text-sm text-gray-400">Completed</div>
+              </div>
+              <div class="card glass-card text-center p-4">
+                  <div class="text-3xl font-bold text-danger-400" id="queue-failed">0</div>
+                  <div class="text-sm text-gray-400">Failed</div>
+              </div>
             </div>
-            <div class="card glass-card text-center p-4">
-                <div class="text-3xl font-bold text-brand-400" id="queue-processing">0</div>
-                <div class="text-sm text-gray-400">Processing</div>
-            </div>
-            <div class="card glass-card text-center p-4">
-                <div class="text-3xl font-bold text-success-400" id="queue-completed">0</div>
-                <div class="text-sm text-gray-400">Completed</div>
-            </div>
-            <div class="card glass-card text-center p-4">
-                <div class="text-3xl font-bold text-danger-400" id="queue-failed">0</div>
-                <div class="text-sm text-gray-400">Failed</div>
-            </div>
-          </div>
 
-          <div class="card glass-card">
-             <div class="flex justify-between items-center mb-10">
-                 <h3 id="queue-total">Recent Tasks</h3>
-                 <div class="flex gap-2">
-                     <button id="queue-retry-btn" class="secondary-btn text-xs">Retry Failed</button>
-                     <button id="queue-clear-btn" class="secondary-btn text-xs" style="color: #ef4444; border-color: #ef4444;">Clear Failed</button>
-                 </div>
-             </div>
-             <div id="queue-tasks-list" class="max-h-[400px] overflow-y-auto"></div>
+            <div class="card glass-card">
+               <div class="flex justify-between items-center mb-10">
+                   <h3 id="queue-total">Recent Tasks</h3>
+                   <div class="flex gap-2">
+                       <button id="queue-retry-btn" class="secondary-btn text-xs">Retry Failed</button>
+                       <button id="queue-clear-btn" class="secondary-btn text-xs" style="color: #ef4444; border-color: #ef4444;">Clear Failed</button>
+                   </div>
+               </div>
+               <div id="queue-tasks-list" class="max-h-[400px] overflow-y-auto"></div>
+            </div>
           </div>
         </section>
 
         <!-- SETTINGS VIEW -->
         <section id="settings-view" class="view-section fade-enter">
-          <header class="view-header">
-            <h2>System Settings</h2>
-            <p class="subtitle">Diagnostics, model configuration, and database management.</p>
-          </header>
+          <div class="max-w-5xl mx-auto">
+            <header class="view-header">
+              <h2>System Settings</h2>
+              <p class="subtitle">Diagnostics, model configuration, and database management.</p>
+            </header>
 
-          <div class="grid-2col">
-              <div class="card glass-card">
-                <h3>Database Construction</h3>
-                <p class="text-muted">Build the Tantivy index from your documents.</p>
-                <button id="build-db-btn" class="primary-btn">Build Database</button>
-                <div class="progress-container mt-15" style="display: none;" id="build-progress-container">
-                    <div class="progress-bar-bg">
-                        <div class="progress-bar-fill" id="build-progress" style="width: 0%"></div>
-                    </div>
+            <div class="grid-2col">
+                <div class="card glass-card">
+                  <h3>Database Construction</h3>
+                  <p class="text-muted">Build the Tantivy index from your documents.</p>
+                  <button id="build-db-btn" class="primary-btn">Build Database</button>
+                  <div class="progress-container mt-15" style="display: none;" id="build-progress-container">
+                      <div class="progress-bar-bg">
+                          <div class="progress-bar-fill" id="build-progress" style="width: 0%"></div>
+                      </div>
+                  </div>
+                  <p id="build-status" class="status-text mt-10" style="display: none;"></p>
                 </div>
-                <p id="build-status" class="status-text mt-10" style="display: none;"></p>
-              </div>
 
-              <div class="card glass-card">
-                <h3>System Diagnostics</h3>
-                <ul id="diagnostics-list" class="diag-list">
-                  <li><span class="diag-label">LM Studio (Port 1234):</span> <span id="diag-lm-studio" class="badge bg-warning">Checking...</span></li>
-                  <li><span class="diag-label">Database Row Counts:</span> <span id="diag-db-rows" class="badge bg-warning">Checking...</span></li>
-                  <li><span class="diag-label">SumatraPDF:</span> <span id="diag-sumatra" class="badge bg-warning">Checking...</span></li>
-                </ul>
-                <button id="refresh-diag-btn" class="secondary-btn mt-15">Refresh</button>
-              </div>
-          </div>
-
-          <div class="grid-2col mt-20">
-              <div class="card glass-card">
-                <h3>App Preferences</h3>
-                <div class="form-group mt-5">
-                  <label>Daily Questions Target:</label>
-                  <input type="number" id="set-q-target" class="glass-input">
+                <div class="card glass-card">
+                  <h3>System Diagnostics</h3>
+                  <ul id="diagnostics-list" class="diag-list">
+                    <li><span class="diag-label">LM Studio (Port 1234):</span> <span id="diag-lm-studio" class="badge bg-warning">Checking...</span></li>
+                    <li><span class="diag-label">Database Row Counts:</span> <span id="diag-db-rows" class="badge bg-warning">Checking...</span></li>
+                    <li><span class="diag-label">SumatraPDF:</span> <span id="diag-sumatra" class="badge bg-warning">Checking...</span></li>
+                  </ul>
+                  <button id="refresh-diag-btn" class="secondary-btn mt-15">Refresh</button>
                 </div>
-                <div class="form-group mt-5">
-                  <label>Daily Correct Target:</label>
-                  <input type="number" id="set-c-target" class="glass-input">
-                </div>
-              </div>
-
-              <div class="card glass-card">
-                <h3>Queue Configuration</h3>
-                <div class="form-group mt-5">
-                  <label>Processing Queue Limit:</label>
-                  <input type="number" id="set-q-limit" class="glass-input">
-                  <p class="text-xs text-gray-400 mt-1">Number of items pulled per batch.</p>
-                </div>
-                <div class="form-group mt-5">
-                  <label>Processing Queue Hard Limit:</label>
-                  <input type="number" id="set-qh-limit" class="glass-input">
-                  <p class="text-xs text-gray-400 mt-1">Global maximum size of the pending queue.</p>
-                </div>
-              </div>
-          </div>
-
-          <div class="mt-24"><button id="save-settings-btn" class="primary-btn w-full sm:w-auto">Save App Settings</button></div>
-
-
-          <div class="card glass-card mt-20">
-            <h3>Model Configuration</h3>
-            <div class="form-group mt-5">
-              <label for="cpu-embed-model-select">CPU Embedding Model:</label>
-              <select id="cpu-embed-model-select" class="glass-select">
-                <option value="loading">Loading models...</option>
-              </select>
             </div>
 
-            <div class="form-group mt-5">
-              <label for="flashrank-model-select">FlashRank Model:</label>
-              <select id="flashrank-model-select" class="glass-select">
-                <option value="loading">Loading models...</option>
-              </select>
-            </div>
-          </div>
+            <div class="grid-2col mt-20">
+                <div class="card glass-card">
+                  <h3>App Preferences</h3>
+                  <div class="form-group mt-5">
+                    <label>Daily Questions Target:</label>
+                    <input type="number" id="set-q-target" class="glass-input">
+                  </div>
+                  <div class="form-group mt-5">
+                    <label>Daily Correct Target:</label>
+                    <input type="number" id="set-c-target" class="glass-input">
+                  </div>
+                </div>
 
-          <!-- Data Management -->
-          <div class="p-4 border-t border-gray-700 mt-8">
-            <h3 class="text-lg font-semibold text-gray-200 mb-4 flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success-400"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-              Backup & Transfer
-            </h3>
-            <div class="grid md:grid-cols-2 gap-4">
-              <button id="export-data-btn" class="w-full py-3 bg-gray-800 text-gray-300 rounded-lg hover:bg-gray-700 transition-colors flex items-center justify-center gap-2 border border-gray-700">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                Export Backup (JSON)
-              </button>
-              <input type="file" id="import-data-file" accept=".json" class="hidden" />
-              <button id="import-data-btn" class="w-full py-3 bg-gray-800 text-gray-300 rounded-lg hover:bg-gray-700 transition-colors flex items-center justify-center gap-2 border border-gray-700">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                Import Backup (JSON)
-              </button>
+                <div class="card glass-card">
+                  <h3>Queue Configuration</h3>
+                  <div class="form-group mt-5">
+                    <label>Processing Queue Limit:</label>
+                    <input type="number" id="set-q-limit" class="glass-input">
+                    <p class="text-xs text-gray-400 mt-1">Number of items pulled per batch.</p>
+                  </div>
+                  <div class="form-group mt-5">
+                    <label>Processing Queue Hard Limit:</label>
+                    <input type="number" id="set-qh-limit" class="glass-input">
+                    <p class="text-xs text-gray-400 mt-1">Global maximum size of the pending queue.</p>
+                  </div>
+                </div>
+            </div>
+
+            <div class="mt-24"><button id="save-settings-btn" class="primary-btn w-full sm:w-auto">Save App Settings</button></div>
+
+
+            <div class="card glass-card mt-20">
+              <h3>Model Configuration</h3>
+              <div class="form-group mt-5">
+                <label for="cpu-embed-model-select">CPU Embedding Model:</label>
+                <select id="cpu-embed-model-select" class="glass-select">
+                  <option value="loading">Loading models...</option>
+                </select>
+              </div>
+
+              <div class="form-group mt-5">
+                <label for="flashrank-model-select">FlashRank Model:</label>
+                <select id="flashrank-model-select" class="glass-select">
+                  <option value="loading">Loading models...</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Data Management -->
+            <div class="p-4 border-t border-gray-700 mt-8">
+              <h3 class="text-lg font-semibold text-gray-200 mb-4 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success-400"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                Backup & Transfer
+              </h3>
+              <div class="grid md:grid-cols-2 gap-4">
+                <button id="export-data-btn" class="w-full py-3 bg-gray-800 text-gray-300 rounded-lg hover:bg-gray-700 transition-colors flex items-center justify-center gap-2 border border-gray-700">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  Export Backup (JSON)
+                </button>
+                <input type="file" id="import-data-file" accept=".json" class="hidden" />
+                <button id="import-data-btn" class="w-full py-3 bg-gray-800 text-gray-300 rounded-lg hover:bg-gray-700 transition-colors flex items-center justify-center gap-2 border border-gray-700">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                  Import Backup (JSON)
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -628,7 +640,7 @@ tailwind.config = {
         </div>
             </main>
 
-      <!-- RIGHT INSPECTOR (New Contextual Sidebar) -->
+      <!-- RIGHT INSPECTOR (Contextual Sidebar) -->
       <aside class="right-inspector glass-panel collapsed" id="right-sidebar" style="width: 0; padding: 0; border: none; overflow: hidden; transition: all 0.3s ease;">
         <div class="flex justify-between items-center mb-4 border-b border-white/10 pb-3" style="min-width: 300px;">
            <h3 class="font-bold text-brand-400 flex items-center gap-2">
@@ -642,16 +654,8 @@ tailwind.config = {
         <div id="inspector-content" class="overflow-y-auto flex-1 pr-2" style="min-width: 300px;">
            <div class="text-center py-12 opacity-50">
                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto mb-4"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-               <p class="text-sm">Start a quiz to view live RAG synthesis and references for each topic.</p>
+               <p class="text-sm">Start a quiz or select an entity to view details here.</p>
            </div>
-        </div>
-      </aside>
-
-      <!-- RIGHT INSPECTOR -->
-      <aside class="right-inspector">
-        <h3 class="inspector-title">Details Inspector</h3>
-        <div class="card glass-card inspector-card" id="inspector-content">
-            <p class="text-muted">Select a topic or entity to view details here.</p>
         </div>
       </aside>
     </div>
