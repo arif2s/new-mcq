@@ -62,8 +62,8 @@ function initExpertiseMap() {
                 <div class="${config.bg} ${config.border} border rounded-xl p-4 text-center">
                     <span class="text-2xl">${config.emoji}</span>
                     <p class="text-2xl font-bold mt-1 ${config.color}">${count}</p>
-                    <p class="text-xs text-gray-400 capitalize">${window.escapeHTML(level)}</p>
-                    <p class="text-xs text-gray-500">${pct.toFixed(0)}%</p>
+                    <p class="text-xs text-muted capitalize">${window.escapeHTML(level)}</p>
+                    <p class="text-xs text-muted">${pct.toFixed(0)}%</p>
                 </div>
             `;
         }).join('');
@@ -84,19 +84,19 @@ function initExpertiseMap() {
     const recsContainer = document.getElementById('expertise-recommendations');
     if (recsContainer) {
         if (topRecs.length === 0) {
-            recsContainer.innerHTML = '<p class="text-gray-500 text-sm">All topics are at advanced level or above! 🎉</p>';
+            recsContainer.innerHTML = '<p class="text-muted text-sm">All topics are at advanced level or above! 🎉</p>';
         } else {
             recsContainer.innerHTML = topRecs.map(exp => `
-                <div class="flex items-center justify-between bg-gray-900/50 rounded-lg p-3">
+                <div class="flex items-center justify-between glass-panel rounded-lg p-3">
                   <div>
-                    <span class="text-sm text-gray-300">${window.escapeHTML(exp.topic)}</span>
-                    <span class="text-xs text-gray-500 ml-2">(${window.escapeHTML(exp.subject)})</span>
+                    <span class="text-sm font-medium">${window.escapeHTML(exp.topic)}</span>
+                    <span class="text-xs text-muted ml-2">(${window.escapeHTML(exp.subject)})</span>
                   </div>
                   <div class="flex items-center gap-2">
                     <span class="text-xs px-2 py-0.5 rounded-full ${LEVEL_CONFIG[exp.level].bg} ${LEVEL_CONFIG[exp.level].color}">
                       ${exp.accuracy.toFixed(0)}%
                     </span>
-                    <span class="text-xs text-gray-500">→ Practice more</span>
+                    <span class="text-xs text-muted">→ Practice more</span>
                   </div>
                 </div>
             `).join('');
@@ -115,7 +115,7 @@ function initExpertiseMap() {
                 const config = LEVEL_CONFIG[exp.level] || LEVEL_CONFIG.beginner;
                 const accBg = exp.accuracy >= 70 ? 'bg-success-500' : exp.accuracy >= 50 ? 'bg-warning-500' : 'bg-danger-500';
 
-                let trendIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500"><line x1="5" y1="12" x2="19" y2="12"></line></svg>';
+                let trendIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted"><line x1="5" y1="12" x2="19" y2="12"></line></svg>';
                 if (exp.trend === 'improving') {
                     trendIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success-500"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>';
                 } else if (exp.trend === 'declining') {
@@ -126,7 +126,7 @@ function initExpertiseMap() {
                     <div class="${config.bg} ${config.border} border rounded-lg p-4 transition-all hover:scale-[1.02]">
                         <div class="flex items-start justify-between mb-2">
                           <div>
-                            <p class="text-sm font-medium text-gray-200">${window.escapeHTML(exp.topic)}</p>
+                            <p class="text-sm font-medium">${window.escapeHTML(exp.topic)}</p>
                             <p class="text-xs capitalize ${config.color}">
                               ${config.emoji} ${window.escapeHTML(exp.level)}
                             </p>
@@ -137,13 +137,13 @@ function initExpertiseMap() {
                         </div>
 
                         <div class="flex items-center gap-2 mb-2">
-                          <div class="flex-1 bg-gray-700/50 rounded-full h-2">
+                          <div class="flex-1 glass-panel rounded-full h-2">
                             <div class="h-2 rounded-full ${accBg}" style="width: ${exp.accuracy}%"></div>
                           </div>
-                          <span class="text-xs text-gray-400 w-10 text-right">${exp.accuracy.toFixed(0)}%</span>
+                          <span class="text-xs text-muted w-10 text-right">${exp.accuracy.toFixed(0)}%</span>
                         </div>
 
-                        <div class="flex justify-between text-xs text-gray-500">
+                        <div class="flex justify-between text-xs text-muted">
                           <span>${exp.attempted}/${exp.totalQuestions} attempted</span>
                           <span>${exp.correct} correct</span>
                         </div>
@@ -152,11 +152,11 @@ function initExpertiseMap() {
             }).join('');
 
             return `
-                <div class="bg-gray-800/60 rounded-xl p-6 border border-gray-700 mb-6">
+                <div class="glass-card rounded-xl p-6 mb-6">
                     <div class="flex items-center justify-between mb-4">
-                      <h3 class="text-lg font-semibold text-gray-200">📚 ${window.escapeHTML(subject)}</h3>
+                      <h3 class="text-lg font-semibold">📚 ${window.escapeHTML(subject)}</h3>
                       <div class="flex items-center gap-3 text-sm">
-                        <span class="text-gray-400">${subjectInfo?.questions?.length || 0} total questions</span>
+                        <span class="text-muted">${subjectInfo?.questions?.length || 0} total questions</span>
                         <span class="font-medium ${avgClass}">Avg: ${avgAccuracy.toFixed(1)}%</span>
                       </div>
                     </div>

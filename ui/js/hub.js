@@ -52,7 +52,7 @@ function renderHub() {
 
         if (hubSelected.has(session.id)) {
             cardNode.classList.add('border-brand-500', 'ring-1', 'ring-brand-500');
-            cardNode.classList.remove('border-gray-700', 'hover:border-gray-600');
+            cardNode.classList.remove('border-gray-700');
         }
 
         const selectContainer = cardNode.querySelector('.hub-select-container');
@@ -66,11 +66,11 @@ function renderHub() {
                 if (e.target.checked) {
                     hubSelected.add(session.id);
                     cardNode.classList.add('border-brand-500', 'ring-1', 'ring-brand-500');
-                    cardNode.classList.remove('border-gray-700', 'hover:border-gray-600');
+                    cardNode.classList.remove('border-gray-700');
                 } else {
                     hubSelected.delete(session.id);
                     cardNode.classList.remove('border-brand-500', 'ring-1', 'ring-brand-500');
-                    cardNode.classList.add('border-gray-700', 'hover:border-gray-600');
+                    cardNode.classList.add('border-gray-700');
                 }
                 updateDeleteBtn();
             });
@@ -101,14 +101,14 @@ function renderHub() {
         const topics = session.topics || [];
         topics.slice(0, 4).forEach(t => {
             const span = document.createElement('span');
-            span.className = "text-[10px] px-2 py-0.5 bg-gray-700 text-gray-400 rounded-full h-[18px] truncate max-w-[100px] inline-block";
+            span.className = "text-[10px] px-2 py-0.5 glass-panel text-muted rounded-full h-[18px] truncate max-w-[100px] inline-block";
             span.textContent = t;
             topicsContainer.appendChild(span);
         });
 
         if (topics.length > 4) {
             const extra = document.createElement('span');
-            extra.className = "text-[10px] px-2 py-0.5 bg-gray-700 text-gray-400 rounded-full h-[18px]";
+            extra.className = "text-[10px] px-2 py-0.5 glass-panel text-muted rounded-full h-[18px]";
             extra.textContent = `+${topics.length - 4}`;
             topicsContainer.appendChild(extra);
         }
@@ -220,7 +220,7 @@ async function openSessionReview(sessionId) {
     document.getElementById('hub-carousel-container').style.display = 'none';
 
     const questionsContainer = document.getElementById('hub-review-questions');
-    questionsContainer.innerHTML = '<div class="text-center py-8 text-gray-400">Loading session details...</div>';
+    questionsContainer.innerHTML = '<div class="text-center py-8 text-muted">Loading session details...</div>';
 
     try {
         const res = await fetch(`/api/sessions/${sessionId}/questions`);
@@ -228,11 +228,11 @@ async function openSessionReview(sessionId) {
             const questions = await res.json();
             renderSessionReview(questions);
         } else {
-            questionsContainer.innerHTML = '<div class="text-center py-8 text-red-400">Failed to load questions.</div>';
+            questionsContainer.innerHTML = '<div class="text-center py-8 text-danger-500">Failed to load questions.</div>';
         }
     } catch(e) {
         console.error(e);
-        questionsContainer.innerHTML = '<div class="text-center py-8 text-red-400">Error loading questions.</div>';
+        questionsContainer.innerHTML = '<div class="text-center py-8 text-danger-500">Error loading questions.</div>';
     }
 }
 
@@ -276,13 +276,9 @@ function renderSessionReview(questions) {
             const isCorrectOpt = correctAns === opt;
 
             if (isCorrectOpt) {
-                optDiv.classList.replace('bg-gray-900', 'bg-success-500/20');
-                optDiv.classList.replace('border-gray-700', 'border-success-500/50');
-                optDiv.classList.replace('text-gray-400', 'text-success-300');
+                optDiv.classList.add('bg-success-500/20', 'border-success-500/50', 'text-success-300');
             } else if (isUserOpt) {
-                optDiv.classList.replace('bg-gray-900', 'bg-danger-500/20');
-                optDiv.classList.replace('border-gray-700', 'border-danger-500/50');
-                optDiv.classList.replace('text-gray-400', 'text-danger-300');
+                optDiv.classList.add('bg-danger-500/20', 'border-danger-500/50', 'text-danger-300');
             }
             optsContainer.appendChild(optDiv);
         });
@@ -292,7 +288,6 @@ function renderSessionReview(questions) {
             const expContent = card.querySelector('.review-explanation');
             expContainer.classList.remove('hidden');
 
-            // Safely parse markdown to HTML, then sanitize it to prevent XSS
             const htmlContent = window.marked && window.DOMPurify
                 ? window.DOMPurify.sanitize(window.marked.parse(q.explanation))
                 : window.DOMPurify ? window.DOMPurify.sanitize(q.explanation) : q.explanation;
@@ -369,7 +364,7 @@ async function openTopicCarousel(sessionId) {
     const contentEl = document.getElementById('hub-carousel-content');
     contentEl.innerHTML = '';
     const loader = document.createElement('div');
-    loader.className = "text-center py-12 animate-pulse text-gray-400";
+    loader.className = "text-center py-12 animate-pulse text-muted";
     loader.textContent = "Loading topics...";
     contentEl.appendChild(loader);
 
@@ -430,11 +425,10 @@ function renderCurrentTopic() {
 
     if (topic.llm_status === 'pending') {
         const div = document.createElement('div');
-        div.className = "text-gray-400 italic animate-pulse flex items-center gap-2";
+        div.className = "text-muted italic animate-pulse flex items-center gap-2";
         div.innerHTML = `<span class="w-4 h-4 rounded-full border-2 border-brand-500 border-t-transparent animate-spin inline-block"></span> LM Studio generating detailed explanation...`;
         contentEl.appendChild(div);
     } else if (topic.unified_article) {
-        // Attempt to parse JSON safely if it's JSON from the multi-pass pipeline
         let parsedArticle;
         let isJson = false;
         try {
@@ -445,7 +439,6 @@ function renderCurrentTopic() {
         }
 
         if (isJson && parsedArticle) {
-            // Reconstruct HTML using safe DOM APIs
             const h2 = document.createElement('h2');
             h2.className = "text-xl font-bold mb-4";
             h2.textContent = `Unified Article: ${parsedArticle.subtopic || ''}`;
@@ -464,7 +457,7 @@ function renderCurrentTopic() {
                 li.textContent = pt.point + " ";
                 if (pt.source) {
                     const badge = document.createElement('span');
-                    badge.className = "text-xs bg-gray-700 text-brand-300 px-2 py-0.5 rounded-full ml-2";
+                    badge.className = "text-xs glass-panel text-brand-300 px-2 py-0.5 rounded-full ml-2";
                     badge.title = `Source: ${pt.source} (Page ${pt.page || 1})`;
                     badge.textContent = `[Ref: ${pt.source}]`;
                     li.appendChild(badge);
@@ -490,7 +483,6 @@ function renderCurrentTopic() {
                 contentEl.appendChild(disc);
             }
         } else {
-            // Fallback to markdown parsed output safely
             const htmlContent = window.marked && window.DOMPurify
                 ? window.DOMPurify.sanitize(window.marked.parse(topic.unified_article))
                 : window.DOMPurify ? window.DOMPurify.sanitize(topic.unified_article) : topic.unified_article;

@@ -39,9 +39,9 @@ async function initQuizSetup() {
             <div class="flex items-center justify-between mb-8">
                 <div>
                     <h1 class="text-3xl font-bold mb-2 flex items-center gap-3">⚙️ Quiz Configuration</h1>
-                    <p class="opacity-70">Customize your learning session and filter knowledge bases.</p>
+                    <p class="subtitle">Customize your learning session and filter knowledge bases.</p>
                 </div>
-                <button id="toggle-inspector-btn" class="px-4 py-2 bg-gray-800 border border-white/10 rounded-xl text-sm hover:bg-gray-700 transition-colors flex items-center gap-2">
+                <button id="toggle-inspector-btn" class="secondary-btn px-4 py-2 flex items-center gap-2">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
                     Toggle Inspector
                 </button>
@@ -52,47 +52,47 @@ async function initQuizSetup() {
                 <div class="glass-card card-shade-1 p-6">
                     <h3 class="text-lg font-semibold mb-4 border-b border-white/10 pb-2 flex items-center gap-2">📂 1. Source Filters</h3>
 
-                    <label class="block text-xs opacity-70 mb-1">Subject</label>
-                    <select id="cfg-subject" class="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 text-sm mb-4 outline-none focus:border-brand-500 transition-colors">
+                    <label class="block text-xs text-muted mb-1">Subject</label>
+                    <select id="cfg-subject" class="w-full glass-select rounded-lg px-3 py-2.5 text-sm mb-4">
                         <option value="all">All Subjects</option>
                         ${subjects.map(s => `<option value="${window.escapeHTML(s.subject)}">${window.escapeHTML(s.subject)} (${s.count})</option>`).join('')}
                     </select>
 
-                    <label class="block text-xs opacity-70 mb-1">Topic</label>
-                    <select id="cfg-topic" class="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 text-sm mb-4 outline-none focus:border-brand-500 transition-colors">
+                    <label class="block text-xs text-muted mb-1">Topic</label>
+                    <select id="cfg-topic" class="w-full glass-select rounded-lg px-3 py-2.5 text-sm mb-4">
                         <option value="all">All Topics</option>
                         ${topics.map(t => `<option value="${window.escapeHTML(t.topic)}">${window.escapeHTML(t.topic)} (${t.count})</option>`).join('')}
                     </select>
 
-                    <label class="block text-xs opacity-70 mb-1">Keyword Search</label>
-                    <input type="text" id="cfg-keyword" placeholder="e.g., dyspnea, insulin..." class="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-brand-500 transition-colors">
+                    <label class="block text-xs text-muted mb-1">Keyword Search</label>
+                    <input type="text" id="cfg-keyword" placeholder="e.g., dyspnea, insulin..." class="w-full glass-input rounded-lg px-3 py-2.5 text-sm">
                 </div>
 
                 <!-- Session Rules -->
                 <div class="glass-card card-shade-2 p-6">
                     <h3 class="text-lg font-semibold mb-4 border-b border-white/10 pb-2 flex items-center gap-2">🕹️ 2. Session Rules</h3>
 
-                    <label class="block text-xs opacity-70 mb-1">Study Mode</label>
+                    <label class="block text-xs text-muted mb-1">Study Mode</label>
                     <div class="flex gap-2 mb-4">
-                        <button id="mode-test" class="flex-1 py-2 rounded-lg text-sm font-medium border border-white/10 transition-colors ${quizConfig.mode === 'test' ? 'bg-brand-600 text-white' : 'bg-black/40 text-gray-400 hover:bg-black/60'}">📝 Test</button>
-                        <button id="mode-learn" class="flex-1 py-2 rounded-lg text-sm font-medium border border-white/10 transition-colors ${quizConfig.mode === 'learn' ? 'bg-brand-600 text-white' : 'bg-black/40 text-gray-400 hover:bg-black/60'}">📖 Learn</button>
-                        <button id="mode-target" class="flex-1 py-2 rounded-lg text-sm font-medium border border-white/10 transition-colors ${quizConfig.mode === 'target' ? 'bg-purple-600 text-white' : 'bg-black/40 text-gray-400 hover:bg-black/60'}">🎯 Target</button>
+                        <button id="mode-test" class="flex-1 py-2 rounded-lg text-sm font-medium border border-white/10 transition-colors ${quizConfig.mode === 'test' ? 'primary-btn' : 'secondary-btn'}">📝 Test</button>
+                        <button id="mode-learn" class="flex-1 py-2 rounded-lg text-sm font-medium border border-white/10 transition-colors ${quizConfig.mode === 'learn' ? 'primary-btn' : 'secondary-btn'}">📖 Learn</button>
+                        <button id="mode-target" class="flex-1 py-2 rounded-lg text-sm font-medium border border-white/10 transition-colors ${quizConfig.mode === 'target' ? 'primary-btn' : 'secondary-btn'}">🎯 Target</button>
                     </div>
 
                     <div class="flex items-center justify-between mb-1">
-                        <label class="text-xs opacity-70">Question Count / Target</label>
+                        <label class="text-xs text-muted">Question Count / Target</label>
                         <span id="cfg-count-val" class="text-xs font-bold text-brand-400">${quizConfig.count}</span>
                     </div>
                     <input type="range" id="cfg-count" min="1" max="100" value="${quizConfig.count}" class="w-full mb-4 accent-brand-500">
 
                     <div class="flex items-center justify-between mb-1">
-                        <label class="text-xs opacity-70">Total Time Limit (Mins)</label>
+                        <label class="text-xs text-muted">Total Time Limit (Mins)</label>
                         <span id="cfg-time-val" class="text-xs font-bold text-brand-400">${quizConfig.timeLimit === 0 ? 'Unlimited' : quizConfig.timeLimit}</span>
                     </div>
                     <input type="range" id="cfg-time" min="0" max="120" step="5" value="${quizConfig.timeLimit}" class="w-full mb-4 accent-brand-500">
 
                     <label class="flex items-center gap-2 cursor-pointer group mt-2">
-                        <input type="checkbox" id="cfg-sr" ${quizConfig.spacedRepetition ? 'checked' : ''} class="w-4 h-4 rounded bg-black/40 border-white/10 text-brand-500 accent-brand-500">
+                        <input type="checkbox" id="cfg-sr" ${quizConfig.spacedRepetition ? 'checked' : ''} class="w-4 h-4 rounded glass-input text-brand-500 accent-brand-500">
                         <span class="text-sm opacity-80 group-hover:opacity-100 transition-opacity">🧠 Enable Spaced Repetition (FSRS)</span>
                     </label>
                 </div>
@@ -100,8 +100,8 @@ async function initQuizSetup() {
 
             <div class="glass-card card-shade-3 p-6 text-center">
                 <h2 class="text-3xl font-black text-brand-400 mb-2" id="setup-match-count">...</h2>
-                <p class="opacity-60 text-sm mb-6">Matching Questions Available</p>
-                <button id="btn-start-quiz" class="px-10 py-4 bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-xl transition-all shadow-[0_0_20px_rgba(139,92,246,0.4)] hover:scale-105 disabled:opacity-50 disabled:hover:scale-100 disabled:shadow-none w-full md:w-auto text-lg">
+                <p class="text-muted text-sm mb-6">Matching Questions Available</p>
+                <button id="btn-start-quiz" class="primary-btn px-10 py-4 font-bold rounded-xl transition-all hover:scale-105 disabled:opacity-50 disabled:hover:scale-100 disabled:shadow-none w-full md:w-auto text-lg">
                     🚀 Launch Session
                 </button>
             </div>
@@ -260,24 +260,24 @@ function renderQuestion() {
         <div class="w-full p-6 animate-fade-in flex flex-col h-full">
             <div class="flex items-center justify-between mb-6 flex-wrap gap-4">
                 <div class="flex items-center gap-4">
-                    <div class="bg-black/30 border border-white/10 rounded-xl px-5 py-2.5 shadow-inner">
+                    <div class="glass-panel border border-white/10 rounded-xl px-5 py-2.5 shadow-inner">
                         <span class="text-brand-400 font-black text-lg tracking-wide">${headerText}</span>
                     </div>
-                    <div class="flex items-center gap-4 text-sm font-bold bg-black/20 px-4 py-2.5 rounded-xl border border-white/5">
+                    <div class="flex items-center gap-4 text-sm font-bold glass-panel px-4 py-2.5 rounded-xl border border-white/5">
                         <span class="text-success-500 flex items-center gap-1.5"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> ${scores.correct}</span>
                         <span class="opacity-30">|</span>
                         <span class="text-danger-500 flex items-center gap-1.5"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg> ${scores.wrong}</span>
                     </div>
                 </div>
                 <div class="flex items-center gap-3">
-                    <button id="toggle-inspector-active" class="icon-btn bg-black/20 border border-white/5" title="Toggle Inspector">
+                    <button id="toggle-inspector-active" class="icon-btn glass-panel border border-white/5" title="Toggle Inspector">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
                     </button>
-                    ${quizConfig.timeLimit > 0 ? `<div id="active-timer" class="px-4 py-2 bg-gray-900 border border-gray-700 rounded-xl font-mono text-lg font-bold text-brand-400 shadow-inner">--:--</div>` : ''}
+                    ${quizConfig.timeLimit > 0 ? `<div id="active-timer" class="px-4 py-2 glass-panel border border-gray-700 rounded-xl font-mono text-lg font-bold text-brand-400 shadow-inner">--:--</div>` : ''}
                 </div>
             </div>
 
-            <div class="w-full bg-black/40 rounded-full h-2 mb-8 shadow-inner border border-white/5 overflow-hidden">
+            <div class="w-full glass-panel rounded-full h-2 mb-8 shadow-inner border border-white/5 overflow-hidden">
                 <div class="h-2 rounded-full transition-all duration-500 ${isTarget ? 'bg-gradient-to-r from-purple-500 to-success-500' : 'bg-gradient-to-r from-brand-500 to-purple-500'}" style="width: ${Math.min(progressPct, 100)}%"></div>
             </div>
 
@@ -287,7 +287,7 @@ function renderQuestion() {
                     <span class="px-3 py-1 bg-brand-500/20 text-brand-300 rounded-full text-[11px] font-bold uppercase tracking-wider border border-brand-500/30">
                         ${window.escapeHTML(q.topic_name)}
                     </span>
-                    <span class="px-3 py-1 bg-white/5 text-gray-400 rounded-full text-[11px] font-bold uppercase tracking-wider border border-white/10">
+                    <span class="px-3 py-1 glass-panel text-muted rounded-full text-[11px] font-bold uppercase tracking-wider border border-white/10">
                         Mode: ${quizConfig.mode}
                     </span>
                 </div>
@@ -299,10 +299,10 @@ function renderQuestion() {
             <div id="feedback-container" class="flex-1 overflow-y-auto pr-2 mb-4"></div>
 
             <div class="flex justify-between items-center mt-auto pt-4 border-t border-white/10">
-                <button id="btn-prev" class="px-6 py-3 bg-black/40 hover:bg-black/60 border border-white/10 rounded-xl transition-colors disabled:opacity-30 font-medium" ${currentIndex === 0 ? 'disabled' : ''}>
+                <button id="btn-prev" class="secondary-btn px-6 py-3 rounded-xl disabled:opacity-30 font-medium" ${currentIndex === 0 ? 'disabled' : ''}>
                     ← Previous
                 </button>
-                <button id="btn-next" class="px-8 py-3 bg-brand-600 hover:bg-brand-500 text-white rounded-xl transition-all shadow-lg font-bold disabled:opacity-30 disabled:shadow-none" ${!isAnswered && !isTarget ? 'disabled' : ''}>
+                <button id="btn-next" class="primary-btn px-8 py-3 rounded-xl transition-all shadow-lg font-bold disabled:opacity-30 disabled:shadow-none" ${!isAnswered && !isTarget ? 'disabled' : ''}>
                     ${currentIndex >= currentQuiz.questions.length - 1 && !isTarget ? 'Finish Quiz 🏁' : 'Next Question →'}
                 </button>
             </div>
@@ -320,7 +320,7 @@ function renderQuestion() {
         let classes = 'w-full text-left px-5 py-4 rounded-xl border-2 transition-all flex items-center justify-between font-medium shadow-sm ';
 
         if (!isAnswered) {
-            classes += 'bg-black/40 border-white/10 hover:border-brand-500 hover:bg-black/60 cursor-pointer';
+            classes += 'glass-card border-white/10 hover:border-brand-500 cursor-pointer';
             btn.onclick = () => handleSelectOption(q, opt);
         } else {
             classes += 'cursor-default ';
@@ -328,19 +328,19 @@ function renderQuestion() {
             const isCorrectOpt = opt === q.correct_answer.toUpperCase();
             const isSelected = ans.selected === opt;
 
-            if (ans.timedOut) classes += 'bg-black/20 border-white/5 opacity-50';
+            if (ans.timedOut) classes += 'glass-panel border-white/5 opacity-50';
             else if (isCorrectOpt) classes += 'bg-success-500/20 border-success-500 text-success-300';
             else if (isSelected && !ans.isCorrect) classes += 'bg-danger-500/20 border-danger-500 text-danger-300';
-            else classes += 'bg-black/20 border-white/5 opacity-50';
+            else classes += 'glass-panel border-white/5 opacity-50';
         }
 
         btn.className = classes;
         btn.innerHTML = `
             <div class="flex items-center gap-4">
-                <span class="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold bg-white/10 shadow-inner">
+                <span class="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold glass-panel shadow-inner">
                     ${opt}
                 </span>
-                <span class="opacity-90 leading-snug">${window.escapeHTML(text)}</span>
+                <span class="leading-snug">${window.escapeHTML(text)}</span>
             </div>
             ${isAnswered && !quizAnswers[q.id].timedOut && opt === q.correct_answer.toUpperCase() ? '<svg class="text-success-500" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>' : ''}
             ${isAnswered && !quizAnswers[q.id].timedOut && quizAnswers[q.id].selected === opt && opt !== q.correct_answer.toUpperCase() ? '<svg class="text-danger-500" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>' : ''}
@@ -356,7 +356,7 @@ function renderQuestion() {
         document.getElementById('feedback-container').innerHTML = `
             <div class="animate-fade-in bg-brand-500/10 border border-brand-500/30 rounded-2xl p-6 shadow-inner">
                 <h4 class="font-bold text-brand-300 mb-3 flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg> Explanation</h4>
-                <div class="prose prose-invert prose-sm max-w-none opacity-90">${cleanExp}</div>
+                <div class="prose prose-sm max-w-none">${cleanExp}</div>
             </div>
         `;
     }
@@ -438,12 +438,12 @@ function triggerBreakModal() {
                 <div class="w-20 h-20 bg-warning-500/20 rounded-full flex items-center justify-center mx-auto mb-6 border border-warning-500/40">
                     <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-warning-500"><path d="M17 8h1a4 4 0 1 1 0 8h-1"></path><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"></path><line x1="6" y1="2" x2="6" y2="4"></line><line x1="10" y1="2" x2="10" y2="4"></line><line x1="14" y1="2" x2="14" y2="4"></line></svg>
                 </div>
-                <h2 class="text-3xl font-black text-gray-100 mb-4">Need a Break?</h2>
-                <p class="opacity-60 mb-8 text-lg">No answer given for ${quizConfig.timeout} minutes. Your progress is saved safely.</p>
+                <h2 class="text-3xl font-black mb-4">Need a Break?</h2>
+                <p class="text-muted mb-8 text-lg">No answer given for ${quizConfig.timeout} minutes. Your progress is saved safely.</p>
                 <div class="flex flex-col gap-3 max-w-sm mx-auto">
-                    <button id="break-resume" class="w-full py-4 bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-xl shadow-lg transition-all">▶️ Resume Session</button>
-                    <button id="break-skip" class="w-full py-3 bg-black/40 hover:bg-black/60 border border-white/10 rounded-xl transition-all">⏭️ Skip Question</button>
-                    <button id="break-end" class="w-full py-2 text-gray-500 hover:text-white transition-colors mt-2">End Session & View Results</button>
+                    <button id="break-resume" class="primary-btn w-full py-4 font-bold rounded-xl shadow-lg transition-all">▶️ Resume Session</button>
+                    <button id="break-skip" class="secondary-btn w-full py-3 rounded-xl transition-all">⏭️ Skip Question</button>
+                    <button id="break-end" class="w-full py-2 text-muted hover:text-brand-400 transition-colors mt-2 bg-transparent border-none cursor-pointer">End Session & View Results</button>
                 </div>
             </div>
         </div>
@@ -523,71 +523,71 @@ function renderResults(result, answeredQs) {
                     <span class="text-4xl font-black">${result.accuracy >= 90 ? 'A+' : result.accuracy >= 80 ? 'A' : result.accuracy >= 70 ? 'B' : result.accuracy >= 60 ? 'C' : 'D'}</span>
                 </div>
                 <h1 class="text-4xl font-black mb-2">${result.accuracy >= 70 ? '🎉 Excellent Work!' : '💪 Keep Practicing!'}</h1>
-                <p class="opacity-60 text-lg">Session completed for <span class="text-brand-400 font-bold">${window.escapeHTML(result.subjectName)}</span></p>
+                <p class="subtitle text-lg">Session completed for <span class="text-brand-400 font-bold">${window.escapeHTML(result.subjectName)}</span></p>
             </div>
 
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
                 <div class="glass-card card-shade-1 text-center p-6 border-brand-500/30 shadow-[0_0_15px_rgba(139,92,246,0.15)]">
                     <p class="text-3xl font-black text-brand-400 mb-1">${result.accuracy.toFixed(1)}%</p>
-                    <p class="text-xs opacity-70 uppercase tracking-widest">Accuracy</p>
+                    <p class="text-xs text-muted uppercase tracking-widest">Accuracy</p>
                 </div>
                 <div class="glass-card card-shade-2 text-center p-6 border-success-500/30">
                     <p class="text-3xl font-black text-success-500 mb-1">${result.correctAnswers}</p>
-                    <p class="text-xs opacity-70 uppercase tracking-widest">Correct</p>
+                    <p class="text-xs text-muted uppercase tracking-widest">Correct</p>
                 </div>
                 <div class="glass-card card-shade-3 text-center p-6 border-danger-500/30">
                     <p class="text-3xl font-black text-danger-500 mb-1">${result.wrongAnswers}</p>
-                    <p class="text-xs opacity-70 uppercase tracking-widest">Wrong</p>
+                    <p class="text-xs text-muted uppercase tracking-widest">Wrong</p>
                 </div>
                 <div class="glass-card card-shade-4 text-center p-6 border-white/10">
                     <p class="text-3xl font-black mb-1">${Math.floor(result.timeUsedSeconds/60)}m ${result.timeUsedSeconds%60}s</p>
-                    <p class="text-xs opacity-70 uppercase tracking-widest">Time Taken</p>
+                    <p class="text-xs text-muted uppercase tracking-widest">Time Taken</p>
                 </div>
             </div>
 
             <div class="flex flex-wrap gap-4 justify-center mb-10 pb-10 border-b border-white/10">
-                <button id="res-home" class="px-8 py-3 bg-black/40 hover:bg-black/60 border border-white/10 rounded-xl transition-colors font-medium">🏠 Dashboard</button>
-                <button id="res-retake" class="px-8 py-3 bg-gray-800 hover:bg-gray-700 rounded-xl transition-colors font-medium border border-white/5">🔄 Retake Set</button>
-                ${wrongQs.length > 0 ? `<button id="res-wrong" class="px-8 py-3 bg-purple-600 hover:bg-purple-500 text-white shadow-lg rounded-xl transition-all font-bold">🧠 Practice Wrong (${wrongQs.length})</button>` : ''}
-                <button id="res-setup" class="px-8 py-3 bg-brand-600 hover:bg-brand-500 text-white shadow-lg rounded-xl transition-all font-bold">⚙️ New Config</button>
+                <button id="res-home" class="secondary-btn px-8 py-3 rounded-xl font-medium">🏠 Dashboard</button>
+                <button id="res-retake" class="secondary-btn px-8 py-3 rounded-xl font-medium">🔄 Retake Set</button>
+                ${wrongQs.length > 0 ? `<button id="res-wrong" class="primary-btn px-8 py-3 shadow-lg rounded-xl font-bold">🧠 Practice Wrong (${wrongQs.length})</button>` : ''}
+                <button id="res-setup" class="primary-btn px-8 py-3 shadow-lg rounded-xl font-bold">⚙️ New Config</button>
             </div>
 
             <h3 class="text-2xl font-bold mb-6 flex items-center gap-3"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-brand-400"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg> Detailed Breakdown</h3>
             <div class="space-y-6">
                 ${answeredQs.map((q, i) => {
                     const a = quizAnswers[q.id];
-                    const bgBorder = a.timedOut ? 'border-white/10 bg-black/20' : a.isCorrect ? 'border-success-500/30 bg-success-900/10' : 'border-danger-500/30 bg-danger-900/10';
+                    const bgBorder = a.timedOut ? 'border-white/10 glass-panel' : a.isCorrect ? 'border-success-500/30 bg-success-900/10' : 'border-danger-500/30 bg-danger-900/10';
                     const icon = a.timedOut ? '⏭️' : a.isCorrect ? '<span class="text-success-500 font-bold">✓</span>' : '<span class="text-danger-500 font-bold">✗</span>';
                     const cleanExp = window.DOMPurify && window.marked ? window.DOMPurify.sanitize(window.marked.parse(q.explanation || 'No explanation.')) : window.escapeHTML(q.explanation);
 
                     return `
                     <div class="rounded-2xl border ${bgBorder} p-6">
                         <div class="flex items-start justify-between mb-4">
-                            <h4 class="font-semibold text-lg opacity-90 leading-snug flex-1 pr-4"><span class="opacity-50 font-mono text-sm mr-2">Q${i+1}.</span>${window.escapeHTML(q.question)}</h4>
+                            <h4 class="font-semibold text-lg leading-snug flex-1 pr-4"><span class="text-muted font-mono text-sm mr-2">Q${i+1}.</span>${window.escapeHTML(q.question)}</h4>
                             <div class="flex items-center gap-3 shrink-0">
-                                <span class="text-xs font-mono bg-black/40 px-2 py-1 rounded border border-white/5 opacity-70">⏱️ ${(a.timeSpentMs/1000).toFixed(1)}s</span>
-                                <div class="w-8 h-8 rounded-full bg-black/40 border border-white/10 flex items-center justify-center text-lg shadow-inner">${icon}</div>
+                                <span class="text-xs font-mono glass-panel px-2 py-1 rounded border border-white/5 opacity-70">⏱️ ${(a.timeSpentMs/1000).toFixed(1)}s</span>
+                                <div class="w-8 h-8 rounded-full glass-panel border border-white/10 flex items-center justify-center text-lg shadow-inner">${icon}</div>
                             </div>
                         </div>
 
                         ${!a.timedOut ? `
                         <div class="flex flex-wrap gap-4 mb-6">
-                            <div class="flex items-center gap-2 text-sm bg-black/20 px-3 py-1.5 rounded-lg border border-white/5">
-                                <span class="opacity-60">Your Answer:</span>
+                            <div class="flex items-center gap-2 text-sm glass-panel px-3 py-1.5 rounded-lg border border-white/5">
+                                <span class="text-muted">Your Answer:</span>
                                 <span class="font-bold ${a.isCorrect ? 'text-success-400' : 'text-danger-400'}">${a.selected}</span>
                             </div>
                             ${!a.isCorrect ? `
                             <div class="flex items-center gap-2 text-sm bg-success-500/10 px-3 py-1.5 rounded-lg border border-success-500/20">
-                                <span class="opacity-60">Correct Answer:</span>
+                                <span class="text-muted">Correct Answer:</span>
                                 <span class="font-bold text-success-400">${q.correct_answer}</span>
                             </div>` : ''}
                         </div>
 
-                        <div class="bg-black/30 rounded-xl p-5 border border-white/5 shadow-inner">
+                        <div class="glass-panel rounded-xl p-5 border border-white/5 shadow-inner">
                             <p class="text-xs font-bold text-brand-400 uppercase tracking-widest mb-3">Explanation</p>
-                            <div class="prose prose-invert prose-sm max-w-none opacity-80">${cleanExp}</div>
+                            <div class="prose prose-sm max-w-none opacity-80">${cleanExp}</div>
                         </div>
-                        ` : '<p class="text-sm opacity-50 italic">Skipped due to timeout.</p>'}
+                        ` : '<p class="text-sm text-muted italic">Skipped due to timeout.</p>'}
                     </div>`;
                 }).join('')}
             </div>
@@ -650,7 +650,7 @@ function updateInspector(topic) {
                 html += `
                 <div class="bg-brand-500/10 border border-brand-500/30 rounded-xl p-4 shadow-inner">
                     <h4 class="font-bold text-brand-300 mb-2 flex items-center gap-1.5"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg> High-Yield Synopsis</h4>
-                    <div class="opacity-90 prose prose-invert prose-sm leading-relaxed">${window.escapeHTML(data.enhanced_explanation)}</div>
+                    <div class="opacity-90 prose prose-sm leading-relaxed">${window.escapeHTML(data.enhanced_explanation)}</div>
                 </div>`;
             }
 
@@ -664,7 +664,7 @@ function updateInspector(topic) {
             }
 
             if (data.references && Object.keys(data.references).length > 0) {
-                html += `<div class="mt-6"><h4 class="font-bold text-gray-300 mb-3 text-sm px-1">Verified Reference Materials</h4><div class="space-y-2">`;
+                html += `<div class="mt-6"><h4 class="font-bold text-muted mb-3 text-sm px-1">Verified Reference Materials</h4><div class="space-y-2">`;
 
                 if (data.references.pdf) {
                     data.references.pdf.forEach(pdf => {
@@ -673,7 +673,7 @@ function updateInspector(topic) {
                             <div class="p-2 bg-red-500/20 rounded-lg text-red-400 group-hover:scale-110 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg></div>
                             <div class="flex-1 overflow-hidden">
                                 <p class="font-medium text-red-400 truncate text-sm">${window.escapeHTML(pdf.title)}</p>
-                                <p class="text-[10px] opacity-60 mt-0.5">SumatraPDF • Page ${pdf.page || 1}</p>
+                                <p class="text-[10px] text-muted mt-0.5">SumatraPDF • Page ${pdf.page || 1}</p>
                             </div>
                         </button>`;
                     });
@@ -686,7 +686,7 @@ function updateInspector(topic) {
                             <div class="p-2 bg-purple-500/20 rounded-lg text-purple-400 group-hover:scale-110 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg></div>
                             <div class="flex-1 overflow-hidden">
                                 <p class="font-medium text-purple-400 truncate text-sm">${window.escapeHTML(obs.title)}</p>
-                                <p class="text-[10px] opacity-60 mt-0.5">Obsidian Vault Note</p>
+                                <p class="text-[10px] text-muted mt-0.5">Obsidian Vault Note</p>
                             </div>
                         </button>`;
                     });

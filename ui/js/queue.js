@@ -33,13 +33,13 @@ function renderQueue(status) {
             else if (task.status === 'FAILED') failedCount++;
 
             const div = document.createElement('div');
-            let statusColor = 'text-gray-400';
+            let statusColor = 'text-muted';
 
             if (task.status === 'COMPLETED') statusColor = 'text-success-500';
             else if (task.status === 'FAILED') statusColor = 'text-danger-500';
             else if (task.status === 'PROCESSING') statusColor = 'text-brand-400';
 
-            div.className = 'bg-gray-900/50 border border-gray-700 p-4 rounded-xl mb-3 flex justify-between items-center transition-colors hover:bg-gray-800/80';
+            div.className = 'glass-panel p-4 rounded-xl mb-3 flex justify-between items-center transition-colors';
 
             // Safe text escaping to prevent XSS
             const escapeMap = { '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' };
@@ -47,13 +47,13 @@ function renderQueue(status) {
 
             div.innerHTML = `
                 <div class="flex-1 min-w-0 pr-4">
-                    <div class="font-medium text-gray-200 truncate">${safeQuestion}</div>
-                    <div class="text-xs text-gray-500 mt-1.5 flex items-center gap-2">
-                        <span class="bg-gray-800 px-2 py-0.5 rounded font-mono text-[10px]">ID: ${task.id}</span>
+                    <div class="font-medium truncate">${safeQuestion}</div>
+                    <div class="text-xs text-muted mt-1.5 flex items-center gap-2">
+                        <span class="glass-panel px-2 py-0.5 rounded font-mono text-[10px]">ID: ${task.id}</span>
                         <span>Updated: ${new Date(task.updated_at * 1000).toLocaleTimeString()}</span>
                     </div>
                 </div>
-                <div class="font-bold text-xs uppercase tracking-wider ${statusColor} shrink-0 px-3 py-1 rounded-full bg-gray-800/50 border border-gray-700">
+                <div class="font-bold text-xs uppercase tracking-wider ${statusColor} shrink-0 px-3 py-1 rounded-full glass-panel">
                     ${task.status}
                 </div>
             `;
@@ -63,9 +63,9 @@ function renderQueue(status) {
         tasksList.appendChild(fragment);
     } else {
         tasksList.innerHTML = `
-            <div class="text-center py-12 border border-gray-800 border-dashed rounded-xl bg-gray-900/20">
-                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-gray-600 mb-3"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
-                <p class="text-gray-400 text-sm">No recent tasks in queue.</p>
+            <div class="text-center py-12 border border-gray-800 border-dashed rounded-xl glass-panel">
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-muted mb-3"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+                <p class="text-muted text-sm">No recent tasks in queue.</p>
             </div>
         `;
     }

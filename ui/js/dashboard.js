@@ -130,7 +130,7 @@ function initDashboard() {
       <div class="w-full p-6 animate-fade-in">
         <div class="mb-8">
             <h1 class="text-3xl font-bold mb-2">📊 Dashboard</h1>
-            <p class="opacity-70">Your learning analytics at a glance</p>
+            <p class="subtitle">Your learning analytics at a glance</p>
         </div>
 
         <!-- Today's Summary -->
@@ -139,19 +139,19 @@ function initDashboard() {
           <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div class="text-center">
               <p class="text-3xl font-bold">${todayStats.questionsAnswered}</p>
-              <p class="text-xs mt-1 opacity-70">Questions Answered</p>
+              <p class="text-xs mt-1 text-muted">Questions Answered</p>
             </div>
             <div class="text-center">
               <p class="text-3xl font-bold">${todayStats.correctAnswers}</p>
-              <p class="text-xs mt-1 opacity-70">Correct Answers</p>
+              <p class="text-xs mt-1 text-muted">Correct Answers</p>
             </div>
             <div class="text-center">
               <p class="text-3xl font-bold">${todayStats.accuracy.toFixed(1)}%</p>
-              <p class="text-xs mt-1 opacity-70">Accuracy</p>
+              <p class="text-xs mt-1 text-muted">Accuracy</p>
             </div>
             <div class="text-center">
               <p class="text-3xl font-bold">${Math.round(todayStats.timeSpentSeconds / 60)}m</p>
-              <p class="text-xs mt-1 opacity-70">Time Spent</p>
+              <p class="text-xs mt-1 text-muted">Time Spent</p>
             </div>
           </div>
         </div>
@@ -160,27 +160,27 @@ function initDashboard() {
         <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
           <div class="glass-card card-shade-2 text-center" style="padding: 16px;">
             <p class="text-xl font-bold">${totalTests}</p>
-            <p class="text-xs opacity-70 mt-1">Tests Taken</p>
+            <p class="text-xs text-muted mt-1">Tests Taken</p>
           </div>
           <div class="glass-card card-shade-2 text-center" style="padding: 16px;">
             <p class="text-xl font-bold">${avgAccuracy.toFixed(1)}%</p>
-            <p class="text-xs opacity-70 mt-1">Avg Accuracy</p>
+            <p class="text-xs text-muted mt-1">Avg Accuracy</p>
           </div>
           <div class="glass-card card-shade-2 text-center" style="padding: 16px;">
             <p class="text-xl font-bold">${totalQuestionsAnswered}</p>
-            <p class="text-xs opacity-70 mt-1">Questions Done</p>
+            <p class="text-xs text-muted mt-1">Questions Done</p>
           </div>
           <div class="glass-card card-shade-2 text-center" style="padding: 16px;">
             <p class="text-xl font-bold">${totalTimeMinutes}m</p>
-            <p class="text-xs opacity-70 mt-1">Total Time</p>
+            <p class="text-xs text-muted mt-1">Total Time</p>
           </div>
           <div class="glass-card card-shade-2 text-center" style="padding: 16px;">
             <p class="text-xl font-bold">${state.streakDays || 0}</p>
-            <p class="text-xs opacity-70 mt-1">Day Streak 🔥</p>
+            <p class="text-xs text-muted mt-1">Day Streak 🔥</p>
           </div>
           <div class="glass-card card-shade-2 text-center" style="padding: 16px;">
             <p class="text-xl font-bold">${state.longestStreak || 0}</p>
-            <p class="text-xs opacity-70 mt-1">Best Streak</p>
+            <p class="text-xs text-muted mt-1">Best Streak</p>
           </div>
         </div>
 
@@ -195,11 +195,11 @@ function initDashboard() {
                   const colors = { mastered: 'bg-success-500', review: 'bg-brand-500', learning: 'bg-warning-500', new: 'bg-gray-500' };
                   return `
                   <div class="flex items-center justify-between">
-                    <span class="text-sm opacity-80 capitalize w-20">${level}</span>
-                    <div class="flex-1 mx-4 bg-gray-900/30 rounded-full h-2.5 shadow-inner">
+                    <span class="text-sm capitalize w-20">${level}</span>
+                    <div class="flex-1 mx-4 glass-panel rounded-full h-2.5 shadow-inner">
                       <div class="${colors[level]} h-2.5 rounded-full" style="width: ${pct}%"></div>
                     </div>
-                    <span class="text-sm font-medium w-8 text-right opacity-90">${count}</span>
+                    <span class="text-sm font-medium w-8 text-right">${count}</span>
                   </div>`;
               }).join('')}
             </div>
@@ -208,19 +208,19 @@ function initDashboard() {
           <!-- Subject Performance -->
           <div class="glass-card card-shade-4">
             <h3 class="text-lg font-semibold mb-4 opacity-90">📚 Subject Performance</h3>
-            ${subjectPerformance.length === 0 ? '<p class="opacity-60 text-sm">No subjects loaded yet.</p>' : `
+            ${subjectPerformance.length === 0 ? '<p class="text-muted text-sm">No subjects loaded yet.</p>' : `
             <div class="space-y-3 max-h-48 overflow-y-auto pr-2">
               ${subjectPerformance.map(sp => `
-                <div class="bg-gray-900/30 rounded-lg p-3 border border-white/5">
+                <div class="glass-panel rounded-lg p-3 border border-white/5">
                   <div class="flex justify-between items-center mb-1">
-                    <span class="text-sm font-medium opacity-90 truncate flex-1">${window.escapeHTML(sp.name)}</span>
-                    <span class="text-xs opacity-60 ml-2">${sp.tests} tests</span>
+                    <span class="text-sm font-medium truncate flex-1">${window.escapeHTML(sp.name)}</span>
+                    <span class="text-xs text-muted ml-2">${sp.tests} tests</span>
                   </div>
                   <div class="flex items-center gap-2">
-                    <div class="flex-1 bg-gray-900/40 rounded-full h-2">
+                    <div class="flex-1 glass-panel rounded-full h-2">
                       <div class="h-2 rounded-full ${sp.avgAccuracy >= 70 ? 'bg-success-500' : sp.avgAccuracy >= 50 ? 'bg-warning-500' : 'bg-danger-500'}" style="width: ${sp.avgAccuracy}%"></div>
                     </div>
-                    <span class="text-xs w-10 text-right opacity-80">${sp.avgAccuracy.toFixed(0)}%</span>
+                    <span class="text-xs w-10 text-right font-mono">${sp.avgAccuracy.toFixed(0)}%</span>
                   </div>
                 </div>
               `).join('')}
@@ -235,13 +235,13 @@ function initDashboard() {
                 <div class="flex items-end gap-1 h-32 mb-2 border-b border-white/10 pb-1">
                     ${hourlyData.map(h => `
                         <div class="flex-1 flex flex-col items-center group relative cursor-crosshair">
-                            <div class="w-full rounded-t transition-all ${h.questions > 0 ? 'bg-brand-500 hover:bg-brand-400 shadow-[0_0_8px_rgba(139,92,246,0.6)]' : 'bg-gray-700/30'}"
+                            <div class="w-full rounded-t transition-all ${h.questions > 0 ? 'bg-brand-500 hover:bg-brand-400 shadow-[0_0_8px_rgba(139,92,246,0.6)]' : 'glass-panel'}"
                                  style="height: ${h.questions > 0 ? Math.max((h.questions / maxQ) * 100, 5) : 2}%;"></div>
-                            ${h.questions > 0 ? `<div class="absolute bottom-full mb-2 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap text-white">${h.questions} Qs</div>` : ''}
+                            ${h.questions > 0 ? `<div class="absolute bottom-full mb-2 glass-card rounded px-2 py-1 text-xs opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap">${h.questions} Qs</div>` : ''}
                         </div>
                     `).join('')}
                 </div>
-                <div class="flex justify-between text-xs opacity-50">
+                <div class="flex justify-between text-xs text-muted">
                     <span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>11pm</span>
                 </div>
             </div>
@@ -250,29 +250,29 @@ function initDashboard() {
             <div class="glass-card relative">
                 <div class="flex items-center justify-between mb-4">
                     <h3 class="text-lg font-semibold opacity-90">🏅 Rank Preparedness</h3>
-                    <button id="open-rank-editor-btn" class="px-3 py-1.5 bg-gray-900/50 rounded-lg text-xs opacity-80 hover:opacity-100 transition-colors border border-white/10">
+                    <button id="open-rank-editor-btn" class="px-3 py-1.5 secondary-btn rounded-lg text-xs transition-colors">
                         ⚙️ Edit Config
                     </button>
                 </div>
-                ${processedRankSims.length === 0 ? '<p class="opacity-60 text-sm mt-4">Take a test to see rank projections.</p>' : `
+                ${processedRankSims.length === 0 ? '<p class="text-muted text-sm mt-4">Take a test to see rank projections.</p>' : `
                 <div class="space-y-4 max-h-48 overflow-y-auto pr-2">
                     ${processedRankSims.map(simData => `
-                    <div class="border border-white/10 rounded-xl p-4 bg-gray-900/30">
+                    <div class="border border-white/10 rounded-xl p-4 glass-panel">
                         <div class="flex justify-between items-center mb-3">
                             <p class="text-sm font-semibold opacity-90">${window.escapeHTML(simData.config.examName)}</p>
-                            <span class="text-xs bg-black/40 px-2 py-1 rounded opacity-70">Max: ${simData.config.maxMarks}</span>
+                            <span class="text-xs glass-panel px-2 py-1 rounded opacity-70">Max: ${simData.config.maxMarks}</span>
                         </div>
                         <div class="grid grid-cols-3 gap-3">
-                            <div class="bg-black/20 rounded-lg p-2 text-center">
-                                <p class="text-xs opacity-60 mb-1">Latest Rank</p>
+                            <div class="glass-panel rounded-lg p-2 text-center">
+                                <p class="text-xs text-muted mb-1">Latest Rank</p>
                                 <p class="text-lg font-bold text-brand-400">${simData.latest.sim.estimatedRank.toLocaleString()}</p>
                             </div>
-                            <div class="bg-black/20 rounded-lg p-2 text-center">
-                                <p class="text-xs opacity-60 mb-1">Best Rank</p>
+                            <div class="glass-panel rounded-lg p-2 text-center">
+                                <p class="text-xs text-muted mb-1">Best Rank</p>
                                 <p class="text-lg font-bold text-success-500">${simData.best.sim.estimatedRank.toLocaleString()}</p>
                             </div>
-                            <div class="bg-black/20 rounded-lg p-2 text-center">
-                                <p class="text-xs opacity-60 mb-1">Percentile</p>
+                            <div class="glass-panel rounded-lg p-2 text-center">
+                                <p class="text-xs text-muted mb-1">Percentile</p>
                                 <p class="text-lg font-bold text-purple-400">${simData.latest.sim.percentile}%</p>
                             </div>
                         </div>
@@ -285,11 +285,11 @@ function initDashboard() {
         <!-- Recent Results -->
         <div class="glass-card">
           <h3 class="text-lg font-semibold mb-4 opacity-90">📝 Recent Test Results</h3>
-          ${recentResults.length === 0 ? '<p class="opacity-60 text-sm">No tests taken yet.</p>' : `
+          ${recentResults.length === 0 ? '<p class="text-muted text-sm">No tests taken yet.</p>' : `
           <div class="overflow-x-auto">
             <table class="w-full text-sm text-left">
               <thead>
-                <tr class="border-b border-white/10 opacity-70">
+                <tr class="border-b border-white/10 text-muted">
                   <th class="py-3 px-2 font-medium">Date</th>
                   <th class="py-3 px-2 font-medium">Subject</th>
                   <th class="py-3 px-2 font-medium">Mode</th>
@@ -300,14 +300,14 @@ function initDashboard() {
               </thead>
               <tbody>
                 ${recentResults.map((r, i) => `
-                  <tr class="border-b border-white/5 ${i % 2 === 0 ? '' : 'bg-black/10'}">
-                    <td class="py-2.5 px-2 opacity-90">${new Date(r.timestamp).toLocaleDateString()}</td>
-                    <td class="py-2.5 px-2 opacity-90 truncate max-w-[150px]">${window.escapeHTML(r.subjectName)}</td>
+                  <tr class="border-b border-white/5 ${i % 2 === 0 ? '' : 'glass-panel'}">
+                    <td class="py-2.5 px-2 font-medium">${new Date(r.timestamp).toLocaleDateString()}</td>
+                    <td class="py-2.5 px-2 truncate max-w-[150px]">${window.escapeHTML(r.subjectName)}</td>
                     <td class="py-2.5 px-2">
-                      <span class="px-2 py-0.5 rounded-full text-xs font-medium border border-white/10 bg-black/20 opacity-90">${window.escapeHTML(r.mode)}</span>
+                      <span class="px-2 py-0.5 rounded-full text-xs font-medium border border-white/10 glass-panel">${window.escapeHTML(r.mode)}</span>
                     </td>
-                    <td class="py-2.5 px-2 text-center opacity-90">${r.totalQuestions}</td>
-                    <td class="py-2.5 px-2 text-center opacity-90">${r.score || r.correctAnswers}</td>
+                    <td class="py-2.5 px-2 text-center">${r.totalQuestions}</td>
+                    <td class="py-2.5 px-2 text-center">${r.score || r.correctAnswers}</td>
                     <td class="py-2.5 px-2 text-center font-medium ${r.accuracy >= 70 ? 'text-success-500' : r.accuracy >= 50 ? 'text-warning-500' : 'text-danger-500'}">
                       ${r.accuracy.toFixed(1)}%
                     </td>
@@ -388,36 +388,36 @@ function renderRankEditor() {
     <div class="glass-modal w-full max-w-2xl text-left flex flex-col max-h-[90vh]">
         <div class="flex justify-between items-center border-b border-white/10 pb-4 mb-4">
             <h2 class="text-xl font-bold">Edit Rank Simulation Data</h2>
-            <button id="close-rank-modal-x" class="text-gray-400 hover:text-white bg-transparent border-none cursor-pointer">✕</button>
+            <button id="close-rank-modal-x" class="text-muted hover:text-brand-400 bg-transparent border-none cursor-pointer">✕</button>
         </div>
 
         <div class="overflow-y-auto flex-1 pr-2">
-            <div class="bg-black/20 rounded-xl p-4 border border-white/10 mb-6">
-                <h3 class="text-sm font-semibold mb-3 opacity-90">Exam Settings</h3>
+            <div class="glass-panel rounded-xl p-4 border border-white/10 mb-6">
+                <h3 class="text-sm font-semibold mb-3">Exam Settings</h3>
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
-                        <label class="text-xs opacity-70 block mb-1">Exam Name</label>
-                        <input type="text" id="re-exam-name" value="${window.escapeHTML(config.examName)}" class="w-full bg-black/40 border border-white/10 rounded px-3 py-1.5 text-sm text-white focus:border-brand-500 outline-none transition-colors">
+                        <label class="text-xs text-muted block mb-1">Exam Name</label>
+                        <input type="text" id="re-exam-name" value="${window.escapeHTML(config.examName)}" class="w-full glass-input rounded px-3 py-1.5 text-sm focus:border-brand-500 outline-none transition-colors">
                     </div>
                     <div>
-                        <label class="text-xs opacity-70 block mb-1">Total Qs</label>
-                        <input type="number" id="re-total-qs" value="${config.totalQuestions}" class="w-full bg-black/40 border border-white/10 rounded px-3 py-1.5 text-sm text-white focus:border-brand-500 outline-none transition-colors">
+                        <label class="text-xs text-muted block mb-1">Total Qs</label>
+                        <input type="number" id="re-total-qs" value="${config.totalQuestions}" class="w-full glass-input rounded px-3 py-1.5 text-sm focus:border-brand-500 outline-none transition-colors">
                     </div>
                     <div>
-                        <label class="text-xs opacity-70 block mb-1">Marks (+)</label>
-                        <input type="number" id="re-marks-correct" value="${config.marksPerCorrect}" class="w-full bg-black/40 border border-white/10 rounded px-3 py-1.5 text-sm text-white focus:border-brand-500 outline-none transition-colors">
+                        <label class="text-xs text-muted block mb-1">Marks (+)</label>
+                        <input type="number" id="re-marks-correct" value="${config.marksPerCorrect}" class="w-full glass-input rounded px-3 py-1.5 text-sm focus:border-brand-500 outline-none transition-colors">
                     </div>
                     <div>
-                        <label class="text-xs opacity-70 block mb-1">Negative (-)</label>
-                        <input type="number" id="re-negative" value="${config.negativePerWrong}" class="w-full bg-black/40 border border-white/10 rounded px-3 py-1.5 text-sm text-white focus:border-brand-500 outline-none transition-colors">
+                        <label class="text-xs text-muted block mb-1">Negative (-)</label>
+                        <input type="number" id="re-negative" value="${config.negativePerWrong}" class="w-full glass-input rounded px-3 py-1.5 text-sm focus:border-brand-500 outline-none transition-colors">
                     </div>
                 </div>
             </div>
 
-            <div class="bg-black/20 rounded-xl p-4 border border-white/10">
+            <div class="glass-panel rounded-xl p-4 border border-white/10">
                 <div class="flex justify-between items-center mb-4">
-                    <h3 class="text-sm font-semibold opacity-90">Marks → Rank Cutoffs</h3>
-                    <button id="re-add-row-btn" class="px-3 py-1 bg-brand-600/20 text-brand-400 rounded hover:bg-brand-600/40 text-xs border-none cursor-pointer transition-colors">
+                    <h3 class="text-sm font-semibold">Marks → Rank Cutoffs</h3>
+                    <button id="re-add-row-btn" class="px-3 py-1 secondary-btn text-xs">
                         + Add Row
                     </button>
                 </div>
@@ -425,9 +425,9 @@ function renderRankEditor() {
                 <div id="re-data-points-container" class="space-y-2">
                     ${config.dataPoints.map((dp, idx) => `
                         <div class="flex gap-3 items-center">
-                            <input type="number" data-idx="${idx}" data-field="marks" value="${dp.marks}" class="re-dp-input flex-1 bg-black/40 border border-white/10 rounded px-3 py-1.5 text-sm text-white focus:border-brand-500 outline-none transition-colors" placeholder="Marks">
-                            <input type="number" data-idx="${idx}" data-field="rank" value="${dp.rank}" class="re-dp-input flex-1 bg-black/40 border border-white/10 rounded px-3 py-1.5 text-sm text-white focus:border-brand-500 outline-none transition-colors" placeholder="Rank">
-                            <button data-idx="${idx}" class="re-dp-del p-2 text-gray-400 hover:text-danger-500 bg-transparent border-none cursor-pointer transition-colors">🗑️</button>
+                            <input type="number" data-idx="${idx}" data-field="marks" value="${dp.marks}" class="re-dp-input flex-1 glass-input rounded px-3 py-1.5 text-sm focus:border-brand-500 outline-none transition-colors" placeholder="Marks">
+                            <input type="number" data-idx="${idx}" data-field="rank" value="${dp.rank}" class="re-dp-input flex-1 glass-input rounded px-3 py-1.5 text-sm focus:border-brand-500 outline-none transition-colors" placeholder="Rank">
+                            <button data-idx="${idx}" class="re-dp-del p-2 text-muted hover:text-danger-500 bg-transparent border-none cursor-pointer transition-colors">🗑️</button>
                         </div>
                     `).join('')}
                 </div>
@@ -435,8 +435,8 @@ function renderRankEditor() {
         </div>
 
         <div class="border-t border-white/10 pt-4 mt-4 flex justify-end gap-3">
-            <button id="close-rank-modal-btn" class="px-4 py-2 text-gray-400 hover:text-white bg-transparent border-none cursor-pointer text-sm transition-colors">Cancel</button>
-            <button id="save-rank-modal-btn" class="px-6 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-lg font-medium cursor-pointer border-none text-sm shadow-lg transition-colors">Save Configuration</button>
+            <button id="close-rank-modal-btn" class="px-4 py-2 secondary-btn text-sm">Cancel</button>
+            <button id="save-rank-modal-btn" class="px-6 py-2 primary-btn rounded-lg font-medium cursor-pointer text-sm shadow-lg">Save Configuration</button>
         </div>
     </div>
     `;

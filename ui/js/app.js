@@ -8,7 +8,7 @@ window.escapeHTML = function(str) {
         .replace(/'/g, "&#039;");
 };
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     // --- Navigation & Core App Logic ---
 
     // Sidebar Collapse
@@ -38,26 +38,72 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // Theme Toggle & Background Engine
+    // --- Theme Toggle & Wallpaper Rotation Engine ---
+    const WALLPAPER_ROTATION_MS = 2 * 60 * 60 * 1000; // 2 hours
     const themeToggleBtn = document.getElementById('theme-toggle');
     const body = document.body;
-    let currentBgIndex = 1;
-    const TOTAL_BGS = 4; // Cycles through bg1.jpg to bg4.jpg
+    let wallpapersCache = { dark: [], light: [] };
+
+    async function fetchWallpapersList() {
+        try {
+            const res = await fetch('/api/sources/wallpapers');
+            if (res.ok) {
+                const data = await res.json();
+                wallpapersCache = data || { dark: [], light: [] };
+            }
+        } catch (err) {
+            console.warn('Failed to fetch wallpaper list from backend:', err);
+        }
+    }
+
+    function getNextWallpaperUrl(theme) {
+        const list = wallpapersCache[theme] || [];
+        const now = Date.now();
+        let lastChange = parseInt(localStorage.getItem('lastWallpaperChangeTimestamp') || '0', 10);
+        let bgIndex = parseInt(localStorage.getItem('currentBgIndex') || '0', 10);
+
+        if (!lastChange) {
+            lastChange = now;
+            bgIndex = 0;
+            localStorage.setItem('lastWallpaperChangeTimestamp', lastChange.toString());
+            localStorage.setItem('currentBgIndex', bgIndex.toString());
+        } else if (now - lastChange >= WALLPAPER_ROTATION_MS) {
+            bgIndex = bgIndex + 1;
+            lastChange = now;
+            localStorage.setItem('lastWallpaperChangeTimestamp', lastChange.toString());
+            localStorage.setItem('currentBgIndex', bgIndex.toString());
+        }
+
+        if (list && list.length > 0) {
+            const filename = list[bgIndex % list.length];
+            return `/img/${theme}/${filename}`;
+        }
+        return `/img/bg-${theme}.jpg`;
+    }
 
     const updateThemeAndBackground = () => {
         const theme = body.classList.contains('dark-theme') ? 'dark' : 'light';
-        // Simulate grabbing from structured light/dark folders
-        const imgUrl = `/img/${theme}/bg${currentBgIndex}.jpg`;
+        const imgUrl = getNextWallpaperUrl(theme);
 
         const img = new Image();
         img.crossOrigin = "Anonymous";
         img.onload = () => {
-            document.querySelector('.background-animation').style.backgroundImage = `url(${imgUrl})`;
+            const bgEl = document.querySelector('.background-animation');
+            if (bgEl) {
+                bgEl.style.backgroundImage = `url(${imgUrl})`;
+            }
             extractAndApplyPalette(img, theme);
         };
-        // Fallback to default if dynamic images are missing in user's directory
         img.onerror = () => {
-            document.querySelector('.background-animation').style.backgroundImage = `url(/img/bg-${theme}.jpg)`;
+            const fallbackUrl = `/img/bg-${theme}.jpg`;
+            const bgEl = document.querySelector('.background-animation');
+            if (bgEl) {
+                bgEl.style.backgroundImage = `url(${fallbackUrl})`;
+            }
+            const fallbackImg = new Image();
+            fallbackImg.crossOrigin = "Anonymous";
+            fallbackImg.onload = () => extractAndApplyPalette(fallbackImg, theme);
+            fallbackImg.src = fallbackUrl;
         };
         img.src = imgUrl;
     };
@@ -70,17 +116,21 @@ document.addEventListener('DOMContentLoaded', () => {
         updateThemeAndBackground();
     });
 
+    // Check periodically (every 10 seconds) if 2 hours have elapsed
     setInterval(() => {
-        currentBgIndex = (currentBgIndex % TOTAL_BGS) + 1;
-        updateThemeAndBackground();
-    }, 60000); // Rotate background every 60 seconds
+        const lastChange = parseInt(localStorage.getItem('lastWallpaperChangeTimestamp') || '0', 10);
+        if (lastChange && (Date.now() - lastChange >= WALLPAPER_ROTATION_MS)) {
+            updateThemeAndBackground();
+        }
+    }, 10000);
 
-    // Init saved theme
+    // Initial load
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme) body.className = savedTheme;
+    await fetchWallpapersList();
     updateThemeAndBackground();
 
-    // --- Color Extraction Algorithms ---
+    // --- Color Palette Extraction & WCAG Luminance Math ---
     function hslToRgb(h, s, l) {
         let r, g, b;
         if (s === 0) r = g = b = l;
@@ -95,9 +145,9 @@ document.addEventListener('DOMContentLoaded', () => {
             };
             const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
             const p = 2 * l - q;
-            r = hue2rgb(p, q, h + 1/3);
-            g = hue2rgb(p, q, h);
-            b = hue2rgb(p, q, h - 1/3);
+            r = hue2rgb(p, q, (h / 360) + 1/3);
+            g = hue2rgb(p, q, (h / 360));
+            b = hue2rgb(p, q, (h / 360) - 1/3);
         }
         return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
     }
@@ -105,9 +155,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function rgbToHsl(r, g, b) {
         r /= 255; g /= 255; b /= 255;
         const max = Math.max(r, g, b), min = Math.min(r, g, b);
-        let h, s, l = (max + min) / 2;
-        if (max === min) h = s = 0;
-        else {
+        let h = 0, s = 0, l = (max + min) / 2;
+        if (max !== min) {
             const d = max - min;
             s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
             switch (max) {
@@ -115,55 +164,179 @@ document.addEventListener('DOMContentLoaded', () => {
                 case g: h = (b - r) / d + 2; break;
                 case b: h = (r - g) / d + 4; break;
             }
-            h /= 6;
+            h *= 60;
         }
         return [h, s, l];
+    }
+
+    function getRelativeLuminance(r, g, b) {
+        const getLin = (c) => {
+            const cs = c / 255;
+            return cs <= 0.04045 ? cs / 12.92 : Math.pow((cs + 0.055) / 1.055, 2.4);
+        };
+        return 0.2126 * getLin(r) + 0.7152 * getLin(g) + 0.0722 * getLin(b);
+    }
+
+    function getContrastRatio(l1, l2) {
+        const maxL = Math.max(l1, l2);
+        const minL = Math.min(l1, l2);
+        return (maxL + 0.05) / (minL + 0.05);
     }
 
     function extractAndApplyPalette(img, theme) {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        canvas.width = img.width; canvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
+        canvas.width = 64;
+        canvas.height = 64;
+        ctx.drawImage(img, 0, 0, 64, 64);
 
-        // Define 4 quadrants for 4 primary UI shade variables
         const regions = [
-            { x: 0, y: 0, w: canvas.width/2, h: canvas.height/2 },
-            { x: canvas.width/2, y: 0, w: canvas.width/2, h: canvas.height/2 },
-            { x: 0, y: canvas.height/2, w: canvas.width/2, h: canvas.height/2 },
-            { x: canvas.width/2, y: canvas.height/2, w: canvas.width/2, h: canvas.height/2 }
+            { x: 0, y: 0, w: 32, h: 32 },
+            { x: 32, y: 0, w: 32, h: 32 },
+            { x: 0, y: 32, w: 32, h: 32 },
+            { x: 32, y: 32, w: 32, h: 32 }
         ];
 
-        regions.forEach((region, i) => {
-            const data = ctx.getImageData(region.x, region.y, region.w, region.h).data;
-            let r = 0, g = 0, b = 0, count = 0;
-            // Sample every 16th pixel for performance
-            for (let j = 0; j < data.length; j += 64) {
-                r += data[j]; g += data[j+1]; b += data[j+2]; count++;
+        const filteredHues = [];
+        const quadrantDataList = [];
+
+        regions.forEach((region) => {
+            const imgData = ctx.getImageData(region.x, region.y, region.w, region.h).data;
+            let sumR = 0, sumG = 0, sumB = 0;
+            const totalPixels = imgData.length / 4;
+            const pixelsWithLum = [];
+
+            for (let p = 0; p < imgData.length; p += 4) {
+                const r = imgData[p];
+                const g = imgData[p + 1];
+                const b = imgData[p + 2];
+                sumR += r;
+                sumG += g;
+                sumB += b;
+
+                const [h, s, l] = rgbToHsl(r, g, b);
+                pixelsWithLum.push({ r, g, b, l, h, s });
+
+                // Filter: Ignore extreme black (L < 0.08), extreme white (L > 0.92), and near-grey (S < 0.12)
+                if (l >= 0.08 && l <= 0.92 && s >= 0.12) {
+                    filteredHues.push(h);
+                }
             }
-            if(count === 0) return;
-            r = Math.round(r / count); g = Math.round(g / count); b = Math.round(b / count);
 
-            // Algorithmic Aesthetic Normalization
-            let [h, s, l] = rgbToHsl(r, g, b);
+            const avgBgR = Math.round(sumR / totalPixels);
+            const avgBgG = Math.round(sumG / totalPixels);
+            const avgBgB = Math.round(sumB / totalPixels);
 
-            // Ensure minimum saturation so UI isn't fully grey
-            s = Math.max(s, 0.25);
+            pixelsWithLum.sort((a, b) => a.l - b.l);
+            const tenthIndex = Math.max(1, Math.floor(totalPixels * 0.10));
 
-            // Constrain lightness for text contrast mapping
-            l = theme === 'dark'
-                ? Math.max(0.1, Math.min(l, 0.25)) // Keep dark themes dark
-                : Math.max(0.75, Math.min(l, 0.9)); // Keep light themes light
+            let darkSumR = 0, darkSumG = 0, darkSumB = 0;
+            for (let k = 0; k < tenthIndex; k++) {
+                darkSumR += pixelsWithLum[k].r;
+                darkSumG += pixelsWithLum[k].g;
+                darkSumB += pixelsWithLum[k].b;
+            }
+            const darkBgR = Math.round(darkSumR / tenthIndex);
+            const darkBgG = Math.round(darkSumG / tenthIndex);
+            const darkBgB = Math.round(darkSumB / tenthIndex);
 
-            const [fr, fg, fb] = hslToRgb(h, s, l);
+            let brightSumR = 0, brightSumG = 0, brightSumB = 0;
+            const startIndex = totalPixels - tenthIndex;
+            for (let k = startIndex; k < totalPixels; k++) {
+                brightSumR += pixelsWithLum[k].r;
+                brightSumG += pixelsWithLum[k].g;
+                brightSumB += pixelsWithLum[k].b;
+            }
+            const brightBgR = Math.round(brightSumR / tenthIndex);
+            const brightBgG = Math.round(brightSumG / tenthIndex);
+            const brightBgB = Math.round(brightSumB / tenthIndex);
 
-            // Export to CSS variables
-            document.documentElement.style.setProperty(`--card-color-${i+1}`, `${fr}, ${fg}, ${fb}`);
+            quadrantDataList.push({
+                avgBg: [avgBgR, avgBgG, avgBgB],
+                darkBg: [darkBgR, darkBgG, darkBgB],
+                brightBg: [brightBgR, brightBgG, brightBgB]
+            });
+        });
 
-            // Calculate luminance for WCAG contrast text colors
-            const brightness = (fr * 299 + fg * 587 + fb * 114) / 1000;
-            const textColor = brightness > 128 ? '#111827' : '#F9FAFB'; // Dark gray vs White
-            document.documentElement.style.setProperty(`--text-on-card-${i+1}`, textColor);
+        // Dominant Hue Extraction
+        let domHue = 220; // Default hue
+        if (filteredHues.length > 0) {
+            let sinSum = 0, cosSum = 0;
+            filteredHues.forEach(h => {
+                const rad = (h * Math.PI) / 180;
+                sinSum += Math.sin(rad);
+                cosSum += Math.cos(rad);
+            });
+            let avgRad = Math.atan2(sinSum, cosSum);
+            if (avgRad < 0) avgRad += 2 * Math.PI;
+            domHue = (avgRad * 180) / Math.PI;
+        }
+
+        // Harmonic Shifts: Shade 1: H, Shade 2: H+15, Shade 3: H-15, Shade 4: H+30
+        const hueShifts = [0, 15, -15, 30];
+
+        quadrantDataList.forEach((qData, i) => {
+            let h = (domHue + hueShifts[i] + 360) % 360;
+
+            // Clamping Saturation: 0.25-0.50 (Dark) vs 0.20-0.45 (Light)
+            let s = (theme === 'dark') ? 0.35 : 0.30;
+            // Clamping Lightness: 0.12-0.22 (Dark) vs 0.82-0.92 (Light)
+            let l = (theme === 'dark') ? 0.17 : 0.87;
+
+            const [rCard, gCard, bCard] = hslToRgb(h, s, l);
+            document.documentElement.style.setProperty(`--card-color-${i + 1}`, `${rCard}, ${gCard}, ${bCard}`);
+
+            // Step 4A — Alpha-Blended Effective RGB (alpha = 0.78)
+            const alpha = 0.78;
+            const blend = (cardC, bgC) => Math.round(alpha * cardC + (1 - alpha) * bgC);
+
+            const effAvg = [
+                blend(rCard, qData.avgBg[0]),
+                blend(gCard, qData.avgBg[1]),
+                blend(bCard, qData.avgBg[2])
+            ];
+            const effDark = [
+                blend(rCard, qData.darkBg[0]),
+                blend(gCard, qData.darkBg[1]),
+                blend(bCard, qData.darkBg[2])
+            ];
+            const effBright = [
+                blend(rCard, qData.brightBg[0]),
+                blend(gCard, qData.brightBg[1]),
+                blend(bCard, qData.brightBg[2])
+            ];
+
+            // Step 4B — Relative Luminance Calculations
+            const lumAvg = getRelativeLuminance(effAvg[0], effAvg[1], effAvg[2]);
+            const lumDark = getRelativeLuminance(effDark[0], effDark[1], effDark[2]);
+            const lumBright = getRelativeLuminance(effBright[0], effBright[1], effBright[2]);
+
+            // Candidate Primary Text
+            const darkTextLum = getRelativeLuminance(15, 23, 42);   // #0F172A
+            const lightTextLum = getRelativeLuminance(248, 250, 252); // #F8FAFC
+
+            const crDarkTextAvg = getContrastRatio(darkTextLum, lumAvg);
+            const crDarkTextDark = getContrastRatio(darkTextLum, lumDark);
+            const crDarkTextBright = getContrastRatio(darkTextLum, lumBright);
+            const minCrDarkText = Math.min(crDarkTextAvg, crDarkTextDark, crDarkTextBright);
+
+            const crLightTextAvg = getContrastRatio(lightTextLum, lumAvg);
+            const crLightTextDark = getContrastRatio(lightTextLum, lumDark);
+            const crLightTextBright = getContrastRatio(lightTextLum, lumBright);
+            const minCrLightText = Math.min(crLightTextAvg, crLightTextDark, crLightTextBright);
+
+            // Step 4C — Variable Assignment
+            if (minCrLightText >= minCrDarkText) {
+                // Light text
+                document.documentElement.style.setProperty(`--text-on-card-${i + 1}`, '#F8FAFC');
+                document.documentElement.style.setProperty(`--text-muted-on-card-${i + 1}`, '#CBD5E1');
+                document.documentElement.style.setProperty(`--card-text-shadow-${i + 1}`, '0 1px 2px rgba(0, 0, 0, 0.35)');
+            } else {
+                // Dark text
+                document.documentElement.style.setProperty(`--text-on-card-${i + 1}`, '#0F172A');
+                document.documentElement.style.setProperty(`--text-muted-on-card-${i + 1}`, '#334155');
+                document.documentElement.style.setProperty(`--card-text-shadow-${i + 1}`, '0 1px 1px rgba(255, 255, 255, 0.5)');
+            }
         });
     }
 

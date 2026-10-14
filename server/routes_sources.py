@@ -25,6 +25,30 @@ class SourcePayload(BaseModel):
     lastIndexed: str = "Never"
     pdfEngine: str = "fitz"
 
+@router.get("/wallpapers")
+def get_wallpapers():
+    valid_extensions = {".jpg", ".jpeg", ".png", ".webp"}
+    base_dir = Path("ui/img")
+    dark_dir = base_dir / "dark"
+    light_dir = base_dir / "light"
+
+    dark_wallpapers = []
+    light_wallpapers = []
+
+    if dark_dir.exists() and dark_dir.is_dir():
+        dark_wallpapers = sorted([
+            f.name for f in dark_dir.iterdir()
+            if f.is_file() and f.suffix.lower() in valid_extensions
+        ])
+
+    if light_dir.exists() and light_dir.is_dir():
+        light_wallpapers = sorted([
+            f.name for f in light_dir.iterdir()
+            if f.is_file() and f.suffix.lower() in valid_extensions
+        ])
+
+    return {"dark": dark_wallpapers, "light": light_wallpapers}
+
 @router.get("")
 def get_sources():
     with get_db_connection() as conn:

@@ -18,7 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const indexingProgressBar = document.getElementById('indexing-progress-bar');
 
 
-    let sources = [];
+  let sources = [];
   let isIndexing = false;
   let ws = null;
   let fallbackTimer = null;
@@ -64,37 +64,37 @@ document.addEventListener('DOMContentLoaded', () => {
       sourcesList.classList.remove('hidden');
 
       sources.forEach(src => {
-        const bgClass = src.enabled ? 'bg-gray-900/60 border-gray-700' : 'bg-gray-900/20 border-gray-800 opacity-60';
+        const bgClass = src.enabled ? 'glass-card' : 'glass-panel opacity-60';
         const toggleIcon = src.enabled ? icons.toggleOn : icons.toggleOff;
-        const toggleColor = src.enabled ? 'text-success-500' : 'text-gray-600';
+        const toggleColor = src.enabled ? 'text-success-500' : 'text-muted';
         const typeBadge = src.type === 'pdf' && src.pdfEngine ? `${src.type} (${src.pdfEngine})` : src.type;
 
         const el = document.createElement('div');
         el.className = `p-4 rounded-xl border flex items-center justify-between transition-all ${bgClass}`;
         el.innerHTML = `
           <div class="flex items-center gap-4 min-w-0 flex-1">
-            <div class="p-2.5 bg-gray-800 rounded-xl text-brand-400">
+            <div class="p-2.5 glass-panel rounded-xl text-brand-400">
               ${icons[src.type]}
             </div>
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
-                <p class="text-sm font-semibold text-gray-200">${window.escapeHTML(src.name)}</p>
-                <span class="text-xs px-2 py-0.5 rounded bg-gray-800 text-gray-400 uppercase font-mono">
+                <p class="text-sm font-semibold">${window.escapeHTML(src.name)}</p>
+                <span class="text-xs px-2 py-0.5 rounded glass-panel text-muted uppercase font-mono">
                   ${typeBadge}
                 </span>
               </div>
-              <p class="text-xs font-mono text-gray-400 truncate mt-0.5">${window.escapeHTML(src.path)}</p>
+              <p class="text-xs font-mono text-muted truncate mt-0.5">${window.escapeHTML(src.path)}</p>
             </div>
           </div>
           <div class="flex items-center gap-6">
             <div class="text-right hidden sm:block">
-              <p class="text-xs text-gray-400">${src.itemCount || 0} indexed items</p>
-              <p class="text-[10px] text-gray-500">Last: ${src.lastIndexed}</p>
+              <p class="text-xs text-muted">${src.itemCount || 0} indexed items</p>
+              <p class="text-[10px] text-muted">Last: ${src.lastIndexed}</p>
             </div>
-            <button class="toggle-btn p-1 text-2xl transition-colors ${toggleColor}" data-id="${src.id}" title="${src.enabled ? 'Source Enabled' : 'Source Disabled'}">
+            <button class="toggle-btn p-1 text-2xl transition-colors ${toggleColor} bg-transparent border-none cursor-pointer" data-id="${src.id}" title="${src.enabled ? 'Source Enabled' : 'Source Disabled'}">
               ${toggleIcon}
             </button>
-            <button class="delete-btn p-2 text-gray-500 hover:text-danger-500 hover:bg-danger-500/10 rounded-lg transition-colors" data-id="${src.id}">
+            <button class="delete-btn p-2 text-muted hover:text-danger-500 hover:bg-danger-500/10 rounded-lg transition-colors bg-transparent border-none cursor-pointer" data-id="${src.id}">
               ${icons.trash}
             </button>
           </div>
@@ -161,21 +161,17 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementsByName('pdfEngine').forEach(radio => {
     radio.addEventListener('change', () => {
       if (radio.value === 'fitz') {
-        pdfEngineFitzLabel.classList.replace('bg-gray-900/50', 'bg-brand-600/10');
-        pdfEngineFitzLabel.classList.replace('border-gray-700', 'border-brand-500');
-        pdfEngineFitzLabel.classList.remove('hover:bg-gray-800');
+        pdfEngineFitzLabel.classList.add('bg-brand-600/10', 'border-brand-500');
+        pdfEngineFitzLabel.classList.remove('glass-panel');
 
-        pdfEngineDoclingLabel.classList.replace('bg-brand-600/10', 'bg-gray-900/50');
-        pdfEngineDoclingLabel.classList.replace('border-brand-500', 'border-gray-700');
-        pdfEngineDoclingLabel.classList.add('hover:bg-gray-800');
+        pdfEngineDoclingLabel.classList.remove('bg-brand-600/10', 'border-brand-500');
+        pdfEngineDoclingLabel.classList.add('glass-panel');
       } else {
-        pdfEngineDoclingLabel.classList.replace('bg-gray-900/50', 'bg-brand-600/10');
-        pdfEngineDoclingLabel.classList.replace('border-gray-700', 'border-brand-500');
-        pdfEngineDoclingLabel.classList.remove('hover:bg-gray-800');
+        pdfEngineDoclingLabel.classList.add('bg-brand-600/10', 'border-brand-500');
+        pdfEngineDoclingLabel.classList.remove('glass-panel');
 
-        pdfEngineFitzLabel.classList.replace('bg-brand-600/10', 'bg-gray-900/50');
-        pdfEngineFitzLabel.classList.replace('border-brand-500', 'border-gray-700');
-        pdfEngineFitzLabel.classList.add('hover:bg-gray-800');
+        pdfEngineFitzLabel.classList.remove('bg-brand-600/10', 'border-brand-500');
+        pdfEngineFitzLabel.classList.add('glass-panel');
       }
     });
   });

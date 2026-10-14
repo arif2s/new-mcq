@@ -2,10 +2,20 @@ import io
 import logging
 import functools
 import fitz
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.pipeline_options import PdfPipelineOptions
-from docling.datamodel.base_models import InputFormat, DocumentStream
-from docling_core.types.doc.document import TextItem, SectionHeaderItem, TableItem
+try:
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.datamodel.base_models import InputFormat, DocumentStream
+    from docling_core.types.doc.document import TextItem, SectionHeaderItem, TableItem
+except ImportError:
+    DocumentConverter = None
+    PdfFormatOption = None
+    PdfPipelineOptions = None
+    InputFormat = None
+    DocumentStream = None
+    TextItem = None
+    SectionHeaderItem = None
+    TableItem = None
 
 logger = logging.getLogger(__name__)
 _converter = None

@@ -98,7 +98,7 @@ function initHabits() {
         if (streakDays >= 7) return { emoji: '🔥', text: "You're on fire! A week-long streak!", color: 'text-warning-500' };
         if (todayCount > 0) return { emoji: '📈', text: "Great start! Keep the momentum going.", color: 'text-brand-400' };
 
-        return { emoji, text: greeting, color: 'text-gray-300' };
+        return { emoji, text: greeting, color: 'text-muted' };
     };
 
     const motivation = getMotivation();
@@ -121,7 +121,7 @@ function initHabits() {
 
     // 4. Heatmap Generator
     const getIntensity = (count) => {
-        if (count === 0) return 'bg-gray-800/40 border border-white/5';
+        if (count === 0) return 'glass-panel border border-white/5';
         if (count <= 5) return 'bg-success-700/60 shadow-[0_0_4px_rgba(21,128,61,0.4)]';
         if (count <= 15) return 'bg-success-600/80 shadow-[0_0_6px_rgba(22,163,74,0.6)]';
         if (count <= 30) return 'bg-success-500 shadow-[0_0_8px_rgba(34,197,94,0.8)]';
@@ -142,12 +142,12 @@ function initHabits() {
     // 5. Recent Activity List
     const recentActivity = [...habitLog].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 7);
     const recentActivityHtml = recentActivity.length === 0
-        ? '<p class="text-sm opacity-60">No activity recorded yet.</p>'
+        ? '<p class="text-sm text-muted">No activity recorded yet.</p>'
         : recentActivity.map(h => `
-            <div class="flex items-center justify-between bg-black/20 border border-white/5 rounded-lg p-3">
+            <div class="flex items-center justify-between glass-panel border border-white/5 rounded-lg p-3">
                 <div>
-                    <span class="text-sm font-medium opacity-90">${h.date}</span>
-                    <span class="text-xs opacity-60 ml-2 truncate max-w-[120px] inline-block align-bottom">${(h.subjects || []).join(', ')}</span>
+                    <span class="text-sm font-medium">${h.date}</span>
+                    <span class="text-xs text-muted ml-2 truncate max-w-[120px] inline-block align-bottom">${(h.subjects || []).join(', ')}</span>
                 </div>
                 <div class="flex items-center gap-4 text-sm font-medium">
                     <span class="text-brand-400">${h.questionsAnswered} Q</span>
@@ -171,10 +171,10 @@ function initHabits() {
     const milestonesHtml = milestones.map(m => {
         const achieved = m.current >= m.target;
         return `
-        <div class="p-4 rounded-xl border transition-all ${achieved ? 'bg-success-500/10 border-success-500/30' : 'bg-black/20 border-white/5 opacity-60'} text-center flex flex-col justify-center items-center">
+        <div class="p-4 rounded-xl border transition-all ${achieved ? 'bg-success-500/10 border-success-500/30' : 'glass-panel border-white/5 opacity-60'} text-center flex flex-col justify-center items-center">
             <span class="text-2xl mb-2">${achieved ? m.icon : '🔒'}</span>
-            <p class="text-xs font-medium ${achieved ? 'text-success-400' : 'opacity-70'}">${m.label}</p>
-            ${!achieved ? `<p class="text-[10px] opacity-50 mt-1">${m.current}/${m.target}</p>` : ''}
+            <p class="text-xs font-medium ${achieved ? 'text-success-400' : 'text-muted'}">${m.label}</p>
+            ${!achieved ? `<p class="text-[10px] text-muted mt-1">${m.current}/${m.target}</p>` : ''}
         </div>`;
     }).join('');
 
@@ -192,11 +192,11 @@ function initHabits() {
     container.innerHTML = `
       <div class="w-full p-6 animate-fade-in">
         <h1 class="text-3xl font-bold mb-2">📅 Habit Tracker</h1>
-        <p class="opacity-70 mb-8">Track your daily learning consistency and build unbreakable momentum.</p>
+        <p class="subtitle mb-8">Track your daily learning consistency and build unbreakable momentum.</p>
 
         <!-- Motivation Banner -->
         <div class="glass-card card-shade-1 p-6 mb-8 flex items-center gap-5">
-            <div class="w-16 h-16 bg-black/20 rounded-full flex items-center justify-center text-4xl shadow-inner border border-white/5">
+            <div class="w-16 h-16 glass-panel rounded-full flex items-center justify-center text-4xl shadow-inner border border-white/5">
                 ${motivation.emoji}
             </div>
             <div class="flex-1">
@@ -207,11 +207,11 @@ function initHabits() {
 
                 <!-- Progress Bar -->
                 <div class="mt-4">
-                    <div class="flex justify-between items-center mb-1 text-xs opacity-80">
+                    <div class="flex justify-between items-center mb-1 text-xs text-muted">
                         <span>Today's Goal: ${todayCount}/${dailyTargets.questionsTarget || 50} questions</span>
                         <span class="font-medium">${goalProgress.toFixed(0)}%</span>
                     </div>
-                    <div class="w-full bg-black/30 rounded-full h-2 shadow-inner border border-white/5">
+                    <div class="w-full glass-panel rounded-full h-2 shadow-inner border border-white/5">
                         <div class="h-2 rounded-full transition-all duration-1000 ${goalProgress >= 100 ? 'bg-success-500 shadow-[0_0_10px_rgba(34,197,94,0.6)]' : 'bg-brand-500 shadow-[0_0_10px_rgba(139,92,246,0.6)]'}" style="width: ${goalProgress}%"></div>
                     </div>
                 </div>
@@ -225,32 +225,32 @@ function initHabits() {
             <div class="glass-card card-shade-2 p-4 text-center">
                 ${icons.flame}
                 <p class="text-2xl font-bold">${streakDays}</p>
-                <p class="text-xs opacity-70 mt-1">Current Streak</p>
+                <p class="text-xs text-muted mt-1">Current Streak</p>
             </div>
             <div class="glass-card card-shade-2 p-4 text-center">
                 ${icons.award}
                 <p class="text-2xl font-bold">${longestStreak}</p>
-                <p class="text-xs opacity-70 mt-1">Best Streak</p>
+                <p class="text-xs text-muted mt-1">Best Streak</p>
             </div>
             <div class="glass-card card-shade-2 p-4 text-center">
                 ${icons.book}
                 <p class="text-2xl font-bold">${wQuestions}</p>
-                <p class="text-xs opacity-70 mt-1">This Week</p>
+                <p class="text-xs text-muted mt-1">This Week</p>
             </div>
             <div class="glass-card card-shade-2 p-4 text-center">
                 ${icons.cal}
                 <p class="text-2xl font-bold">${wActive}/7</p>
-                <p class="text-xs opacity-70 mt-1">Active (Week)</p>
+                <p class="text-xs text-muted mt-1">Active (Week)</p>
             </div>
             <div class="glass-card card-shade-2 p-4 text-center">
                 ${icons.trendUp}
                 <p class="text-2xl font-bold">${mQuestions}</p>
-                <p class="text-xs opacity-70 mt-1">This Month</p>
+                <p class="text-xs text-muted mt-1">This Month</p>
             </div>
             <div class="glass-card card-shade-2 p-4 text-center">
                 ${icons.target}
                 <p class="text-2xl font-bold">${mActive}/30</p>
-                <p class="text-xs opacity-70 mt-1">Active (Month)</p>
+                <p class="text-xs text-muted mt-1">Active (Month)</p>
             </div>
         </div>
 
@@ -259,11 +259,11 @@ function initHabits() {
             <h3 class="text-lg font-semibold mb-4 opacity-90">📊 Activity Heatmap (Last 365 Days)</h3>
 
             <div class="flex mb-2 ml-6">
-                ${mLabels.map(m => `<span class="text-[10px] opacity-50 flex-1">${m}</span>`).join('')}
+                ${mLabels.map(m => `<span class="text-[10px] text-muted flex-1">${m}</span>`).join('')}
             </div>
 
             <div class="flex gap-1 overflow-x-auto pb-2 scrollbar-thin">
-                <div class="flex flex-col gap-1 mr-2 text-[10px] opacity-50 font-mono">
+                <div class="flex flex-col gap-1 mr-2 text-[10px] text-muted font-mono">
                     <span class="h-3 leading-3">S</span>
                     <span class="h-3 leading-3">M</span>
                     <span class="h-3 leading-3">T</span>
@@ -275,9 +275,9 @@ function initHabits() {
                 ${heatmapColsHtml}
             </div>
 
-            <div class="flex items-center gap-2 mt-4 text-xs opacity-60">
+            <div class="flex items-center gap-2 mt-4 text-xs text-muted">
                 <span>Less</span>
-                <div class="w-3 h-3 rounded-[2px] bg-gray-800/40 border border-white/5"></div>
+                <div class="w-3 h-3 rounded-[2px] glass-panel border border-white/5"></div>
                 <div class="w-3 h-3 rounded-[2px] bg-success-700/60"></div>
                 <div class="w-3 h-3 rounded-[2px] bg-success-600/80"></div>
                 <div class="w-3 h-3 rounded-[2px] bg-success-500"></div>
