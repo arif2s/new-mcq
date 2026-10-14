@@ -35,7 +35,7 @@ async function initQuizSetup() {
     } catch (e) { console.error("Failed to load filters", e); }
 
     container.innerHTML = `
-        <div class="max-w-5xl mx-auto p-6 animate-fade-in">
+        <div class="w-full p-6 animate-fade-in">
             <div class="flex items-center justify-between mb-8">
                 <div>
                     <h1 class="text-3xl font-bold mb-2 flex items-center gap-3">⚙️ Quiz Configuration</h1>
@@ -257,7 +257,7 @@ function renderQuestion() {
         : (Object.keys(quizAnswers).length / currentQuiz.questions.length) * 100;
 
     let html = `
-        <div class="max-w-4xl mx-auto p-6 animate-fade-in flex flex-col h-full">
+        <div class="w-full p-6 animate-fade-in flex flex-col h-full">
             <div class="flex items-center justify-between mb-6 flex-wrap gap-4">
                 <div class="flex items-center gap-4">
                     <div class="bg-black/30 border border-white/10 rounded-xl px-5 py-2.5 shadow-inner">
@@ -517,7 +517,7 @@ function renderResults(result, answeredQs) {
     const wrongQs = answeredQs.filter(q => { const a = quizAnswers[q.id]; return a && !a.isCorrect && !a.timedOut; });
 
     container.innerHTML = `
-        <div class="max-w-4xl mx-auto p-6 animate-fade-in">
+        <div class="w-full p-6 animate-fade-in">
             <div class="text-center mb-10">
                 <div class="inline-flex items-center justify-center w-24 h-24 rounded-full ${result.accuracy >= 70 ? 'bg-success-500/20 text-success-400' : 'bg-warning-500/20 text-warning-400'} mb-4 shadow-inner border border-white/5">
                     <span class="text-4xl font-black">${result.accuracy >= 90 ? 'A+' : result.accuracy >= 80 ? 'A' : result.accuracy >= 70 ? 'B' : result.accuracy >= 60 ? 'C' : 'D'}</span>

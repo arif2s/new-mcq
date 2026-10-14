@@ -127,7 +127,7 @@ function initDashboard() {
 
     // --- Dynamic Render ---
     dashContainer.innerHTML = `
-      <div class="max-w-6xl mx-auto p-6 animate-fade-in">
+      <div class="w-full p-6 animate-fade-in">
         <div class="mb-8">
             <h1 class="text-3xl font-bold mb-2">📊 Dashboard</h1>
             <p class="opacity-70">Your learning analytics at a glance</p>

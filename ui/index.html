@@ -27,7 +27,7 @@ tailwind.config = {
 </head>
   <body class="light-theme">
     <div class="background-animation"></div>
-    <div class="container glass-panel">
+    <div class="app-container glass-panel">
       <!-- LEFT RAIL -->
       <nav class="left-rail glass-panel">
         <div class="app-header flex items-center justify-between">
@@ -121,7 +121,7 @@ tailwind.config = {
 
         <!-- MCQ EXTRACTOR VIEW -->
         <section id="home-view" class="view-section fade-enter">
-          <div class="max-w-5xl mx-auto">
+          <div class="w-full">
             <header class="view-header">
               <h2>Medical Entity Extractor & MCQ</h2>
               <p class="subtitle">Extract clinical entities and analyze MCQ questions.</p>
@@ -152,7 +152,7 @@ tailwind.config = {
 
         <!-- QUIZ ENGINE VIEW -->
         <section id="quiz-view" class="view-section fade-enter">
-          <div class="max-w-5xl mx-auto">
+          <div class="w-full">
             <header class="view-header">
               <h2>Quiz Engine</h2>
               <p class="subtitle">Test your knowledge against your database.</p>
@@ -237,13 +237,13 @@ tailwind.config = {
               <h2 class="text-xl font-semibold text-gray-200 mb-2">No Study Sessions Yet</h2>
               <p class="text-gray-400">Complete a quiz to see your history here.</p>
             </div>
-            <div id="hub-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" style="display: none;">
+            <div id="hub-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6" style="display: none;">
               <!-- Cards rendered via JS Templates -->
             </div>
           </div>
 
           <!-- Session Review Sub-View -->
-          <div id="hub-review-container" style="display: none;" class="max-w-5xl mx-auto flex flex-col">
+          <div id="hub-review-container" style="display: none;" class="w-full flex flex-col">
               <div class="flex justify-between items-center mb-6">
                 <button id="hub-review-back-btn" class="flex items-center gap-2 text-gray-400 hover:text-white transition-colors cursor-pointer border-none bg-transparent">
                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg> Back to Hub
@@ -304,7 +304,7 @@ tailwind.config = {
 
         <!-- RAG VAULT VIEW -->
         <section id="rag-vault-view" class="view-section fade-enter">
-          <div class="max-w-5xl mx-auto p-6 animate-fade-in">
+          <div class="w-full p-6 animate-fade-in">
             <div class="flex items-center justify-between mb-6">
               <div>
                 <h1 class="text-3xl font-bold text-gray-100 flex items-center gap-3">
@@ -430,7 +430,7 @@ tailwind.config = {
 
         <!-- HABIT TRACKER VIEW -->
         <section id="habit-tracker-view" class="view-section fade-enter">
-          <div class="max-w-5xl mx-auto">
+          <div class="w-full">
             <header class="view-header">
               <h2>Habit Tracker</h2>
               <p class="subtitle">Track your learning and review habits over time.</p>
@@ -452,7 +452,7 @@ tailwind.config = {
 
         <!-- EXPERTISE MAP VIEW -->
         <section id="expertise-view" class="view-section fade-enter">
-          <div class="max-w-6xl mx-auto">
+          <div class="w-full">
             <header class="view-header flex justify-between items-center mb-6">
               <div>
                 <h2>Expertise Map</h2>
@@ -487,7 +487,7 @@ tailwind.config = {
 
         <!-- PROCESSING QUEUE VIEW -->
         <section id="queue-view" class="view-section fade-enter">
-          <div class="max-w-5xl mx-auto">
+          <div class="w-full">
             <header class="view-header">
               <h2>Processing Queue <span id="queue-worker-status" class="badge bg-warning ml-2">Checking...</span></h2>
               <p class="subtitle">Monitor background tasks and LLM generation queue.</p>
@@ -527,7 +527,7 @@ tailwind.config = {
 
         <!-- SETTINGS VIEW -->
         <section id="settings-view" class="view-section fade-enter">
-          <div class="max-w-5xl mx-auto">
+          <div class="w-full">
             <header class="view-header">
               <h2>System Settings</h2>
               <p class="subtitle">Diagnostics, model configuration, and database management.</p>

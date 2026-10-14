@@ -190,7 +190,7 @@ function initHabits() {
 
     // 7. Render DOM
     container.innerHTML = `
-      <div class="max-w-6xl mx-auto p-6 animate-fade-in">
+      <div class="w-full p-6 animate-fade-in">
         <h1 class="text-3xl font-bold mb-2">📅 Habit Tracker</h1>
         <p class="opacity-70 mb-8">Track your daily learning consistency and build unbreakable momentum.</p>
 

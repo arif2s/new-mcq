@@ -108,10 +108,11 @@ body {
 
 
 /* --- Layout --- */
-.container {
+.app-container {
   display: flex;
   height: 100vh;
   width: 100vw;
+  max-width: 100%;
   padding: 10px;
   gap: 10px;
 }
