@@ -261,7 +261,8 @@ document.addEventListener('DOMContentLoaded', () => {
     fetch('/api/sources/index', { method: 'POST' })
       .then(res => {
         if (!res.ok) throw new Error('API Error');
-        ws = new WebSocket('ws://127.0.0.1:8000/ws/indexing');
+        const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+        ws = new WebSocket(`${protocol}${window.location.host}/ws/indexing`);
 
         ws.onmessage = (event) => {
           const data = JSON.parse(event.data);

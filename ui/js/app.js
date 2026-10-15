@@ -1,5 +1,7 @@
+// ui/js/app.js
+
 window.escapeHTML = function(str) {
-    if (!str) return "";
+    if (str === null || str === undefined) return "";
     return String(str)
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
@@ -8,8 +10,256 @@ window.escapeHTML = function(str) {
         .replace(/'/g, "&#039;");
 };
 
+/**
+ * Renders Markdown (including tables | | and inline HTML), protects LaTeX math blocks
+ * ($...$ and $$...$$) from markdown underscore mangling, sanitizes via DOMPurify,
+ * and triggers KaTeX math rendering if available.
+ */
+window.renderMarkdownAndMath = function(rawText, containerEl = null) {
+    if (!rawText) {
+        if (containerEl) containerEl.innerHTML = '';
+        return '';
+    }
+
+    const mathBlocks = [];
+    let protectedText = String(rawText)
+        .replace(/\$\$([\s\S]+?)\$\$/g, (_, math) => {
+            const id = `@@MATH_DISPLAY_${mathBlocks.length}@@`;
+            mathBlocks.push({ id, math: math.trim(), display: true });
+            return id;
+        })
+        .replace(/\$([^\$\n]+?)\$/g, (_, math) => {
+            const id = `@@MATH_INLINE_${mathBlocks.length}@@`;
+            mathBlocks.push({ id, math: math.trim(), display: false });
+            return id;
+        });
+
+    let html = protectedText;
+    if (window.marked) {
+        try {
+            html = window.marked.parse(protectedText, { gfm: true, breaks: true });
+        } catch (e) {
+            html = window.escapeHTML(protectedText).replace(/\n/g, '<br/>');
+        }
+    } else {
+        html = window.escapeHTML(protectedText).replace(/\n/g, '<br/>');
+    }
+
+    if (window.DOMPurify) {
+        html = window.DOMPurify.sanitize(html, {
+            ADD_TAGS: ['img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'sup', 'sub', 'mark', 'details', 'summary', 'kbd'],
+            ADD_ATTR: ['target', 'class', 'style', 'src', 'alt', 'width', 'height', 'data-file', 'data-vault', 'data-filepath', 'data-page', 'data-article-id']
+        });
+    }
+
+    // Restore math blocks and render via KaTeX if loaded
+    mathBlocks.forEach(block => {
+        let renderedMath = block.display ? `$$${window.escapeHTML(block.math)}$$` : `$${window.escapeHTML(block.math)}$`;
+        if (window.katex) {
+            try {
+                renderedMath = window.katex.renderToString(block.math, {
+                    displayMode: block.display,
+                    throwOnError: false
+                });
+            } catch (_) {}
+        }
+        html = html.replace(block.id, renderedMath);
+    });
+
+    if (containerEl) {
+        containerEl.innerHTML = html;
+        if (window.renderMathInElement) {
+            try {
+                window.renderMathInElement(containerEl, {
+                    delimiters: [
+                        { left: '$$', right: '$$', display: true },
+                        { left: '$', right: '$', display: false },
+                        { left: '\\(', right: '\\)', display: false },
+                        { left: '[', right: ']', display: true }
+                    ],
+                    throwOnError: false
+                });
+            } catch (_) {}
+        }
+    }
+    return html;
+};
+
+// =========================================================
+// Contextual 3rd-Column Right Inspector Controller
+// =========================================================
+window.openInspector = function(title, htmlContent) {
+    const sidebar = document.getElementById('right-sidebar');
+    const content = document.getElementById('inspector-content');
+    if (!sidebar || !content) return;
+
+    // Remove inline width: 0 overrides so the 3rd column pops out cleanly
+    sidebar.classList.remove('collapsed');
+    sidebar.style.width = '380px';
+    sidebar.style.padding = '20px';
+    sidebar.style.border = '';
+    sidebar.style.overflowY = 'auto';
+
+    const titleEl = sidebar.querySelector('h3');
+    if (titleEl && title) {
+        titleEl.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+            <span>${window.escapeHTML(title)}</span>
+        `;
+    }
+
+    content.innerHTML = htmlContent;
+};
+
+window.closeInspector = function() {
+    const sidebar = document.getElementById('right-sidebar');
+    if (!sidebar) return;
+    sidebar.classList.add('collapsed');
+    sidebar.style.width = '0px';
+    sidebar.style.padding = '0px';
+    sidebar.style.border = 'none';
+};
+
+// =========================================================
+// Unified In-Browser Document Reader (Obsidian & ZIM)
+// =========================================================
+window.openDocumentReader = function({ title, sourceType, htmlContent, markdownContent, filePath }) {
+    const viewerContainer = document.getElementById('zim-viewer-container');
+    const contentArea = document.getElementById('zim-content-area');
+    if (!viewerContainer || !contentArea) return;
+
+    const headerTitle = viewerContainer.querySelector('.overlay-header h2');
+    if (headerTitle) {
+        const badge = sourceType === 'obsidian' ? 'Obsidian Note' : 'ZIM Encyclopedia';
+        headerTitle.innerHTML = `${window.escapeHTML(title || 'Document Viewer')} <span class="badge bg-ok ml-2">${badge}</span>`;
+    }
+
+    contentArea.innerHTML = '';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'max-w-4xl mx-auto glass-card p-8 prose max-w-none';
+
+    if (markdownContent !== undefined && markdownContent !== null) {
+        window.renderMarkdownAndMath(markdownContent, wrapper);
+    } else if (htmlContent !== undefined && htmlContent !== null) {
+        const safeHTML = window.DOMPurify
+            ? window.DOMPurify.sanitize(htmlContent, {
+                ADD_TAGS: ['img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'style'],
+                ADD_ATTR: ['class', 'style', 'src', 'href', 'data-article-id', 'data-file']
+            })
+            : htmlContent;
+        wrapper.innerHTML = safeHTML;
+        if (window.renderMathInElement) {
+            try { window.renderMathInElement(wrapper); } catch (_) {}
+        }
+    }
+
+    if (filePath && sourceType === 'obsidian') {
+        const footer = document.createElement('div');
+        footer.className = 'mt-6 pt-4 border-t border-white/10 flex justify-between items-center text-xs text-muted';
+        footer.innerHTML = `
+            <span class="font-mono truncate">${window.escapeHTML(filePath)}</span>
+            <button id="open-in-obsidian-native-btn" class="secondary-btn px-3 py-1.5 text-xs">Open in Obsidian App ↗</button>
+        `;
+        wrapper.appendChild(footer);
+        setTimeout(() => {
+            document.getElementById('open-in-obsidian-native-btn')?.addEventListener('click', () => {
+                fetch('/api/notes/open-obsidian', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ file_path: filePath })
+                }).catch(() => {
+                    window.location.href = `obsidian://open?path=${encodeURIComponent(filePath)}`;
+                });
+            });
+        }, 0);
+    }
+
+    contentArea.appendChild(wrapper);
+    viewerContainer.style.display = 'flex';
+};
+
+// Global helper for opening PDF / Obsidian / ZIM resources from anywhere
+window.openLocalResource = async function(type, pathOrId, extraPageOrTitle = 1) {
+    if (type === 'pdf') {
+        try {
+            const res = await fetch('/api/sources/open_pdf', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ file_path: pathOrId, page: parseInt(extraPageOrTitle) || 1 })
+            });
+            const data = await res.json();
+            if (data.status !== 'success') console.error('SumatraPDF error:', data.message);
+        } catch (err) {
+            console.error('Failed to launch PDF:', err);
+        }
+        return;
+    }
+
+    if (type === 'obsidian') {
+        const mode = (window.AppState && window.AppState.get().obsidianOpenMode) || 'browser';
+        if (mode === 'app') {
+            try {
+                const res = await fetch('/api/notes/open-obsidian', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ file_path: pathOrId })
+                });
+                const data = await res.json();
+                if (data.status !== 'success') {
+                    window.location.href = `obsidian://open?path=${encodeURIComponent(pathOrId)}`;
+                }
+            } catch (_) {
+                window.location.href = `obsidian://open?path=${encodeURIComponent(pathOrId)}`;
+            }
+        } else {
+            try {
+                const res = await fetch(`/api/notes/obsidian-note?file_path=${encodeURIComponent(pathOrId)}`);
+                const data = await res.json();
+                if (data.status === 'success') {
+                    window.openDocumentReader({
+                        title: data.title || extraPageOrTitle || 'Obsidian Note',
+                        sourceType: 'obsidian',
+                        markdownContent: data.markdown,
+                        filePath: data.file_path || pathOrId
+                    });
+                } else {
+                    alert(data.message || 'Could not load Obsidian note.');
+                }
+            } catch (err) {
+                console.error('Failed to load Obsidian note in browser:', err);
+            }
+        }
+        return;
+    }
+
+    if (type === 'zim') {
+        try {
+            const res = await fetch(`/api/notes/zim-article?article_id=${encodeURIComponent(pathOrId)}`);
+            const data = await res.json();
+            if (data.status === 'success') {
+                window.openDocumentReader({
+                    title: data.title || pathOrId,
+                    sourceType: 'zim',
+                    htmlContent: data.html
+                });
+            } else {
+                alert(data.message || `ZIM article "${pathOrId}" not found.`);
+            }
+        } catch (err) {
+            console.error('Failed to load ZIM article:', err);
+        }
+    }
+};
+
 document.addEventListener('DOMContentLoaded', async () => {
-    // --- Navigation & Core App Logic ---
+    // Ensure AppState is loaded first so opacity & wallpaper timers are active
+    if (window.AppState && window.AppState.fetch) {
+        await window.AppState.fetch();
+    }
+
+    // Ensure Right Inspector starts collapsed cleanly
+    window.closeInspector();
+    document.getElementById('close-inspector-btn')?.addEventListener('click', window.closeInspector);
 
     // Sidebar Collapse
     const sidebarToggle = document.getElementById('sidebar-toggle');
@@ -20,6 +270,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // Tab Navigation
     const navButtons = document.querySelectorAll('.nav-btn');
     const viewSections = document.querySelectorAll('.view-section');
 
@@ -35,11 +286,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (targetId === 'settings-view' && typeof window.refreshDiagnostics === 'function') {
                 window.refreshDiagnostics();
             }
+            if (targetId === 'knowledge-hub-view' && typeof window.loadSessions === 'function') {
+                window.loadSessions();
+            }
         });
     });
 
-    // --- Theme Toggle & Wallpaper Rotation Engine ---
-    const WALLPAPER_ROTATION_MS = 2 * 60 * 60 * 1000; // 2 hours
+    // =========================================================
+    // Theme Toggle, Dynamic Wallpaper Timer & WCAG Palette Engine
+    // =========================================================
     const themeToggleBtn = document.getElementById('theme-toggle');
     const body = document.body;
     let wallpapersCache = { dark: [], light: [] };
@@ -56,9 +311,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    function getNextWallpaperUrl(theme) {
+    function getRotationIntervalMs() {
+        const mins = (window.AppState && window.AppState.get().wallpaperIntervalMinutes !== undefined)
+            ? Number(window.AppState.get().wallpaperIntervalMinutes)
+            : 120;
+        if (mins <= 0) return Infinity;
+        return mins * 60 * 1000;
+    }
+
+    function getNextWallpaperUrl(theme, forceAdvance = false) {
         const list = wallpapersCache[theme] || [];
         const now = Date.now();
+        const intervalMs = getRotationIntervalMs();
         let lastChange = parseInt(localStorage.getItem('lastWallpaperChangeTimestamp') || '0', 10);
         let bgIndex = parseInt(localStorage.getItem('currentBgIndex') || '0', 10);
 
@@ -67,7 +331,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             bgIndex = 0;
             localStorage.setItem('lastWallpaperChangeTimestamp', lastChange.toString());
             localStorage.setItem('currentBgIndex', bgIndex.toString());
-        } else if (now - lastChange >= WALLPAPER_ROTATION_MS) {
+        } else if (forceAdvance || (intervalMs !== Infinity && (now - lastChange >= intervalMs))) {
             bgIndex = bgIndex + 1;
             lastChange = now;
             localStorage.setItem('lastWallpaperChangeTimestamp', lastChange.toString());
@@ -76,30 +340,29 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (list && list.length > 0) {
             const filename = list[bgIndex % list.length];
-            return `/img/${theme}/${filename}`;
+            return `/img/${theme}/${encodeURIComponent(filename)}`;
         }
         return `/img/bg-${theme}.jpg`;
     }
 
-    const updateThemeAndBackground = () => {
+    const updateThemeAndBackground = (forceAdvance = false) => {
         const theme = body.classList.contains('dark-theme') ? 'dark' : 'light';
-        const imgUrl = getNextWallpaperUrl(theme);
+        if (window.AppState && window.AppState.applyAppearance) {
+            window.AppState.applyAppearance();
+        }
+        const imgUrl = getNextWallpaperUrl(theme, forceAdvance);
 
         const img = new Image();
         img.crossOrigin = "Anonymous";
         img.onload = () => {
             const bgEl = document.querySelector('.background-animation');
-            if (bgEl) {
-                bgEl.style.backgroundImage = `url(${imgUrl})`;
-            }
+            if (bgEl) bgEl.style.backgroundImage = `url("${imgUrl}")`;
             extractAndApplyPalette(img, theme);
         };
         img.onerror = () => {
             const fallbackUrl = `/img/bg-${theme}.jpg`;
             const bgEl = document.querySelector('.background-animation');
-            if (bgEl) {
-                bgEl.style.backgroundImage = `url(${fallbackUrl})`;
-            }
+            if (bgEl) bgEl.style.backgroundImage = `url("${fallbackUrl}")`;
             const fallbackImg = new Image();
             fallbackImg.crossOrigin = "Anonymous";
             fallbackImg.onload = () => extractAndApplyPalette(fallbackImg, theme);
@@ -108,27 +371,31 @@ document.addEventListener('DOMContentLoaded', async () => {
         img.src = imgUrl;
     };
 
+    window.changeWallpaperNow = function() {
+        updateThemeAndBackground(true);
+    };
+
     themeToggleBtn?.addEventListener('click', () => {
         const isLight = body.classList.contains('light-theme');
         const newTheme = isLight ? 'dark-theme' : 'light-theme';
         body.classList.replace(isLight ? 'light-theme' : 'dark-theme', newTheme);
         localStorage.setItem('theme', newTheme);
-        updateThemeAndBackground();
+        updateThemeAndBackground(false);
     });
 
-    // Check periodically (every 10 seconds) if 2 hours have elapsed
     setInterval(() => {
+        const intervalMs = getRotationIntervalMs();
+        if (intervalMs === Infinity) return;
         const lastChange = parseInt(localStorage.getItem('lastWallpaperChangeTimestamp') || '0', 10);
-        if (lastChange && (Date.now() - lastChange >= WALLPAPER_ROTATION_MS)) {
-            updateThemeAndBackground();
+        if (lastChange && (Date.now() - lastChange >= intervalMs)) {
+            updateThemeAndBackground(true);
         }
     }, 10000);
 
-    // Initial load
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme) body.className = savedTheme;
     await fetchWallpapersList();
-    updateThemeAndBackground();
+    updateThemeAndBackground(false);
 
     // --- Color Palette Extraction & WCAG Luminance Math ---
     function hslToRgb(h, s, l) {
@@ -178,9 +445,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function getContrastRatio(l1, l2) {
-        const maxL = Math.max(l1, l2);
-        const minL = Math.min(l1, l2);
-        return (maxL + 0.05) / (minL + 0.05);
+        return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
     }
 
     function extractAndApplyPalette(img, theme) {
@@ -207,59 +472,34 @@ document.addEventListener('DOMContentLoaded', async () => {
             const pixelsWithLum = [];
 
             for (let p = 0; p < imgData.length; p += 4) {
-                const r = imgData[p];
-                const g = imgData[p + 1];
-                const b = imgData[p + 2];
-                sumR += r;
-                sumG += g;
-                sumB += b;
-
+                const r = imgData[p], g = imgData[p + 1], b = imgData[p + 2];
+                sumR += r; sumG += g; sumB += b;
                 const [h, s, l] = rgbToHsl(r, g, b);
                 pixelsWithLum.push({ r, g, b, l, h, s });
-
-                // Filter: Ignore extreme black (L < 0.08), extreme white (L > 0.92), and near-grey (S < 0.12)
-                if (l >= 0.08 && l <= 0.92 && s >= 0.12) {
-                    filteredHues.push(h);
-                }
+                if (l >= 0.08 && l <= 0.92 && s >= 0.12) filteredHues.push(h);
             }
-
-            const avgBgR = Math.round(sumR / totalPixels);
-            const avgBgG = Math.round(sumG / totalPixels);
-            const avgBgB = Math.round(sumB / totalPixels);
 
             pixelsWithLum.sort((a, b) => a.l - b.l);
             const tenthIndex = Math.max(1, Math.floor(totalPixels * 0.10));
 
             let darkSumR = 0, darkSumG = 0, darkSumB = 0;
             for (let k = 0; k < tenthIndex; k++) {
-                darkSumR += pixelsWithLum[k].r;
-                darkSumG += pixelsWithLum[k].g;
-                darkSumB += pixelsWithLum[k].b;
+                darkSumR += pixelsWithLum[k].r; darkSumG += pixelsWithLum[k].g; darkSumB += pixelsWithLum[k].b;
             }
-            const darkBgR = Math.round(darkSumR / tenthIndex);
-            const darkBgG = Math.round(darkSumG / tenthIndex);
-            const darkBgB = Math.round(darkSumB / tenthIndex);
 
             let brightSumR = 0, brightSumG = 0, brightSumB = 0;
-            const startIndex = totalPixels - tenthIndex;
-            for (let k = startIndex; k < totalPixels; k++) {
-                brightSumR += pixelsWithLum[k].r;
-                brightSumG += pixelsWithLum[k].g;
-                brightSumB += pixelsWithLum[k].b;
+            for (let k = totalPixels - tenthIndex; k < totalPixels; k++) {
+                brightSumR += pixelsWithLum[k].r; brightSumG += pixelsWithLum[k].g; brightSumB += pixelsWithLum[k].b;
             }
-            const brightBgR = Math.round(brightSumR / tenthIndex);
-            const brightBgG = Math.round(brightSumG / tenthIndex);
-            const brightBgB = Math.round(brightSumB / tenthIndex);
 
             quadrantDataList.push({
-                avgBg: [avgBgR, avgBgG, avgBgB],
-                darkBg: [darkBgR, darkBgG, darkBgB],
-                brightBg: [brightBgR, brightBgG, brightBgB]
+                avgBg: [Math.round(sumR / totalPixels), Math.round(sumG / totalPixels), Math.round(sumB / totalPixels)],
+                darkBg: [Math.round(darkSumR / tenthIndex), Math.round(darkSumG / tenthIndex), Math.round(darkSumB / tenthIndex)],
+                brightBg: [Math.round(brightSumR / tenthIndex), Math.round(brightSumG / tenthIndex), Math.round(brightSumB / tenthIndex)]
             });
         });
 
-        // Dominant Hue Extraction
-        let domHue = 220; // Default hue
+        let domHue = 220;
         if (filteredHues.length > 0) {
             let sinSum = 0, cosSum = 0;
             filteredHues.forEach(h => {
@@ -272,67 +512,47 @@ document.addEventListener('DOMContentLoaded', async () => {
             domHue = (avgRad * 180) / Math.PI;
         }
 
-        // Harmonic Shifts: Shade 1: H, Shade 2: H+15, Shade 3: H-15, Shade 4: H+30
         const hueShifts = [0, 15, -15, 30];
+        const alpha = (window.AppState && typeof window.AppState.get().cardOpacity === 'number')
+            ? window.AppState.get().cardOpacity
+            : 0.78;
 
         quadrantDataList.forEach((qData, i) => {
-            let h = (domHue + hueShifts[i] + 360) % 360;
-
-            // Clamping Saturation: 0.25-0.50 (Dark) vs 0.20-0.45 (Light)
-            let s = (theme === 'dark') ? 0.35 : 0.30;
-            // Clamping Lightness: 0.12-0.22 (Dark) vs 0.82-0.92 (Light)
-            let l = (theme === 'dark') ? 0.17 : 0.87;
+            const h = (domHue + hueShifts[i] + 360) % 360;
+            const s = (theme === 'dark') ? 0.35 : 0.30;
+            const l = (theme === 'dark') ? 0.17 : 0.87;
 
             const [rCard, gCard, bCard] = hslToRgb(h, s, l);
             document.documentElement.style.setProperty(`--card-color-${i + 1}`, `${rCard}, ${gCard}, ${bCard}`);
 
-            // Step 4A — Alpha-Blended Effective RGB (alpha = 0.78)
-            const alpha = 0.78;
             const blend = (cardC, bgC) => Math.round(alpha * cardC + (1 - alpha) * bgC);
+            const effAvg = [blend(rCard, qData.avgBg[0]), blend(gCard, qData.avgBg[1]), blend(bCard, qData.avgBg[2])];
+            const effDark = [blend(rCard, qData.darkBg[0]), blend(gCard, qData.darkBg[1]), blend(bCard, qData.darkBg[2])];
+            const effBright = [blend(rCard, qData.brightBg[0]), blend(gCard, qData.brightBg[1]), blend(bCard, qData.brightBg[2])];
 
-            const effAvg = [
-                blend(rCard, qData.avgBg[0]),
-                blend(gCard, qData.avgBg[1]),
-                blend(bCard, qData.avgBg[2])
-            ];
-            const effDark = [
-                blend(rCard, qData.darkBg[0]),
-                blend(gCard, qData.darkBg[1]),
-                blend(bCard, qData.darkBg[2])
-            ];
-            const effBright = [
-                blend(rCard, qData.brightBg[0]),
-                blend(gCard, qData.brightBg[1]),
-                blend(bCard, qData.brightBg[2])
-            ];
+            const lumAvg = getRelativeLuminance(...effAvg);
+            const lumDark = getRelativeLuminance(...effDark);
+            const lumBright = getRelativeLuminance(...effBright);
 
-            // Step 4B — Relative Luminance Calculations
-            const lumAvg = getRelativeLuminance(effAvg[0], effAvg[1], effAvg[2]);
-            const lumDark = getRelativeLuminance(effDark[0], effDark[1], effDark[2]);
-            const lumBright = getRelativeLuminance(effBright[0], effBright[1], effBright[2]);
+            const darkTextLum = getRelativeLuminance(15, 23, 42);
+            const lightTextLum = getRelativeLuminance(248, 250, 252);
 
-            // Candidate Primary Text
-            const darkTextLum = getRelativeLuminance(15, 23, 42);   // #0F172A
-            const lightTextLum = getRelativeLuminance(248, 250, 252); // #F8FAFC
+            const minCrDarkText = Math.min(
+                getContrastRatio(darkTextLum, lumAvg),
+                getContrastRatio(darkTextLum, lumDark),
+                getContrastRatio(darkTextLum, lumBright)
+            );
+            const minCrLightText = Math.min(
+                getContrastRatio(lightTextLum, lumAvg),
+                getContrastRatio(lightTextLum, lumDark),
+                getContrastRatio(lightTextLum, lumBright)
+            );
 
-            const crDarkTextAvg = getContrastRatio(darkTextLum, lumAvg);
-            const crDarkTextDark = getContrastRatio(darkTextLum, lumDark);
-            const crDarkTextBright = getContrastRatio(darkTextLum, lumBright);
-            const minCrDarkText = Math.min(crDarkTextAvg, crDarkTextDark, crDarkTextBright);
-
-            const crLightTextAvg = getContrastRatio(lightTextLum, lumAvg);
-            const crLightTextDark = getContrastRatio(lightTextLum, lumDark);
-            const crLightTextBright = getContrastRatio(lightTextLum, lumBright);
-            const minCrLightText = Math.min(crLightTextAvg, crLightTextDark, crLightTextBright);
-
-            // Step 4C — Variable Assignment
             if (minCrLightText >= minCrDarkText) {
-                // Light text
                 document.documentElement.style.setProperty(`--text-on-card-${i + 1}`, '#F8FAFC');
                 document.documentElement.style.setProperty(`--text-muted-on-card-${i + 1}`, '#CBD5E1');
                 document.documentElement.style.setProperty(`--card-text-shadow-${i + 1}`, '0 1px 2px rgba(0, 0, 0, 0.35)');
             } else {
-                // Dark text
                 document.documentElement.style.setProperty(`--text-on-card-${i + 1}`, '#0F172A');
                 document.documentElement.style.setProperty(`--text-muted-on-card-${i + 1}`, '#334155');
                 document.documentElement.style.setProperty(`--card-text-shadow-${i + 1}`, '0 1px 1px rgba(255, 255, 255, 0.5)');
@@ -340,80 +560,103 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // ==========================================
-    // 4. GLOBAL EVENT DELEGATION (CITATIONS & MODALS)
-    // ==========================================
-
-    // Help Modal Logic
+    // =========================================================
+    // Global Event Delegation (Citations, Modals & MCQ Extractor)
+    // =========================================================
     const helpModal = document.getElementById('help-modal');
     document.getElementById('open-help-btn')?.addEventListener('click', () => {
-        if(helpModal) helpModal.style.display = 'flex';
+        if (helpModal) helpModal.style.display = 'flex';
     });
     document.getElementById('close-help-btn')?.addEventListener('click', () => {
-        if(helpModal) helpModal.style.display = 'none';
+        if (helpModal) helpModal.style.display = 'none';
     });
     helpModal?.addEventListener('click', (e) => {
         if (e.target === helpModal) helpModal.style.display = 'none';
     });
 
-    // Global Citation Click Handler (Makes PDF, Obsidian, ZIM links work anywhere)
+    // Standalone MCQ Entity Extractor Tab (#home-view)
+    const extractBtn = document.getElementById('extract-btn');
+    if (extractBtn) {
+        extractBtn.addEventListener('click', async () => {
+            const textEl = document.getElementById('mcq-text');
+            const chipsContainer = document.getElementById('topics-container');
+            const expContainer = document.getElementById('explanation-container');
+            if (!textEl || !textEl.value.trim()) return;
+
+            extractBtn.disabled = true;
+            extractBtn.textContent = 'Extracting...';
+            try {
+                const res = await fetch('/api/mcq/topics/extract', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mcq_text: textEl.value.trim() })
+                });
+                const data = await res.json();
+                const details = data.topic_details || (data.topics || []).map(t => ({ name: t, verified: true }));
+
+                if (chipsContainer) {
+                    chipsContainer.innerHTML = details.map(d => `
+                        <span class="topic-chip ${d.verified ? 'border-success-500 underline decoration-success-500 font-semibold' : 'opacity-60'}"
+                              data-topic="${window.escapeHTML(d.name)}"
+                              title="${d.verified ? 'Verified Medical Topic (Click to view references)' : 'Unverified / Doubtful Topic'}">
+                            ${window.escapeHTML(d.name)}
+                        </span>
+                    `).join('');
+
+                    chipsContainer.querySelectorAll('.topic-chip').forEach(chip => {
+                        chip.addEventListener('click', async () => {
+                            const topic = chip.dataset.topic;
+                            if (!topic) return;
+                            const sRes = await fetch(`/api/mcq/synthesis?topic=${encodeURIComponent(topic)}`);
+                            if (sRes.ok) {
+                                const sData = await sRes.json();
+                                if (expContainer) {
+                                    expContainer.classList.remove('content-placeholder');
+                                    window.renderMarkdownAndMath(
+                                        sData.unified_article || sData.enhanced_explanation || `References resolved for **${topic}**.`,
+                                        expContainer
+                                    );
+                                }
+                            }
+                        });
+                    });
+                }
+            } catch (e) {
+                console.error('Entity extraction failed:', e);
+            } finally {
+                extractBtn.disabled = false;
+                extractBtn.textContent = 'Extract Entities';
+            }
+        });
+    }
+
+    // Global Click Delegation for PDF, Obsidian, and ZIM Citations
     document.addEventListener('click', async (e) => {
         const target = e.target;
 
-        // 1. SumatraPDF Launcher
         const pdfBtn = target.closest('.citation-pdf');
         if (pdfBtn) {
             e.preventDefault();
-            const filePath = pdfBtn.dataset.filepath;
-            const page = pdfBtn.dataset.page || 1;
-            try {
-                const res = await fetch('/api/sources/open_pdf', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ file_path: filePath, page: parseInt(page) })
-                });
-                const data = await res.json();
-                if (data.status !== 'success') console.error('Error launching SumatraPDF:', data.message);
-            } catch (err) {
-                console.error('Failed to launch PDF:', err);
-            }
+            await window.openLocalResource('pdf', pdfBtn.dataset.filepath, pdfBtn.dataset.page || 1);
             return;
         }
 
-        // 2. Obsidian Deep Linker
         const obsBtn = target.closest('.citation-obsidian');
         if (obsBtn) {
             e.preventDefault();
-            const vault = obsBtn.dataset.vault || 'Primary';
-            const file = obsBtn.dataset.file;
-            window.location.href = `obsidian://open?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(file)}`;
+            const filePath = obsBtn.dataset.filepath || obsBtn.dataset.file;
+            await window.openLocalResource('obsidian', filePath, obsBtn.textContent);
             return;
         }
 
-        // 3. Local ZIM Article Viewer
         const zimBtn = target.closest('.citation-zim');
         if (zimBtn) {
             e.preventDefault();
-            const articleId = zimBtn.dataset.articleId;
-            try {
-                const res = await fetch(`/api/notes/zim-article?article_id=${encodeURIComponent(articleId)}`);
-                const data = await res.json();
-                if (data.status === 'success') {
-                    const viewerContainer = document.getElementById('zim-viewer-container');
-                    const contentArea = document.getElementById('zim-content-area');
-                    if (viewerContainer && contentArea) {
-                        const safeHTML = window.DOMPurify ? window.DOMPurify.sanitize(data.html) : window.escapeHTML(data.html);
-                        contentArea.innerHTML = safeHTML;
-                        viewerContainer.style.display = 'flex';
-                    }
-                }
-            } catch (err) {
-                console.error('Failed to load ZIM article:', err);
-            }
+            const articleId = zimBtn.dataset.articleId || zimBtn.textContent.trim();
+            await window.openLocalResource('zim', articleId);
             return;
         }
 
-        // 4. Close ZIM Viewer
         const closeZimBtn = target.closest('#close-zim-viewer-btn');
         if (closeZimBtn) {
             const viewerContainer = document.getElementById('zim-viewer-container');
@@ -422,43 +665,4 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (contentArea) contentArea.innerHTML = '';
         }
     });
-
-    // ==========================================
-    // 5. SETTINGS DATA LOADERS
-    // ==========================================
-
-    const loadModels = (endpoint, selectId, apiRoute) => {
-        const selectEl = document.getElementById(selectId);
-        if (!selectEl) return;
-
-        fetch(endpoint)
-            .then(res => res.json())
-            .then(data => {
-                selectEl.innerHTML = '';
-                const fragment = document.createDocumentFragment();
-                data.models.forEach(model => {
-                    const opt = document.createElement('option');
-                    opt.value = model.id;
-                    opt.textContent = model.name;
-                    opt.selected = (model.id === data.active);
-                    fragment.appendChild(opt);
-                });
-                selectEl.appendChild(fragment);
-            })
-            .catch(() => {
-                selectEl.innerHTML = '<option value="">Error loading models</option>';
-            });
-
-        selectEl.addEventListener('change', (e) => {
-            fetch(apiRoute, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model_name: e.target.value })
-            });
-        });
-    };
-
-    // Load dynamic models into the settings pane
-    loadModels('/api/models/cpu_embedding_models', 'cpu-embed-model-select', '/api/models/set_embedding_model');
-    loadModels('/api/models/flashrank_models', 'flashrank-model-select', '/api/models/set_flashrank_model');
 });

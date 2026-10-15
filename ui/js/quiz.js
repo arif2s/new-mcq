@@ -19,56 +19,96 @@ let times = { start: null, questionStart: null };
 let isPaused = false;
 let scores = { correct: 0, wrong: 0 };
 
+// State for the Topic Verification Popup
+let activeVerificationSession = null;
 
-// --- Initialization & Setup UI ---
+// --- Utility: Derive Card Heading from Filter / Search ---
+function deriveCardHeading(cfg) {
+    if (cfg.keyword && cfg.keyword.trim()) {
+        return `Search: ${cfg.keyword.trim()}`;
+    }
+    if (cfg.topic && cfg.topic !== 'all') {
+        return cfg.topic;
+    }
+    if (cfg.subject && cfg.subject !== 'all') {
+        return cfg.subject;
+    }
+    return 'Mixed Clinical Set';
+}
+
+function showToast(message) {
+    let toast = document.getElementById('quiz-toast-banner');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'quiz-toast-banner';
+        toast.className = 'fixed bottom-6 right-6 z-50 glass-card px-5 py-3 rounded-xl border border-brand-500/40 shadow-lg text-sm font-medium transition-all';
+        document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.style.display = 'block';
+    toast.style.opacity = '1';
+    clearTimeout(toast._hideTimer);
+    toast._hideTimer = setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => { toast.style.display = 'none'; }, 300);
+    }, 3200);
+}
+
+// =========================================================
+// 1. QUIZ CONFIGURATION & SETUP VIEW
+// =========================================================
 
 async function initQuizSetup() {
     const container = document.getElementById('quiz-view');
     if (!container) return;
 
-    // Fetch filters
     let subjects = [], topics = [];
     try {
-        const [subRes, topRes] = await Promise.all([ fetch('/api/mcq/subjects'), fetch('/api/mcq/topics') ]);
+        const [subRes, topRes] = await Promise.all([
+            fetch('/api/mcq/subjects'),
+            fetch('/api/mcq/topics')
+        ]);
         if (subRes.ok) subjects = await subRes.json();
         if (topRes.ok) topics = await topRes.json();
-    } catch (e) { console.error("Failed to load filters", e); }
+    } catch (e) {
+        console.error("Failed to load quiz filters:", e);
+    }
 
     container.innerHTML = `
         <div class="w-full p-6 animate-fade-in">
             <div class="flex items-center justify-between mb-8">
                 <div>
-                    <h1 class="text-3xl font-bold mb-2 flex items-center gap-3">⚙️ Quiz Configuration</h1>
-                    <p class="subtitle">Customize your learning session and filter knowledge bases.</p>
+                    <h1 class="text-3xl font-bold mb-2 flex items-center gap-3">⚙️ Quiz Configuration &amp; Set Curator</h1>
+                    <p class="subtitle">Curate question sets by CSV subject, topic, or custom keyword search.</p>
                 </div>
                 <button id="toggle-inspector-btn" class="secondary-btn px-4 py-2 flex items-center gap-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="15" y1="3" x2="15" y2="21"></line></svg>
                     Toggle Inspector
                 </button>
             </div>
 
             <div class="grid lg:grid-cols-2 gap-6 mb-8">
-                <!-- Source Filters -->
+                <!-- 1. Source Filters -->
                 <div class="glass-card card-shade-1 p-6">
-                    <h3 class="text-lg font-semibold mb-4 border-b border-white/10 pb-2 flex items-center gap-2">📂 1. Source Filters</h3>
+                    <h3 class="text-lg font-semibold mb-4 border-b border-white/10 pb-2 flex items-center gap-2">📂 1. Curate Topics &amp; Filters</h3>
 
-                    <label class="block text-xs text-muted mb-1">Subject</label>
+                    <label class="block text-xs text-muted mb-1">CSV Subject</label>
                     <select id="cfg-subject" class="w-full glass-select rounded-lg px-3 py-2.5 text-sm mb-4">
                         <option value="all">All Subjects</option>
-                        ${subjects.map(s => `<option value="${window.escapeHTML(s.subject)}">${window.escapeHTML(s.subject)} (${s.count})</option>`).join('')}
+                        ${subjects.map(s => `<option value="${window.escapeHTML(s.subject)}" ${quizConfig.subject === s.subject ? 'selected' : ''}>${window.escapeHTML(s.subject)} (${s.count})</option>`).join('')}
                     </select>
 
-                    <label class="block text-xs text-muted mb-1">Topic</label>
+                    <label class="block text-xs text-muted mb-1">CSV Topic</label>
                     <select id="cfg-topic" class="w-full glass-select rounded-lg px-3 py-2.5 text-sm mb-4">
                         <option value="all">All Topics</option>
-                        ${topics.map(t => `<option value="${window.escapeHTML(t.topic)}">${window.escapeHTML(t.topic)} (${t.count})</option>`).join('')}
+                        ${topics.map(t => `<option value="${window.escapeHTML(t.topic)}" ${quizConfig.topic === t.topic ? 'selected' : ''}>${window.escapeHTML(t.topic)} (${t.count})</option>`).join('')}
                     </select>
 
-                    <label class="block text-xs text-muted mb-1">Keyword Search</label>
-                    <input type="text" id="cfg-keyword" placeholder="e.g., dyspnea, insulin..." class="w-full glass-input rounded-lg px-3 py-2.5 text-sm">
+                    <label class="block text-xs text-muted mb-1">Custom Keyword Search (FTS5)</label>
+                    <input type="text" id="cfg-keyword" value="${window.escapeHTML(quizConfig.keyword)}" placeholder="e.g., cardiac amyloidosis, vagus nerve, Vicryl..." class="w-full glass-input rounded-lg px-3 py-2.5 text-sm">
                 </div>
 
-                <!-- Session Rules -->
+                <!-- 2. Session Rules -->
                 <div class="glass-card card-shade-2 p-6">
                     <h3 class="text-lg font-semibold mb-4 border-b border-white/10 pb-2 flex items-center gap-2">🕹️ 2. Session Rules</h3>
 
@@ -93,22 +133,32 @@ async function initQuizSetup() {
 
                     <label class="flex items-center gap-2 cursor-pointer group mt-2">
                         <input type="checkbox" id="cfg-sr" ${quizConfig.spacedRepetition ? 'checked' : ''} class="w-4 h-4 rounded glass-input text-brand-500 accent-brand-500">
-                        <span class="text-sm opacity-80 group-hover:opacity-100 transition-opacity">🧠 Enable Spaced Repetition (FSRS)</span>
+                        <span class="text-sm opacity-80 group-hover:opacity-100 transition-opacity">🧠 Prioritize Due Spaced Repetition (FSRS v4.5) Cards</span>
                     </label>
                 </div>
             </div>
 
+            <!-- 3. Launch Action Bar -->
             <div class="glass-card card-shade-3 p-6 text-center">
-                <h2 class="text-3xl font-black text-brand-400 mb-2" id="setup-match-count">...</h2>
+                <h2 class="text-3xl font-black text-brand-400 mb-1" id="setup-match-count">...</h2>
                 <p class="text-muted text-sm mb-6">Matching Questions Available</p>
-                <button id="btn-start-quiz" class="primary-btn px-10 py-4 font-bold rounded-xl transition-all hover:scale-105 disabled:opacity-50 disabled:hover:scale-100 disabled:shadow-none w-full md:w-auto text-lg">
-                    🚀 Launch Session
-                </button>
+
+                <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+                    <button id="btn-start-quiz-now" class="secondary-btn px-8 py-4 font-bold rounded-xl transition-all hover:scale-105 disabled:opacity-40 w-full sm:w-auto text-base flex items-center justify-center gap-2">
+                        ⚡ Start Quiz Now
+                    </button>
+                    <button id="btn-confirm-launch" class="primary-btn px-10 py-4 font-bold rounded-xl transition-all hover:scale-105 disabled:opacity-40 w-full sm:w-auto text-base flex items-center justify-center gap-2">
+                        🔍 Confirm &amp; Launch (Review Topics)
+                    </button>
+                </div>
+                <p class="text-xs text-muted mt-3">
+                    <strong>Start Quiz Now</strong> begins immediately and adds the set to Knowledge Hub (Circle ①) without generating references yet.
+                    <strong>Confirm &amp; Launch</strong> lets you verify extracted medical topics to generate references (Circle ②) and LM Studio notes (Circle ③).
+                </p>
             </div>
         </div>
     `;
 
-    // Bind Setup Events
     const updateMatchCount = async () => {
         try {
             const res = await fetch('/api/mcq/search_count', {
@@ -122,27 +172,36 @@ async function initQuizSetup() {
                 })
             });
             const data = await res.json();
-            document.getElementById('setup-match-count').textContent = data.count;
-            document.getElementById('btn-start-quiz').disabled = data.count === 0;
+            const count = data.count || 0;
+            const matchEl = document.getElementById('setup-match-count');
+            if (matchEl) matchEl.textContent = count;
 
-            // Adjust slider max based on availability (unless Target mode)
+            const startNowBtn = document.getElementById('btn-start-quiz-now');
+            const confirmBtn = document.getElementById('btn-confirm-launch');
+            if (startNowBtn) startNowBtn.disabled = count === 0;
+            if (confirmBtn) confirmBtn.disabled = count === 0;
+
             const countSlider = document.getElementById('cfg-count');
-            if (quizConfig.mode !== 'target') {
-                countSlider.max = Math.max(data.count, 1);
-                if (parseInt(countSlider.value) > data.count) {
-                    countSlider.value = data.count;
-                    quizConfig.count = data.count;
-                    document.getElementById('cfg-count-val').textContent = data.count;
+            if (countSlider) {
+                if (quizConfig.mode !== 'target') {
+                    countSlider.max = Math.max(count, 1);
+                    if (parseInt(countSlider.value) > count && count > 0) {
+                        countSlider.value = count;
+                        quizConfig.count = count;
+                        document.getElementById('cfg-count-val').textContent = count;
+                    }
+                } else {
+                    countSlider.max = 100;
                 }
-            } else {
-                countSlider.max = 100;
             }
-        } catch (e) { console.error(e); }
+        } catch (e) {
+            console.error(e);
+        }
     };
 
-    const bindInput = (id, key, isInt=false, callback=null) => {
+    const bindInput = (id, key, isInt = false, callback = null) => {
         const el = document.getElementById(id);
-        if(!el) return;
+        if (!el) return;
         el.addEventListener(el.tagName === 'INPUT' && el.type === 'range' ? 'input' : 'change', (e) => {
             quizConfig[key] = isInt ? parseInt(e.target.value) : e.target.value;
             if (callback) callback(e);
@@ -153,62 +212,624 @@ async function initQuizSetup() {
     bindInput('cfg-topic', 'topic', false, updateMatchCount);
 
     let debounce;
-    document.getElementById('cfg-keyword').addEventListener('input', (e) => {
+    document.getElementById('cfg-keyword')?.addEventListener('input', (e) => {
         quizConfig.keyword = e.target.value;
         clearTimeout(debounce);
-        debounce = setTimeout(updateMatchCount, 300);
+        debounce = setTimeout(updateMatchCount, 280);
     });
 
-    bindInput('cfg-count', 'count', true, (e) => document.getElementById('cfg-count-val').textContent = e.target.value);
-    bindInput('cfg-time', 'timeLimit', true, (e) => document.getElementById('cfg-time-val').textContent = e.target.value === '0' ? 'Unlimited' : e.target.value);
+    bindInput('cfg-count', 'count', true, (e) => {
+        document.getElementById('cfg-count-val').textContent = e.target.value;
+    });
+    bindInput('cfg-time', 'timeLimit', true, (e) => {
+        document.getElementById('cfg-time-val').textContent = e.target.value === '0' ? 'Unlimited' : e.target.value;
+    });
 
-    document.getElementById('cfg-sr').addEventListener('change', (e) => quizConfig.spacedRepetition = e.target.checked);
+    document.getElementById('cfg-sr')?.addEventListener('change', (e) => {
+        quizConfig.spacedRepetition = e.target.checked;
+    });
 
     ['test', 'learn', 'target'].forEach(m => {
-        document.getElementById(`mode-${m}`).addEventListener('click', () => {
+        document.getElementById(`mode-${m}`)?.addEventListener('click', () => {
             quizConfig.mode = m;
-            initQuizSetup(); // Re-render to update classes
+            initQuizSetup();
         });
     });
 
-    document.getElementById('btn-start-quiz').addEventListener('click', startQuiz);
-    document.getElementById('toggle-inspector-btn').addEventListener('click', toggleRightSidebar);
+    document.getElementById('btn-start-quiz-now')?.addEventListener('click', () => handleLaunchCuratedSet(false));
+    document.getElementById('btn-confirm-launch')?.addEventListener('click', () => handleLaunchCuratedSet(true));
+    document.getElementById('toggle-inspector-btn')?.addEventListener('click', toggleRightSidebar);
 
     updateMatchCount();
 }
 
-async function startQuiz() {
+async function fetchCuratedQuestions() {
     const payload = {
         subjects: quizConfig.subject === 'all' ? null : [quizConfig.subject],
         topics: quizConfig.topic === 'all' ? null : [quizConfig.topic],
         keyword: quizConfig.keyword || null,
-        count: quizConfig.mode === 'target' ? 100 : quizConfig.count
+        count: quizConfig.mode === 'target' ? 100 : quizConfig.count,
+        spaced_repetition: quizConfig.spacedRepetition
+    };
+
+    const res = await fetch('/api/mcq/generate_set', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.status === 'success' && Array.isArray(data.questions) && data.questions.length > 0) {
+        return data.questions;
+    }
+    return [];
+}
+
+async function handleLaunchCuratedSet(openTopicReviewPopup = false) {
+    const startNowBtn = document.getElementById('btn-start-quiz-now');
+    const confirmBtn = document.getElementById('btn-confirm-launch');
+    if (startNowBtn) startNowBtn.disabled = true;
+    if (confirmBtn) confirmBtn.disabled = true;
+
+    try {
+        const questions = await fetchCuratedQuestions();
+        if (!questions.length) {
+            alert("No questions found for the selected criteria.");
+            return;
+        }
+
+        const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const customTitle = deriveCardHeading(quizConfig);
+        const subjectName = quizConfig.subject !== 'all'
+            ? quizConfig.subject
+            : (questions[0].subject_name || customTitle);
+
+        if (!openTopicReviewPopup) {
+            // "Start Quiz Now": Create session in Hub with Circle 1 active (topics_reviewed = false)
+            currentQuiz = {
+                sessionId,
+                customTitle,
+                subjectName,
+                topicsReviewed: false,
+                topicList: [],
+                questions,
+                config: { ...quizConfig }
+            };
+            await persistSessionToBackend({
+                sessionId,
+                subjectName,
+                customTitle,
+                questions,
+                answers: [],
+                topicsReviewed: false,
+                topicList: [],
+                isCompleted: false,
+                timeUsedSeconds: 0
+            });
+            beginQuizRunner();
+        } else {
+            // "Confirm & Launch": Extract medical topics and open the Topic Verification Popup
+            await openTopicVerificationModal({
+                sessionId,
+                subjectName,
+                customTitle,
+                questions,
+                config: { ...quizConfig },
+                existingTopicList: null,
+                isExistingHubSession: false
+            });
+        }
+    } catch (e) {
+        console.error("Error launching quiz set:", e);
+        alert("Failed to prepare question set.");
+    } finally {
+        if (startNowBtn) startNowBtn.disabled = false;
+        if (confirmBtn) confirmBtn.disabled = false;
+    }
+}
+
+// Global helper so Knowledge Hub Inspector's "Create Question Set" on a weak topic works in 1 click
+window.startCustomTopicQuiz = async function(topicName) {
+    quizConfig.subject = 'all';
+    quizConfig.topic = 'all';
+    quizConfig.keyword = topicName;
+    quizConfig.mode = 'learn';
+    quizConfig.count = 15;
+
+    const navBtn = document.querySelector('.nav-btn[data-target="quiz-view"]');
+    if (navBtn) navBtn.click();
+    await initQuizSetup();
+    showToast(`Curated question set for "${topicName}"`);
+};
+
+// =========================================================
+// 2. TOPIC VERIFICATION POPUP (Black vs Grey, Green Outline, Double-Click Ignore, Auto-Save Outside Click)
+// =========================================================
+
+async function extractSessionTopicsFromBackend(questions) {
+    try {
+        const res = await fetch('/api/queue/extract_topics', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                questions: questions.map(q => ({
+                    question: q.question || q.question_text || '',
+                    topic_name: q.topic_name || q.topic || 'General',
+                    option_a: q.option_a || q.opt_a || '',
+                    option_b: q.option_b || q.opt_b || '',
+                    option_c: q.option_c || q.opt_c || '',
+                    option_d: q.option_d || q.opt_d || '',
+                    correct_answer: q.correct_answer || 'A',
+                    explanation: q.explanation || ''
+                }))
+            })
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data.session_topics) && data.session_topics.length > 0) {
+                return data.session_topics;
+            }
+            // Consolidate from per-question details or topics array
+            const topicMap = new Map();
+            (data.questions || []).forEach(qItem => {
+                const details = qItem.topic_details || (qItem.topics || []).map(t => ({
+                    name: t,
+                    verified: t !== 'General Medical Concept',
+                    selected: t !== 'General Medical Concept'
+                }));
+                details.forEach(d => {
+                    if (!d.name || d.name === 'General Medical Concept') return;
+                    const key = d.name.toLowerCase();
+                    if (!topicMap.has(key)) {
+                        topicMap.set(key, {
+                            name: d.name,
+                            verified: Boolean(d.verified),
+                            selected: d.selected !== undefined ? Boolean(d.selected) : Boolean(d.verified),
+                            confidence: d.verified ? 'high' : 'low'
+                        });
+                    } else if (d.verified) {
+                        const ex = topicMap.get(key);
+                        ex.verified = true;
+                        ex.selected = true;
+                    }
+                });
+            });
+            return Array.from(topicMap.values());
+        }
+    } catch (e) {
+        console.warn("Batch topic extraction fallback:", e);
+    }
+    return [];
+}
+
+window.openTopicVerificationModal = async function(sessionContext) {
+    const modal = document.getElementById('topic-editor-modal');
+    if (!modal) return;
+
+    activeVerificationSession = {
+        sessionId: sessionContext.sessionId,
+        subjectName: sessionContext.subjectName || 'Mixed Session',
+        customTitle: sessionContext.customTitle || sessionContext.subjectName || 'Study Set',
+        questions: sessionContext.questions || [],
+        config: sessionContext.config || { ...quizConfig },
+        isExistingHubSession: Boolean(sessionContext.isExistingHubSession),
+        topicList: [],
+        existingNotesSet: new Set()
+    };
+
+    modal.style.display = 'flex';
+    const contentBox = document.getElementById('topic-editor-questions');
+    if (contentBox) {
+        contentBox.innerHTML = `
+            <div class="text-center py-10 text-muted animate-pulse">
+                Extracting and canonicalizing medical entities via medSpaCy &amp; ZIM dictionary...
+            </div>
+        `;
+    }
+
+    // Use saved draft topic list if reopening an unconfirmed Hub card; otherwise extract fresh
+    let topicList = [];
+    if (Array.isArray(sessionContext.existingTopicList) && sessionContext.existingTopicList.length > 0) {
+        topicList = sessionContext.existingTopicList.map(item => (
+            typeof item === 'string'
+                ? { name: item, verified: true, selected: true }
+                : { name: item.name, verified: Boolean(item.verified), selected: Boolean(item.selected) }
+        ));
+    } else {
+        topicList = await extractSessionTopicsFromBackend(activeVerificationSession.questions);
+    }
+
+    // Check which topics already have synthesized notes in SQLite
+    try {
+        const statusRes = await fetch('/api/mcq/topics_status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ topics: topicList.map(t => t.name) })
+        });
+        if (statusRes.ok) {
+            const stData = await statusRes.json();
+            (stData.existing_topics || []).forEach(t => activeVerificationSession.existingNotesSet.add(t.toLowerCase()));
+            const ignoredLower = new Set((stData.ignored_topics || []).map(t => t.toLowerCase()));
+            topicList = topicList.filter(t => !ignoredLower.has(t.name.toLowerCase()));
+        }
+    } catch (_) {}
+
+    activeVerificationSession.topicList = topicList;
+    renderTopicVerificationModalDOM();
+};
+
+function renderTopicVerificationModalDOM() {
+    const modal = document.getElementById('topic-editor-modal');
+    if (!modal || !activeVerificationSession) return;
+
+    const session = activeVerificationSession;
+    const selectedCount = session.topicList.filter(t => t.selected).length;
+
+    const modalCard = modal.querySelector('.glass-modal');
+    if (!modalCard) return;
+
+    modalCard.innerHTML = `
+        <div class="p-5 border-b border-gray-700 flex justify-between items-center glass-panel rounded-t-24">
+            <div>
+                <h2 class="text-xl font-bold flex items-center gap-2">
+                    🩺 Verify Medical Topics — <span class="text-brand-400">${window.escapeHTML(session.customTitle)}</span>
+                </h2>
+                <p class="text-xs text-muted mt-1">
+                    <strong>Single-click</strong> to select/deselect (green outline &amp; underline).
+                    <strong>Double-click</strong> to permanently ignore false-positive terms.
+                    Click outside this popup at any time to auto-save your draft to Knowledge Hub.
+                </p>
+            </div>
+            <button id="close-topic-editor-btn" class="text-muted hover:text-brand-400 transition-colors bg-transparent border-none cursor-pointer p-1" title="Save Draft to Hub &amp; Close">
+                ✕
+            </button>
+        </div>
+
+        <div class="p-6 overflow-y-auto flex-1 space-y-5" id="topic-editor-content">
+            <!-- Legend & Quick Bulk Controls -->
+            <div class="flex flex-wrap items-center justify-between gap-3 glass-panel p-3 rounded-xl border border-white/10 text-xs">
+                <div class="flex flex-wrap items-center gap-4">
+                    <span class="flex items-center gap-1.5">
+                        <span class="w-3 h-3 rounded-full bg-success-500 inline-block"></span>
+                        <strong>Green Outline + Underline:</strong> Selected for Notes (${selectedCount} / ${session.topicList.length})
+                    </span>
+                    <span class="flex items-center gap-1.5">
+                        <span class="font-bold">Normal Text:</span> Verified Medical Topic (ZIM/Morphology)
+                    </span>
+                    <span class="flex items-center gap-1.5 opacity-60">
+                        <span>Grey Text:</span> Doubtful Term (Regex/medSpaCy only)
+                    </span>
+                </div>
+                <div class="flex gap-2">
+                    <button type="button" id="tp-select-verified-btn" class="secondary-btn px-2.5 py-1 text-xs">Select Verified Only</button>
+                    <button type="button" id="tp-select-all-btn" class="secondary-btn px-2.5 py-1 text-xs">Select All</button>
+                    <button type="button" id="tp-deselect-all-btn" class="secondary-btn px-2.5 py-1 text-xs">Clear Selection</button>
+                </div>
+            </div>
+
+            <!-- Topic Chips Container -->
+            <div id="topic-editor-questions" class="flex flex-wrap gap-2.5 min-h-[120px] p-4 glass-panel rounded-2xl border border-white/10">
+                ${session.topicList.length === 0
+                    ? '<p class="text-sm text-muted m-auto">No medical topics extracted. Add a custom topic below.</p>'
+                    : session.topicList.map((t, idx) => {
+                        const hasNote = session.existingNotesSet.has(t.name.toLowerCase());
+                        // Normal/Black text for verified vs Grey muted text for doubtful
+                        const textClass = t.verified ? 'font-semibold text-gray-100' : 'opacity-60 text-muted font-normal';
+                        // Green outline and green underline when selected
+                        const selectedClass = t.selected
+                            ? 'border-2 border-success-500 underline decoration-success-500 decoration-2 bg-success-500/15 shadow-sm'
+                            : 'border border-gray-700 glass-panel';
+
+                        return `
+                            <div class="topic-verify-chip inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm cursor-pointer select-none transition-all ${textClass}${selectedClass}"
+                                 data-idx="${idx}"
+                                 title="Single-click: Toggle selection | Double-click: Add '${window.escapeHTML(t.name)}' to permanent Ignore List">
+                                <span class="chip-label">${window.escapeHTML(t.name)}</span>${hasNote ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-success-500/20 text-success-300 no-underline" title="Notes already synthesized">✓ Cached</span>' : ''}
+                                <button type="button" class="chip-edit-btn text-xs opacity-60 hover:opacity-100 bg-transparent border-none cursor-pointer ml-1 no-underline" data-idx="${idx}" title="Edit topic name">✎</button>
+                            </div>
+                        `;
+                    }).join('')}
+            </div>
+
+            <!-- Add Custom Topic Bar -->
+            <div class="pt-3 border-t border-gray-700/50 flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+                <span class="text-sm font-medium whitespace-nowrap">➕ Add or Correct Topic:</span>
+                <div class="flex flex-1 gap-2">
+                    <input type="text" id="custom-topic-input" class="glass-input flex-1 py-2 px-3 text-sm" placeholder="e.g., Cardiac amyloidosis, Acute appendicitis...">
+                    <button type="button" id="add-custom-topic-btn" class="secondary-btn py-2 px-4 text-sm whitespace-nowrap">
+                        + Add Topic
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="p-4 border-t border-gray-700 flex flex-wrap justify-between items-center gap-3 glass-panel rounded-b-24">
+            <span class="text-xs text-muted">
+                Clicking outside this modal saves your partial review to Knowledge Hub (Circle ①).
+            </span>
+            <div class="flex flex-wrap gap-3">
+                <button type="button" id="confirm-add-hub-btn" class="secondary-btn px-5 py-2.5 text-sm font-semibold flex items-center gap-2 cursor-pointer">
+                    📥 Confirm &amp; Add to Hub
+                </button>
+                <button type="button" id="confirm-start-quiz-btn" class="primary-btn px-6 py-2.5 text-sm font-bold flex items-center gap-2 cursor-pointer">
+                    ▶️ Confirm &amp; Start Quiz
+                </button>
+            </div>
+        </div>
+    `;
+
+    // Wire single-click (toggle green outline/underline) vs double-click (permanent ignore list)
+    modalCard.querySelectorAll('.topic-verify-chip').forEach(chipEl => {
+        let clickTimer = null;
+        const idx = parseInt(chipEl.dataset.idx, 10);
+
+        chipEl.addEventListener('click', (e) => {
+            if (e.target.closest('.chip-edit-btn') || e.target.tagName === 'INPUT') return;
+            if (clickTimer) clearTimeout(clickTimer);
+            clickTimer = setTimeout(() => {
+                const item = session.topicList[idx];
+                if (item) {
+                    item.selected = !item.selected;
+                    renderTopicVerificationModalDOM();
+                }
+            }, 210);
+        });
+
+        chipEl.addEventListener('dblclick', async (e) => {
+            if (e.target.closest('.chip-edit-btn') || e.target.tagName === 'INPUT') return;
+            if (clickTimer) clearTimeout(clickTimer);
+            const item = session.topicList[idx];
+            if (!item) return;
+
+            const removedName = item.name;
+            session.topicList.splice(idx, 1);
+            renderTopicVerificationModalDOM();
+
+            try {
+                await fetch('/api/queue/ignore_topic', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ topic: removedName })
+                });
+                showToast(`Added "${removedName}" to permanent Ignore List.`);
+            } catch (err) {
+                console.error("Failed to ignore topic:", err);
+            }
+        });
+    });
+
+    // Wire inline Edit (✎) button
+    modalCard.querySelectorAll('.chip-edit-btn').forEach(editBtn => {
+        editBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const idx = parseInt(editBtn.dataset.idx, 10);
+            const item = session.topicList[idx];
+            if (!item) return;
+
+            const newName = prompt("Edit medical topic name:", item.name);
+            if (newName && newName.trim()) {
+                item.name = newName.trim();
+                item.verified = true;
+                item.selected = true;
+                renderTopicVerificationModalDOM();
+            }
+        });
+    });
+
+    // Bulk selection buttons
+    document.getElementById('tp-select-verified-btn')?.addEventListener('click', () => {
+        session.topicList.forEach(t => { t.selected = Boolean(t.verified); });
+        renderTopicVerificationModalDOM();
+    });
+    document.getElementById('tp-select-all-btn')?.addEventListener('click', () => {
+        session.topicList.forEach(t => { t.selected = true; });
+        renderTopicVerificationModalDOM();
+    });
+    document.getElementById('tp-deselect-all-btn')?.addEventListener('click', () => {
+        session.topicList.forEach(t => { t.selected = false; });
+        renderTopicVerificationModalDOM();
+    });
+
+    // Add custom topic
+    const addCustomTopic = () => {
+        const input = document.getElementById('custom-topic-input');
+        const val = (input?.value || '').trim();
+        if (!val) return;
+        const existing = session.topicList.find(t => t.name.toLowerCase() === val.toLowerCase());
+        if (existing) {
+            existing.selected = true;
+            existing.verified = true;
+        } else {
+            session.topicList.unshift({ name: val, verified: true, selected: true, confidence: 'high' });
+        }
+        input.value = '';
+        renderTopicVerificationModalDOM();
+    };
+
+    document.getElementById('add-custom-topic-btn')?.addEventListener('click', addCustomTopic);
+    document.getElementById('custom-topic-input')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            addCustomTopic();
+        }
+    });
+
+    // Close button -> Auto-save draft to Hub
+    document.getElementById('close-topic-editor-btn')?.addEventListener('click', () => {
+        finalizeTopicModalAction('save_draft');
+    });
+
+    // Confirm & Add to Hub
+    document.getElementById('confirm-add-hub-btn')?.addEventListener('click', () => {
+        finalizeTopicModalAction('confirm_hub');
+    });
+
+    // Confirm & Start Quiz
+    document.getElementById('confirm-start-quiz-btn')?.addEventListener('click', () => {
+        finalizeTopicModalAction('confirm_start');
+    });
+
+    // Backdrop Click (Click outside popup) -> Auto-saves draft to Knowledge Hub!
+    modal.onclick = (e) => {
+        if (e.target === modal) {
+            finalizeTopicModalAction('save_draft');
+        }
+    };
+}
+
+async function finalizeTopicModalAction(actionMode) {
+    const modal = document.getElementById('topic-editor-modal');
+    if (modal) modal.style.display = 'none';
+    if (!activeVerificationSession) return;
+
+    const session = activeVerificationSession;
+    activeVerificationSession = null;
+
+    const isConfirmed = (actionMode === 'confirm_hub' || actionMode === 'confirm_start');
+
+    if (session.isExistingHubSession) {
+        // Updating topics on an existing Knowledge Hub card
+        try {
+            await fetch(`/api/sessions/${encodeURIComponent(session.sessionId)}/update_topics`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    topics_reviewed: isConfirmed,
+                    topic_list: session.topicList
+                })
+            });
+        } catch (e) {
+            console.error("Failed to update session topics:", e);
+        }
+
+        if (actionMode === 'confirm_start') {
+            currentQuiz = {
+                sessionId: session.sessionId,
+                customTitle: session.customTitle,
+                subjectName: session.subjectName,
+                topicsReviewed: true,
+                topicList: session.topicList,
+                questions: session.questions,
+                config: session.config || { ...quizConfig }
+            };
+            const navBtn = document.querySelector('.nav-btn[data-target="quiz-view"]');
+            if (navBtn) navBtn.click();
+            beginQuizRunner();
+        } else {
+            showToast(isConfirmed
+                ? "Topics confirmed! Generating references & notes in background."
+                : "Draft topic selections saved to Knowledge Hub.");
+            if (typeof window.loadSessions === 'function') window.loadSessions();
+        }
+        return;
+    }
+
+    // New session created from Quiz Configuration
+    await persistSessionToBackend({
+        sessionId: session.sessionId,
+        subjectName: session.subjectName,
+        customTitle: session.customTitle,
+        questions: session.questions,
+        answers: [],
+        topicsReviewed: isConfirmed,
+        topicList: session.topicList,
+        isCompleted: false,
+        timeUsedSeconds: 0
+    });
+
+    if (actionMode === 'confirm_start') {
+        currentQuiz = {
+            sessionId: session.sessionId,
+            customTitle: session.customTitle,
+            subjectName: session.subjectName,
+            topicsReviewed: true,
+            topicList: session.topicList,
+            questions: session.questions,
+            config: session.config || { ...quizConfig }
+        };
+        beginQuizRunner();
+    } else if (actionMode === 'confirm_hub') {
+        showToast("Set added to Knowledge Hub! Generating references & notes.");
+        const hubNav = document.querySelector('.nav-btn[data-target="knowledge-hub-view"]');
+        if (hubNav) hubNav.click();
+        if (typeof window.loadSessions === 'function') window.loadSessions();
+    } else {
+        // Click outside popup -> saved draft to Hub
+        showToast("Topic draft saved to Knowledge Hub (Circle ①). You can refine it anytime from the Hub.");
+        if (typeof window.loadSessions === 'function') window.loadSessions();
+    }
+}
+
+async function persistSessionToBackend({
+    sessionId,
+    subjectName,
+    customTitle,
+    questions,
+    answers,
+    topicsReviewed,
+    topicList,
+    isCompleted,
+    timeUsedSeconds
+}) {
+    const totalQ = questions.length;
+    const correctCount = answers.filter(a => a.isCorrect).length;
+    const wrongCount = answers.filter(a => !a.isCorrect && !a.timedOut).length;
+    const unansweredCount = Math.max(0, totalQ - answers.length);
+    const accuracy = answers.length > 0 ? (correctCount / answers.length) * 100 : 0;
+
+    const payload = {
+        id: sessionId,
+        subjectName: subjectName || 'Mixed Topics',
+        customTitle: customTitle || subjectName || 'Study Set',
+        date: new Date().toISOString().split('T')[0],
+        timestamp: Date.now(),
+        lastAttempted: answers.length > 0 ? Date.now() : 0,
+        totalQuestions: totalQ,
+        correctAnswers: correctCount,
+        wrongAnswers: wrongCount,
+        unanswered: unansweredCount,
+        score: correctCount,
+        maxScore: totalQ,
+        accuracy,
+        timeLimitSeconds: (quizConfig.timeLimit || 0) * 60,
+        timeUsedSeconds: timeUsedSeconds || 0,
+        mode: quizConfig.mode || 'learn',
+        isCompleted: Boolean(isCompleted),
+        topicsReviewed: Boolean(topicsReviewed),
+        topicList: topicList || [],
+        questions,
+        answers
     };
 
     try {
-        const res = await fetch('/api/mcq/generate_set', {
+        await fetch('/api/sessions/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        const data = await res.json();
-
-        if (data.status === 'success' && data.questions.length > 0) {
-            currentQuiz = {
-                questions: data.questions,
-                config: { ...quizConfig }
-            };
-            beginQuizRunner();
-        } else {
-            alert("No questions found for the selected criteria.");
-        }
-    } catch(e) {
-        console.error(e);
-        alert("Failed to start quiz.");
+    } catch (e) {
+        console.error("Failed to save session to backend:", e);
     }
+    return payload;
 }
 
-// --- Active Quiz Engine ---
+// =========================================================
+// 3. ACTIVE QUIZ RUNNER & RIGHT SIDEBAR INSPECTOR
+// =========================================================
+
+window.launchPreparedQuiz = function(preparedQuizData) {
+    currentQuiz = {
+        sessionId: preparedQuizData.sessionId || `sess_${Date.now()}`,
+        customTitle: preparedQuizData.customTitle || preparedQuizData.config?.subjectName || 'Retake Session',
+        subjectName: preparedQuizData.config?.subjectName || 'Mixed Session',
+        topicsReviewed: Boolean(preparedQuizData.topicsReviewed),
+        topicList: preparedQuizData.topicList || [],
+        questions: preparedQuizData.questions || [],
+        config: { ...quizConfig, ...(preparedQuizData.config || {}) }
+    };
+    const navBtn = document.querySelector('.nav-btn[data-target="quiz-view"]');
+    if (navBtn) navBtn.click();
+    beginQuizRunner();
+};
 
 function beginQuizRunner() {
     currentIndex = 0;
@@ -217,6 +838,7 @@ function beginQuizRunner() {
     isPaused = false;
     times.start = Date.now();
 
+    clearInterval(timers.overall);
     if (quizConfig.timeLimit > 0) {
         let timeLeft = quizConfig.timeLimit * 60;
         timers.overall = setInterval(() => {
@@ -225,7 +847,7 @@ function beginQuizRunner() {
             if (timeLeft <= 0) finishQuiz();
             else {
                 const el = document.getElementById('active-timer');
-                if (el) el.textContent = `${Math.floor(timeLeft/60).toString().padStart(2,'0')}:${(timeLeft%60).toString().padStart(2,'0')}`;
+                if (el) el.textContent = `${Math.floor(timeLeft / 60).toString().padStart(2, '0')}:${(timeLeft % 60).toString().padStart(2, '0')}`;
             }
         }, 1000);
     }
@@ -235,20 +857,21 @@ function beginQuizRunner() {
 
 function renderQuestion() {
     const container = document.getElementById('quiz-view');
+    if (!container || !currentQuiz || !currentQuiz.questions.length) return;
+
     const q = currentQuiz.questions[currentIndex];
     const isAnswered = !!quizAnswers[q.id];
 
     if (!isAnswered) {
         times.questionStart = Date.now();
         resetQuestionTimeout();
-        // Auto-open and update right inspector for learning context
-        updateInspector(q.topic_name);
+        updateInspectorForQuestion(q);
     }
 
     const isTarget = quizConfig.mode === 'target';
     const isLearn = quizConfig.mode === 'learn';
 
-    let headerText = isTarget
+    const headerText = isTarget
         ? `Target: ${scores.correct} / ${quizConfig.count} Correct`
         : `Question ${currentIndex + 1} of ${currentQuiz.questions.length}`;
 
@@ -256,7 +879,7 @@ function renderQuestion() {
         ? (scores.correct / quizConfig.count) * 100
         : (Object.keys(quizAnswers).length / currentQuiz.questions.length) * 100;
 
-    let html = `
+    container.innerHTML = `
         <div class="w-full p-6 animate-fade-in flex flex-col h-full">
             <div class="flex items-center justify-between mb-6 flex-wrap gap-4">
                 <div class="flex items-center gap-4">
@@ -264,60 +887,58 @@ function renderQuestion() {
                         <span class="text-brand-400 font-black text-lg tracking-wide">${headerText}</span>
                     </div>
                     <div class="flex items-center gap-4 text-sm font-bold glass-panel px-4 py-2.5 rounded-xl border border-white/5">
-                        <span class="text-success-500 flex items-center gap-1.5"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> ${scores.correct}</span>
+                        <span class="text-success-500 flex items-center gap-1.5">✓ ${scores.correct}</span>
                         <span class="opacity-30">|</span>
-                        <span class="text-danger-500 flex items-center gap-1.5"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg> ${scores.wrong}</span>
+                        <span class="text-danger-500 flex items-center gap-1.5">✗ ${scores.wrong}</span>
                     </div>
                 </div>
                 <div class="flex items-center gap-3">
-                    <button id="toggle-inspector-active" class="icon-btn glass-panel border border-white/5" title="Toggle Inspector">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
+                    <button id="toggle-inspector-active" class="secondary-btn px-3 py-2 text-xs flex items-center gap-1.5" title="Show/Hide Reference Inspector">
+                        📚 References
                     </button>
                     ${quizConfig.timeLimit > 0 ? `<div id="active-timer" class="px-4 py-2 glass-panel border border-gray-700 rounded-xl font-mono text-lg font-bold text-brand-400 shadow-inner">--:--</div>` : ''}
                 </div>
             </div>
 
-            <div class="w-full glass-panel rounded-full h-2 mb-8 shadow-inner border border-white/5 overflow-hidden">
-                <div class="h-2 rounded-full transition-all duration-500 ${isTarget ? 'bg-gradient-to-r from-purple-500 to-success-500' : 'bg-gradient-to-r from-brand-500 to-purple-500'}" style="width: ${Math.min(progressPct, 100)}%"></div>
+            <div class="w-full glass-panel rounded-full h-2 mb-6 shadow-inner border border-white/5 overflow-hidden">
+                <div class="h-2 rounded-full transition-all duration-500 bg-gradient-to-r from-brand-500 to-purple-500" style="width: ${Math.min(progressPct, 100)}%"></div>
             </div>
 
             <div class="glass-card card-shade-1 p-8 mb-6 relative overflow-hidden flex-shrink-0">
-                <div class="absolute top-0 left-0 w-1 h-full bg-brand-500"></div>
-                <div class="mb-5 flex items-center gap-2">
-                    <span class="px-3 py-1 bg-brand-500/20 text-brand-300 rounded-full text-[11px] font-bold uppercase tracking-wider border border-brand-500/30">
-                        ${window.escapeHTML(q.topic_name)}
+                <div class="mb-4 flex items-center justify-between gap-2">
+                    <span class="px-3 py-1 bg-brand-500/20 text-brand-300 rounded-full text-xs font-bold uppercase tracking-wider border border-brand-500/30">
+                        ${window.escapeHTML(q.topic_name || q.topic || currentQuiz.customTitle)}
                     </span>
-                    <span class="px-3 py-1 glass-panel text-muted rounded-full text-[11px] font-bold uppercase tracking-wider border border-white/10">
+                    <span class="px-3 py-1 glass-panel text-muted rounded-full text-xs font-bold uppercase tracking-wider border border-white/10">
                         Mode: ${quizConfig.mode}
                     </span>
                 </div>
-                <h2 class="text-xl font-semibold leading-relaxed mb-8 opacity-90">${window.escapeHTML(q.question)}</h2>
+                <h2 class="text-xl font-semibold leading-relaxed mb-6">${window.escapeHTML(q.question)}</h2>
 
                 <div class="space-y-3" id="options-container"></div>
             </div>
 
-            <div id="feedback-container" class="flex-1 overflow-y-auto pr-2 mb-4"></div>
+            <div id="feedback-container" class="flex-1 overflow-y-auto pr-2 mb-4 space-y-4"></div>
 
             <div class="flex justify-between items-center mt-auto pt-4 border-t border-white/10">
                 <button id="btn-prev" class="secondary-btn px-6 py-3 rounded-xl disabled:opacity-30 font-medium" ${currentIndex === 0 ? 'disabled' : ''}>
                     ← Previous
                 </button>
-                <button id="btn-next" class="primary-btn px-8 py-3 rounded-xl transition-all shadow-lg font-bold disabled:opacity-30 disabled:shadow-none" ${!isAnswered && !isTarget ? 'disabled' : ''}>
+                <button id="btn-next" class="primary-btn px-8 py-3 rounded-xl transition-all shadow-lg font-bold disabled:opacity-30" ${!isAnswered && !isTarget ? 'disabled' : ''}>
                     ${currentIndex >= currentQuiz.questions.length - 1 && !isTarget ? 'Finish Quiz 🏁' : 'Next Question →'}
                 </button>
             </div>
         </div>
     `;
-    container.innerHTML = html;
 
-    // Attach Options
+    // Render Options A-D
     const optsDiv = document.getElementById('options-container');
     ['A', 'B', 'C', 'D'].forEach(opt => {
-        const text = q[`option_${opt.toLowerCase()}`];
+        const text = q[`option_${opt.toLowerCase()}`] || q[`opt_${opt.toLowerCase()}`];
         if (!text) return;
 
         const btn = document.createElement('button');
-        let classes = 'w-full text-left px-5 py-4 rounded-xl border-2 transition-all flex items-center justify-between font-medium shadow-sm ';
+        let classes = 'w-full text-left px-5 py-4 rounded-xl border transition-all flex items-center justify-between font-medium ';
 
         if (!isAnswered) {
             classes += 'glass-card border-white/10 hover:border-brand-500 cursor-pointer';
@@ -325,69 +946,108 @@ function renderQuestion() {
         } else {
             classes += 'cursor-default ';
             const ans = quizAnswers[q.id];
-            const isCorrectOpt = opt === q.correct_answer.toUpperCase();
+            const isCorrectOpt = opt === (q.correct_answer || 'A').toUpperCase();
             const isSelected = ans.selected === opt;
 
             if (ans.timedOut) classes += 'glass-panel border-white/5 opacity-50';
-            else if (isCorrectOpt) classes += 'bg-success-500/20 border-success-500 text-success-300';
-            else if (isSelected && !ans.isCorrect) classes += 'bg-danger-500/20 border-danger-500 text-danger-300';
+            else if (isCorrectOpt) classes += 'bg-success-500/20 border-success-500/50 text-success-300';
+            else if (isSelected && !ans.isCorrect) classes += 'bg-danger-500/20 border-danger-500/50 text-danger-300';
             else classes += 'glass-panel border-white/5 opacity-50';
         }
 
         btn.className = classes;
         btn.innerHTML = `
             <div class="flex items-center gap-4">
-                <span class="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold glass-panel shadow-inner">
+                <span class="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold glass-panel">
                     ${opt}
                 </span>
                 <span class="leading-snug">${window.escapeHTML(text)}</span>
             </div>
-            ${isAnswered && !quizAnswers[q.id].timedOut && opt === q.correct_answer.toUpperCase() ? '<svg class="text-success-500" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>' : ''}
-            ${isAnswered && !quizAnswers[q.id].timedOut && quizAnswers[q.id].selected === opt && opt !== q.correct_answer.toUpperCase() ? '<svg class="text-danger-500" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>' : ''}
+            ${isAnswered && !quizAnswers[q.id].timedOut && opt === (q.correct_answer || 'A').toUpperCase() ? '<span class="text-success-500 font-bold text-lg">✓</span>' : ''}
+            ${isAnswered && !quizAnswers[q.id].timedOut && quizAnswers[q.id].selected === opt && opt !== (q.correct_answer || 'A').toUpperCase() ? '<span class="text-danger-500 font-bold text-lg">✗</span>' : ''}
         `;
         optsDiv.appendChild(btn);
     });
 
-    // Handle Feedback for Learn mode
+    // Learn Mode Feedback: Show CSV Explanation + LLM Detailed Explanation (if LLM enabled)
     if (isAnswered && isLearn && !quizAnswers[q.id].timedOut) {
-        const rawExplanation = q.explanation || 'No detailed explanation provided.';
-        const cleanExp = window.DOMPurify && window.marked ? window.DOMPurify.sanitize(window.marked.parse(rawExplanation)) : window.escapeHTML(rawExplanation);
+        const fbContainer = document.getElementById('feedback-container');
+        const llmEnabled = window.AppState ? window.AppState.get().llmEnabled !== false : true;
+        let fbHtml = '';
 
-        document.getElementById('feedback-container').innerHTML = `
-            <div class="animate-fade-in bg-brand-500/10 border border-brand-500/30 rounded-2xl p-6 shadow-inner">
-                <h4 class="font-bold text-brand-300 mb-3 flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg> Explanation</h4>
-                <div class="prose prose-sm max-w-none">${cleanExp}</div>
-            </div>
-        `;
+        if (q.explanation && q.explanation !== 'No explanation provided.') {
+            fbHtml += `
+                <div class="animate-fade-in glass-panel border border-white/10 rounded-2xl p-5">
+                    <h4 class="font-bold text-brand-300 text-xs uppercase tracking-wider mb-2">📄 CSV Baseline Explanation</h4>
+                    <div class="prose prose-sm max-w-none">${window.renderMarkdownAndMath(q.explanation)}</div>
+                </div>
+            `;
+        }
+
+        if (llmEnabled && q.llm_explanation) {
+            fbHtml += `
+                <div class="animate-fade-in bg-brand-600/10 border border-brand-500/30 rounded-2xl p-5">
+                    <h4 class="font-bold text-brand-400 text-xs uppercase tracking-wider mb-2">🤖 LM Studio Detailed Clinical Breakdown</h4>
+                    <div class="prose prose-sm max-w-none">${window.renderMarkdownAndMath(q.llm_explanation)}</div>
+                </div>
+            `;
+        } else if (!fbHtml) {
+            fbHtml = `
+                <div class="animate-fade-in glass-panel border border-white/10 rounded-2xl p-5 text-sm text-muted">
+                    Check the Right Sidebar Inspector for verified textbook, Obsidian, and ZIM references on this question.
+                </div>
+            `;
+        }
+
+        if (fbContainer) fbContainer.innerHTML = fbHtml;
     }
 
-    document.getElementById('btn-prev').onclick = () => { if(currentIndex > 0) { currentIndex--; renderQuestion(); } };
+    document.getElementById('btn-prev').onclick = () => {
+        if (currentIndex > 0) {
+            currentIndex--;
+            renderQuestion();
+        }
+    };
+
     const nextBtn = document.getElementById('btn-next');
     if (isTarget) {
         nextBtn.textContent = 'Skip';
-        nextBtn.onclick = () => { handleSelectOption(q, null, true); };
+        nextBtn.onclick = () => handleSelectOption(q, null, true);
         if (isAnswered) nextBtn.style.display = 'none';
     } else {
         nextBtn.onclick = () => {
-            if (currentIndex < currentQuiz.questions.length - 1) { currentIndex++; renderQuestion(); }
-            else finishQuiz();
+            if (currentIndex < currentQuiz.questions.length - 1) {
+                currentIndex++;
+                renderQuestion();
+            } else {
+                finishQuiz();
+            }
         };
     }
 
-    document.getElementById('toggle-inspector-active').addEventListener('click', toggleRightSidebar);
+    document.getElementById('toggle-inspector-active')?.addEventListener('click', toggleRightSidebar);
 }
 
 function handleSelectOption(q, option, isTimeout = false) {
     clearTimeout(timers.autoAdvance);
     clearInterval(timers.question);
 
-    const isCorrect = !isTimeout && option === q.correct_answer.toUpperCase();
+    const correctOpt = (q.correct_answer || 'A').toUpperCase();
+    const isCorrect = !isTimeout && option === correctOpt;
     const timeSpentMs = Date.now() - times.questionStart;
 
-    quizAnswers[q.id] = { selected: option, isCorrect, timeSpentMs, timedOut: isTimeout };
-    if (isCorrect) scores.correct++; else scores.wrong++;
+    quizAnswers[q.id] = {
+        selected: option,
+        isCorrect,
+        timeSpentMs,
+        timedOut: isTimeout,
+        timestamp: Date.now()
+    };
 
-    // FSRS Spaced Repetition Scoring
+    if (isCorrect) scores.correct++;
+    else scores.wrong++;
+
+    // FSRS v4.5 Spaced Repetition Scoring (supports string IDs like "q_0_...")
     if (quizConfig.spacedRepetition && !isTimeout) {
         const timeSec = timeSpentMs / 1000;
         let rating = 3; // Good
@@ -397,23 +1057,27 @@ function handleSelectOption(q, option, isTimeout = false) {
 
         fetch('/api/mcq/score', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ mcq_id: parseInt(q.id), rating })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mcq_id: String(q.id), rating })
         }).catch(console.error);
     }
 
     renderQuestion();
 
     if (quizConfig.mode === 'target' && scores.correct >= quizConfig.count) {
-        timers.autoAdvance = setTimeout(finishQuiz, 1500);
+        timers.autoAdvance = setTimeout(finishQuiz, 1200);
         return;
     }
 
     if (quizConfig.mode !== 'learn') {
         timers.autoAdvance = setTimeout(() => {
-            if (currentIndex < currentQuiz.questions.length - 1) { currentIndex++; renderQuestion(); }
-            else finishQuiz();
-        }, 1200);
+            if (currentIndex < currentQuiz.questions.length - 1) {
+                currentIndex++;
+                renderQuestion();
+            } else {
+                finishQuiz();
+            }
+        }, 1100);
     }
 }
 
@@ -432,34 +1096,44 @@ function triggerBreakModal() {
     isPaused = true;
     clearInterval(timers.question);
     const container = document.getElementById('quiz-view');
+    if (!container) return;
+
     container.innerHTML = `
         <div class="max-w-2xl mx-auto p-6 flex items-center h-full">
-            <div class="glass-card card-shade-3 border-warning-500/30 w-full text-center p-10 animate-fade-in shadow-[0_0_40px_rgba(245,158,11,0.1)]">
-                <div class="w-20 h-20 bg-warning-500/20 rounded-full flex items-center justify-center mx-auto mb-6 border border-warning-500/40">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-warning-500"><path d="M17 8h1a4 4 0 1 1 0 8h-1"></path><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"></path><line x1="6" y1="2" x2="6" y2="4"></line><line x1="10" y1="2" x2="10" y2="4"></line><line x1="14" y1="2" x2="14" y2="4"></line></svg>
-                </div>
-                <h2 class="text-3xl font-black mb-4">Need a Break?</h2>
-                <p class="text-muted mb-8 text-lg">No answer given for ${quizConfig.timeout} minutes. Your progress is saved safely.</p>
+            <div class="glass-card card-shade-3 w-full text-center p-10 animate-fade-in">
+                <h2 class="text-3xl font-black mb-4">☕ Need a Break?</h2>
+                <p class="text-muted mb-8 text-lg">No answer recorded for ${quizConfig.timeout} minutes. Your progress is safe.</p>
                 <div class="flex flex-col gap-3 max-w-sm mx-auto">
-                    <button id="break-resume" class="primary-btn w-full py-4 font-bold rounded-xl shadow-lg transition-all">▶️ Resume Session</button>
-                    <button id="break-skip" class="secondary-btn w-full py-3 rounded-xl transition-all">⏭️ Skip Question</button>
-                    <button id="break-end" class="w-full py-2 text-muted hover:text-brand-400 transition-colors mt-2 bg-transparent border-none cursor-pointer">End Session & View Results</button>
+                    <button id="break-resume" class="primary-btn w-full py-4 font-bold rounded-xl">▶️ Resume Session</button>
+                    <button id="break-skip" class="secondary-btn w-full py-3 rounded-xl">⏭️ Skip Question</button>
+                    <button id="break-end" class="w-full py-2 text-muted hover:text-brand-400 transition-colors mt-2 bg-transparent border-none cursor-pointer">End Session &amp; Save Results</button>
                 </div>
             </div>
         </div>
     `;
 
-    document.getElementById('break-resume').onclick = () => { isPaused = false; times.questionStart = Date.now(); renderQuestion(); };
-    document.getElementById('break-skip').onclick = () => { isPaused = false; handleSelectOption(currentQuiz.questions[currentIndex], null, true); };
+    document.getElementById('break-resume').onclick = () => {
+        isPaused = false;
+        times.questionStart = Date.now();
+        renderQuestion();
+    };
+    document.getElementById('break-skip').onclick = () => {
+        isPaused = false;
+        handleSelectOption(currentQuiz.questions[currentIndex], null, true);
+    };
     document.getElementById('break-end').onclick = finishQuiz;
 }
 
-// --- Results & Inspector ---
+// =========================================================
+// 4. RESULTS & RIGHT SIDEBAR CLINICAL INSPECTOR
+// =========================================================
 
 async function finishQuiz() {
     clearInterval(timers.overall);
     clearInterval(timers.question);
     clearTimeout(timers.autoAdvance);
+
+    if (!currentQuiz) return;
 
     const answeredQuestions = [];
     const answersList = [];
@@ -468,125 +1142,124 @@ async function finishQuiz() {
         const ans = quizAnswers[q.id];
         if (ans) {
             answeredQuestions.push(q);
-            answersList.push({ questionId: q.id.toString(), selectedOption: ans.selected, isCorrect: ans.isCorrect, timeSpentSeconds: ans.timeSpentMs });
+            answersList.push({
+                questionId: String(q.id),
+                selected: ans.selected || "",
+                isCorrect: Boolean(ans.isCorrect),
+                timedOut: Boolean(ans.timedOut),
+                timeSpentMs: Number(ans.timeSpentMs || 0),
+                timestamp: Number(ans.timestamp || Date.now())
+            });
         }
     });
 
     const timeUsed = Math.floor((Date.now() - times.start) / 1000);
-    const accuracy = answeredQuestions.length > 0 ? (scores.correct / answeredQuestions.length) * 100 : 0;
 
-    const result = {
-        id: crypto.randomUUID(),
-        subjectName: quizConfig.subject === 'all' ? 'Mixed Topics' : quizConfig.subject,
-        timestamp: Date.now(),
-        totalQuestions: answeredQuestions.length,
-        correctAnswers: scores.correct,
-        wrongAnswers: scores.wrong,
-        accuracy: accuracy,
-        timeUsedSeconds: timeUsed,
-        mode: quizConfig.mode,
-        answers: answersList
-    };
+    const savedPayload = await persistSessionToBackend({
+        sessionId: currentQuiz.sessionId || crypto.randomUUID(),
+        subjectName: currentQuiz.subjectName,
+        customTitle: currentQuiz.customTitle,
+        questions: currentQuiz.questions,
+        answers: answersList,
+        topicsReviewed: currentQuiz.topicsReviewed,
+        topicList: currentQuiz.topicList,
+        isCompleted: true,
+        timeUsedSeconds: timeUsed
+    });
 
-    try {
-        await fetch('/api/sessions/save', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ ...result, questions: answeredQuestions })
-        });
-    } catch(e) { console.error("Failed to save session", e); }
-
-    // Update global state optimistically to power dashboard metrics
-    if (window.AppState) {
-        const state = window.AppState.get();
-        state.testResults.push(result);
-        const today = new Date().toISOString().split('T')[0];
-        let habit = state.habitLog.find(h => h.date === today);
-        if(!habit) { habit = { date: today, questionsAnswered:0, correctAnswers:0, timeSpentSeconds:0 }; state.habitLog.push(habit); }
-        habit.questionsAnswered += answeredQuestions.length;
-        habit.correctAnswers += scores.correct;
-        habit.timeSpentSeconds += timeUsed;
-        window.AppState.update({ testResults: state.testResults, habitLog: state.habitLog, totalQuestionsEver: (state.totalQuestionsEver||0) + answeredQuestions.length });
+    if (window.AppState && window.AppState.recordQuizCompletion) {
+        window.AppState.recordQuizCompletion(savedPayload, answeredQuestions, quizAnswers);
     }
 
-    renderResults(result, answeredQuestions);
+    renderResults(savedPayload, answeredQuestions);
 }
 
 function renderResults(result, answeredQs) {
     const container = document.getElementById('quiz-view');
-    const wrongQs = answeredQs.filter(q => { const a = quizAnswers[q.id]; return a && !a.isCorrect && !a.timedOut; });
+    if (!container) return;
+
+    const wrongQs = answeredQs.filter(q => {
+        const a = quizAnswers[q.id];
+        return a && !a.isCorrect && !a.timedOut;
+    });
+    const llmEnabled = window.AppState ? window.AppState.get().llmEnabled !== false : true;
 
     container.innerHTML = `
         <div class="w-full p-6 animate-fade-in">
             <div class="text-center mb-10">
-                <div class="inline-flex items-center justify-center w-24 h-24 rounded-full ${result.accuracy >= 70 ? 'bg-success-500/20 text-success-400' : 'bg-warning-500/20 text-warning-400'} mb-4 shadow-inner border border-white/5">
-                    <span class="text-4xl font-black">${result.accuracy >= 90 ? 'A+' : result.accuracy >= 80 ? 'A' : result.accuracy >= 70 ? 'B' : result.accuracy >= 60 ? 'C' : 'D'}</span>
-                </div>
                 <h1 class="text-4xl font-black mb-2">${result.accuracy >= 70 ? '🎉 Excellent Work!' : '💪 Keep Practicing!'}</h1>
-                <p class="subtitle text-lg">Session completed for <span class="text-brand-400 font-bold">${window.escapeHTML(result.subjectName)}</span></p>
+                <p class="subtitle text-lg">Session completed for <span class="text-brand-400 font-bold">${window.escapeHTML(result.customTitle || result.subjectName)}</span></p>
             </div>
 
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
-                <div class="glass-card card-shade-1 text-center p-6 border-brand-500/30 shadow-[0_0_15px_rgba(139,92,246,0.15)]">
+                <div class="glass-card card-shade-1 text-center p-6">
                     <p class="text-3xl font-black text-brand-400 mb-1">${result.accuracy.toFixed(1)}%</p>
-                    <p class="text-xs text-muted uppercase tracking-widest">Accuracy</p>
+                    <p class="text-xs text-muted uppercase">Accuracy</p>
                 </div>
-                <div class="glass-card card-shade-2 text-center p-6 border-success-500/30">
+                <div class="glass-card card-shade-2 text-center p-6">
                     <p class="text-3xl font-black text-success-500 mb-1">${result.correctAnswers}</p>
-                    <p class="text-xs text-muted uppercase tracking-widest">Correct</p>
+                    <p class="text-xs text-muted uppercase">Correct</p>
                 </div>
-                <div class="glass-card card-shade-3 text-center p-6 border-danger-500/30">
+                <div class="glass-card card-shade-3 text-center p-6">
                     <p class="text-3xl font-black text-danger-500 mb-1">${result.wrongAnswers}</p>
-                    <p class="text-xs text-muted uppercase tracking-widest">Wrong</p>
+                    <p class="text-xs text-muted uppercase">Wrong</p>
                 </div>
-                <div class="glass-card card-shade-4 text-center p-6 border-white/10">
-                    <p class="text-3xl font-black mb-1">${Math.floor(result.timeUsedSeconds/60)}m ${result.timeUsedSeconds%60}s</p>
-                    <p class="text-xs text-muted uppercase tracking-widest">Time Taken</p>
+                <div class="glass-card card-shade-4 text-center p-6">
+                    <p class="text-3xl font-black mb-1">${Math.floor(result.timeUsedSeconds / 60)}m ${result.timeUsedSeconds % 60}s</p>
+                    <p class="text-xs text-muted uppercase">Time Taken</p>
                 </div>
             </div>
 
             <div class="flex flex-wrap gap-4 justify-center mb-10 pb-10 border-b border-white/10">
-                <button id="res-home" class="secondary-btn px-8 py-3 rounded-xl font-medium">🏠 Dashboard</button>
-                <button id="res-retake" class="secondary-btn px-8 py-3 rounded-xl font-medium">🔄 Retake Set</button>
-                ${wrongQs.length > 0 ? `<button id="res-wrong" class="primary-btn px-8 py-3 shadow-lg rounded-xl font-bold">🧠 Practice Wrong (${wrongQs.length})</button>` : ''}
-                <button id="res-setup" class="primary-btn px-8 py-3 shadow-lg rounded-xl font-bold">⚙️ New Config</button>
+                <button id="res-hub" class="secondary-btn px-6 py-3 rounded-xl font-medium">📚 Open Knowledge Hub</button>
+                <button id="res-retake" class="secondary-btn px-6 py-3 rounded-xl font-medium">🔄 Retake Set</button>
+                ${wrongQs.length > 0 ? `<button id="res-wrong" class="primary-btn px-6 py-3 rounded-xl font-bold">🧠 Practice Wrong (${wrongQs.length})</button>` : ''}
+                <button id="res-setup" class="primary-btn px-6 py-3 rounded-xl font-bold">⚙️ New Configuration</button>
             </div>
 
-            <h3 class="text-2xl font-bold mb-6 flex items-center gap-3"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-brand-400"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg> Detailed Breakdown</h3>
+            <h3 class="text-2xl font-bold mb-6">Detailed Question Breakdown</h3>
             <div class="space-y-6">
                 ${answeredQs.map((q, i) => {
                     const a = quizAnswers[q.id];
-                    const bgBorder = a.timedOut ? 'border-white/10 glass-panel' : a.isCorrect ? 'border-success-500/30 bg-success-900/10' : 'border-danger-500/30 bg-danger-900/10';
-                    const icon = a.timedOut ? '⏭️' : a.isCorrect ? '<span class="text-success-500 font-bold">✓</span>' : '<span class="text-danger-500 font-bold">✗</span>';
-                    const cleanExp = window.DOMPurify && window.marked ? window.DOMPurify.sanitize(window.marked.parse(q.explanation || 'No explanation.')) : window.escapeHTML(q.explanation);
+                    const bgBorder = a.timedOut
+                        ? 'border-white/10 glass-panel'
+                        : a.isCorrect
+                            ? 'border-success-500/30 glass-card'
+                            : 'border-danger-500/30 glass-card';
 
                     return `
                     <div class="rounded-2xl border ${bgBorder} p-6">
                         <div class="flex items-start justify-between mb-4">
-                            <h4 class="font-semibold text-lg leading-snug flex-1 pr-4"><span class="text-muted font-mono text-sm mr-2">Q${i+1}.</span>${window.escapeHTML(q.question)}</h4>
-                            <div class="flex items-center gap-3 shrink-0">
-                                <span class="text-xs font-mono glass-panel px-2 py-1 rounded border border-white/5 opacity-70">⏱️ ${(a.timeSpentMs/1000).toFixed(1)}s</span>
-                                <div class="w-8 h-8 rounded-full glass-panel border border-white/10 flex items-center justify-center text-lg shadow-inner">${icon}</div>
-                            </div>
+                            <h4 class="font-semibold text-lg leading-snug flex-1 pr-4">
+                                <span class="text-muted font-mono text-sm mr-2">Q${i + 1}.</span>${window.escapeHTML(q.question)}
+                            </h4>
+                            <span class="text-xs font-mono glass-panel px-2.5 py-1 rounded">⏱️ ${(a.timeSpentMs / 1000).toFixed(1)}s</span>
                         </div>
 
                         ${!a.timedOut ? `
-                        <div class="flex flex-wrap gap-4 mb-6">
-                            <div class="flex items-center gap-2 text-sm glass-panel px-3 py-1.5 rounded-lg border border-white/5">
+                        <div class="flex flex-wrap gap-4 mb-4">
+                            <div class="text-sm glass-panel px-3 py-1.5 rounded-lg">
                                 <span class="text-muted">Your Answer:</span>
-                                <span class="font-bold ${a.isCorrect ? 'text-success-400' : 'text-danger-400'}">${a.selected}</span>
+                                <span class="font-bold ml-1 ${a.isCorrect ? 'text-success-400' : 'text-danger-400'}">${a.selected}</span>
                             </div>
                             ${!a.isCorrect ? `
-                            <div class="flex items-center gap-2 text-sm bg-success-500/10 px-3 py-1.5 rounded-lg border border-success-500/20">
+                            <div class="text-sm bg-success-500/10 px-3 py-1.5 rounded-lg border border-success-500/20">
                                 <span class="text-muted">Correct Answer:</span>
-                                <span class="font-bold text-success-400">${q.correct_answer}</span>
+                                <span class="font-bold ml-1 text-success-400">${q.correct_answer}</span>
                             </div>` : ''}
                         </div>
 
-                        <div class="glass-panel rounded-xl p-5 border border-white/5 shadow-inner">
-                            <p class="text-xs font-bold text-brand-400 uppercase tracking-widest mb-3">Explanation</p>
-                            <div class="prose prose-sm max-w-none opacity-80">${cleanExp}</div>
-                        </div>
+                        ${q.explanation ? `
+                        <div class="glass-panel rounded-xl p-4 border border-white/5 mb-3">
+                            <p class="text-xs font-bold text-brand-300 uppercase mb-2">📄 CSV Explanation</p>
+                            <div class="prose prose-sm max-w-none">${window.renderMarkdownAndMath(q.explanation)}</div>
+                        </div>` : ''}
+
+                        ${llmEnabled && q.llm_explanation ? `
+                        <div class="bg-brand-600/10 rounded-xl p-4 border border-brand-500/30">
+                            <p class="text-xs font-bold text-brand-400 uppercase mb-2">🤖 LM Studio Detailed Breakdown</p>
+                            <div class="prose prose-sm max-w-none">${window.renderMarkdownAndMath(q.llm_explanation)}</div>
+                        </div>` : ''}
                         ` : '<p class="text-sm text-muted italic">Skipped due to timeout.</p>'}
                     </div>`;
                 }).join('')}
@@ -594,121 +1267,170 @@ function renderResults(result, answeredQs) {
         </div>
     `;
 
-    document.getElementById('res-home').onclick = () => document.querySelector('.nav-btn[data-target="dashboard-view"]')?.click();
-    document.getElementById('res-setup').onclick = initQuizSetup;
-    document.getElementById('res-retake').onclick = () => { currentQuiz.questions = answeredQs; beginQuizRunner(); };
-    const wBtn = document.getElementById('res-wrong');
-    if (wBtn) wBtn.onclick = () => { quizConfig.mode = 'learn'; currentQuiz.questions = wrongQs; beginQuizRunner(); };
+    document.getElementById('res-hub')?.addEventListener('click', () => {
+        document.querySelector('.nav-btn[data-target="knowledge-hub-view"]')?.click();
+    });
+    document.getElementById('res-setup')?.addEventListener('click', () => {
+        currentQuiz = null;
+        initQuizSetup();
+    });
+    document.getElementById('res-retake')?.addEventListener('click', () => {
+        currentQuiz.questions = answeredQs;
+        beginQuizRunner();
+    });
+    document.getElementById('res-wrong')?.addEventListener('click', () => {
+        quizConfig.mode = 'learn';
+        currentQuiz.questions = wrongQs;
+        beginQuizRunner();
+    });
 
-    // Close Inspector when viewing results
-    const sidebar = document.getElementById('right-sidebar');
-    if (sidebar && !sidebar.classList.contains('collapsed')) sidebar.classList.add('collapsed');
+    if (window.closeInspector) window.closeInspector();
 }
-
-// --- Right Inspector (RAG Synthesis) ---
 
 function toggleRightSidebar() {
     const sidebar = document.getElementById('right-sidebar');
-    if (sidebar) sidebar.classList.toggle('collapsed');
+    if (!sidebar) return;
+    if (sidebar.classList.contains('collapsed')) {
+        window.openInspector('Clinical Inspector', document.getElementById('inspector-content')?.innerHTML || '');
+    } else {
+        window.closeInspector();
+    }
 }
 
-document.getElementById('close-inspector-btn')?.addEventListener('click', toggleRightSidebar);
+function renderReferenceBadgesHTML(refs) {
+    if (!refs || typeof refs !== 'object') return '';
+    let itemsHtml = '';
 
-// Make available globally for document clicks on citation badges
-window.openLocalResource = async (type, path, extra) => {
-    if (type === 'pdf') {
-        fetch('/api/sources/open_pdf', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ file_path: path, page: parseInt(extra)||1 }) });
-    } else if (type === 'obsidian') {
-        window.location.href = `obsidian://open?path=${encodeURIComponent(path)}`;
-    } else if (type === 'zim') {
-        alert("ZIM article viewer coming soon to vanilla JS port! Query: " + path);
-    }
-};
+    (refs.pdf || []).forEach(pdf => {
+        itemsHtml += `
+            <a href="#" class="citation-pdf w-full p-3 rounded-xl flex items-center justify-between gap-2 mb-2 text-left no-underline"
+               data-filepath="${window.escapeHTML(pdf.file_path || '')}"
+               data-page="${pdf.page || 1}">
+                <div class="min-w-0 flex-1">
+                    <p class="font-semibold text-xs truncate">📕 ${window.escapeHTML(pdf.title || 'PDF Textbook')}</p>
+                    <p class="text-[10px] opacity-80 truncate">${window.escapeHTML(pdf.heading || '')} • Page ${pdf.page || 1}</p>
+                </div>
+                <span class="text-[10px] font-mono px-2 py-0.5 rounded glass-panel shrink-0">SumatraPDF ↗</span>
+            </a>
+        `;
+    });
 
-function updateInspector(topic) {
-    const sidebar = document.getElementById('right-sidebar');
-    const content = document.getElementById('inspector-content');
-    if (!sidebar || !content) return;
+    (refs.obsidian || []).forEach(obs => {
+        itemsHtml += `
+            <a href="#" class="citation-obsidian w-full p-3 rounded-xl flex items-center justify-between gap-2 mb-2 text-left no-underline"
+               data-filepath="${window.escapeHTML(obs.file_path || '')}"
+               data-file="${window.escapeHTML(obs.title || '')}">
+                <div class="min-w-0 flex-1">
+                    <p class="font-semibold text-xs truncate">🟣 ${window.escapeHTML(obs.title || 'Obsidian Note')}</p>
+                    <p class="text-[10px] opacity-80 truncate">${window.escapeHTML(obs.heading || 'Vault Note')}</p>
+                </div>
+                <span class="text-[10px] font-mono px-2 py-0.5 rounded glass-panel shrink-0">View Note</span>
+            </a>
+        `;
+    });
 
-    // Auto open on new question if closed
-    if (sidebar.classList.contains('collapsed')) sidebar.classList.remove('collapsed');
+    (refs.zim || []).forEach(zim => {
+        const artTitle = zim.article_id || zim.title || '';
+        itemsHtml += `
+            <a href="#" class="citation-zim w-full p-3 rounded-xl flex items-center justify-between gap-2 mb-2 text-left no-underline"
+               data-article-id="${window.escapeHTML(artTitle)}">
+                <div class="min-w-0 flex-1">
+                    <p class="font-semibold text-xs truncate">🌐 ${window.escapeHTML(zim.title || 'ZIM Article')}</p>
+                    <p class="text-[10px] opacity-80 truncate">Offline ZIM Encyclopedia</p>
+                </div>
+                <span class="text-[10px] font-mono px-2 py-0.5 rounded glass-panel shrink-0">Read HTML</span>
+            </a>
+        `;
+    });
 
-    content.innerHTML = `
-        <div class="flex flex-col items-center justify-center py-16 text-brand-400 animate-pulse">
-            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mb-3 animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>
-            <p class="text-sm font-medium">Extracting Local Context...</p>
-            <p class="text-xs opacity-60 mt-1">${window.escapeHTML(topic)}</p>
+    if (!itemsHtml) return '';
+    return `
+        <div class="mb-5">
+            <h4 class="font-bold text-xs uppercase tracking-wider text-muted mb-2.5">🔗 Verified Local References</h4>
+            <div class="flex flex-col">${itemsHtml}</div>
         </div>
     `;
+}
+
+function updateInspectorForQuestion(questionObj) {
+    const topic = questionObj.topic_name || questionObj.topic || currentQuiz?.customTitle || 'General';
+    const llmEnabled = window.AppState ? window.AppState.get().llmEnabled !== false : true;
+
+    window.openInspector(
+        `Q${currentIndex + 1} References`,
+        `<div class="text-center py-10 text-muted text-sm animate-pulse">Looking up references for <strong>${window.escapeHTML(topic)}</strong>...</div>`
+    );
 
     fetch(`/api/mcq/synthesis?topic=${encodeURIComponent(topic)}`)
-        .then(res => { if(!res.ok) throw new Error("Not processed"); return res.json(); })
+        .then(res => {
+            if (!res.ok) throw new Error("No cached synthesis");
+            return res.json();
+        })
         .then(data => {
-            let html = `<div class="space-y-4 text-[13px] pb-6">`;
+            let html = `<div class="space-y-4 text-xs pb-6">`;
+            html += `<div class="glass-panel p-3 rounded-xl border border-white/10">
+                        <span class="text-[10px] text-muted uppercase">Active Question Topic</span>
+                        <p class="font-bold text-sm text-brand-400 mt-0.5">${window.escapeHTML(topic)}</p>
+                     </div>`;
 
-            if (data.enhanced_explanation) {
-                html += `
-                <div class="bg-brand-500/10 border border-brand-500/30 rounded-xl p-4 shadow-inner">
-                    <h4 class="font-bold text-brand-300 mb-2 flex items-center gap-1.5"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg> High-Yield Synopsis</h4>
-                    <div class="opacity-90 prose prose-sm leading-relaxed">${window.escapeHTML(data.enhanced_explanation)}</div>
-                </div>`;
+            // 1. Always show clickable Reference Links (PDF, Obsidian, ZIM)
+            const refsHtml = renderReferenceBadgesHTML(data.references);
+            if (refsHtml) {
+                html += refsHtml;
+            } else {
+                html += `<p class="text-muted italic">No local PDF, Obsidian, or ZIM references matched "${window.escapeHTML(topic)}".</p>`;
             }
 
-            const varMatch = data.unified_article ? data.unified_article.match(/### Discrepancies(?:\s*&\s*Variances)?\n([\s\S]*)/i) : null;
-            if (varMatch) {
-                html += `
-                <div class="bg-warning-500/10 border border-warning-500/30 rounded-xl p-4 shadow-inner">
-                    <h4 class="font-bold text-warning-400 mb-2 flex items-center gap-1.5"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> Clinical Variance</h4>
-                    <div class="opacity-90 font-mono text-[11px] leading-relaxed text-warning-200">${window.escapeHTML(varMatch[1].trim())}</div>
-                </div>`;
-            }
-
-            if (data.references && Object.keys(data.references).length > 0) {
-                html += `<div class="mt-6"><h4 class="font-bold text-muted mb-3 text-sm px-1">Verified Reference Materials</h4><div class="space-y-2">`;
-
-                if (data.references.pdf) {
-                    data.references.pdf.forEach(pdf => {
+            // 2. Only show LLM Synthesis Note when LLM Processing is ON in Settings
+            if (llmEnabled && data.unified_article) {
+                try {
+                    const art = JSON.parse(data.unified_article);
+                    if (art && Array.isArray(art.clinical_points) && art.clinical_points.length > 0) {
                         html += `
-                        <button onclick="window.openLocalResource('pdf', '${window.escapeHTML(pdf.file_path)}', ${pdf.page})" class="w-full text-left p-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl transition-all group flex items-center gap-3">
-                            <div class="p-2 bg-red-500/20 rounded-lg text-red-400 group-hover:scale-110 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg></div>
-                            <div class="flex-1 overflow-hidden">
-                                <p class="font-medium text-red-400 truncate text-sm">${window.escapeHTML(pdf.title)}</p>
-                                <p class="text-[10px] text-muted mt-0.5">SumatraPDF • Page ${pdf.page || 1}</p>
+                            <div class="glass-card p-4 rounded-xl border border-brand-500/30">
+                                <h4 class="font-bold text-brand-300 text-xs uppercase mb-2">🤖 Tema_Q Synthesis: ${window.escapeHTML(art.subtopic || topic)}</h4>
+                                ${art.conditional_context ? `<p class="text-[11px] text-muted mb-2"><strong>Context:</strong> ${window.escapeHTML(art.conditional_context)}</p>` : ''}
+                                <ul class="list-disc pl-4 space-y-1.5 text-xs">
+                                    ${art.clinical_points.map(pt => `
+                                        <li>
+                                            ${window.escapeHTML(pt.point)}${pt.source ? `<span class="text-[10px] text-brand-400 font-mono ml-1">[${window.escapeHTML(pt.source)}${pt.page ? ` p.${pt.page}` : ''}]</span>` : ''}
+                                        </li>
+                                    `).join('')}
+                                </ul>
+                                ${art.discrepancies ? `
+                                    <div class="mt-3 p-2.5 rounded-lg bg-danger-500/15 border border-danger-500/30 text-danger-300 text-[11px]">
+                                        <strong>⚠️ Clinical Variance:</strong><br/>${window.escapeHTML(art.discrepancies)}
+                                    </div>
+                                ` : ''}
                             </div>
-                        </button>`;
-                    });
+                        `;
+                    }
+                } catch (_) {
+                    html += `
+                        <div class="glass-card p-4 rounded-xl">
+                            <h4 class="font-bold text-brand-300 text-xs uppercase mb-2">🤖 High-Yield Synopsis</h4>
+                            <div class="prose prose-sm max-w-none">${window.renderMarkdownAndMath(data.unified_article)}</div>
+                        </div>
+                    `;
                 }
-
-                if (data.references.obsidian) {
-                    data.references.obsidian.forEach(obs => {
-                        html += `
-                        <button onclick="window.openLocalResource('obsidian', '${window.escapeHTML(obs.file_path)}') class="w-full text-left p-3 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 rounded-xl transition-all group flex items-center gap-3">
-                            <div class="p-2 bg-purple-500/20 rounded-lg text-purple-400 group-hover:scale-110 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg></div>
-                            <div class="flex-1 overflow-hidden">
-                                <p class="font-medium text-purple-400 truncate text-sm">${window.escapeHTML(obs.title)}</p>
-                                <p class="text-[10px] text-muted mt-0.5">Obsidian Vault Note</p>
-                            </div>
-                        </button>`;
-                    });
-                }
-                html += `</div></div>`;
+            } else if (!llmEnabled) {
+                html += `<p class="text-[11px] text-muted italic">LM Studio synthesis is turned OFF in Settings (Reference-Only Mode).</p>`;
             }
 
             html += `</div>`;
-            content.innerHTML = html;
+            window.openInspector(`Q${currentIndex + 1}: ${topic}`, html);
         })
-        .catch(err => {
-            content.innerHTML = `
-                <div class="text-center py-10 opacity-60 px-4">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mx-auto mb-3 opacity-50"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
-                    <p class="text-sm font-medium">Topic Not Synthesized</p>
-                    <p class="text-xs mt-2 leading-relaxed">LM Studio has not processed <strong>${window.escapeHTML(topic)}</strong> yet. Check the Processing Queue tab to track offline background generation progress.</p>
-                </div>
-            `;
+        .catch(() => {
+            window.openInspector(
+                `Q${currentIndex + 1}: ${topic}`,
+                `<div class="text-center py-8 px-3 text-muted text-xs">
+                    <p class="font-semibold mb-1">No Cached Synthesis Yet</p>
+                    <p>Use <strong>Confirm &amp; Launch</strong> or confirm topics in the Knowledge Hub to index references for <strong>${window.escapeHTML(topic)}</strong>.</p>
+                </div>`
+            );
         });
 }
 
-// Bind to event lifecycle
 document.addEventListener('DOMContentLoaded', () => {
     const navBtns = document.querySelectorAll('.nav-btn');
     navBtns.forEach(btn => {

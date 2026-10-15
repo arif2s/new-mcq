@@ -2,25 +2,34 @@ import sqlite3
 import os
 from config import DB_PATH
 
-def get_db_connection():
+
+def get_db_connection() -> sqlite3.Connection:
     """
     Yields a connection configured for concurrent async access and optimized for Windows.
-    Must use check_same_thread=False to support asyncio.to_thread worker pools.
+    Uses check_same_thread=False to support asyncio.to_thread worker pools.
     """
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=20.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
 
-    # Execute all performance PRAGMAs natively in C via executescript
     conn.executescript("""
         PRAGMA journal_mode = WAL;
         PRAGMA busy_timeout = 20000;
         PRAGMA foreign_keys = ON;
     """)
-
     return conn
 
+
+def _safe_add_column(conn: sqlite3.Connection, table: str, col_def: str):
+    """Safely adds a column to an existing SQLite table if it does not already exist."""
+    try:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_def}")
+    except sqlite3.OperationalError:
+        pass
+
+
 def initialize_database():
-    """Executes schema creation and configures the database in a single optimized script."""
+    """Executes schema creation and idempotent migrations in a single optimized script."""
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
     with get_db_connection() as conn:
@@ -30,11 +39,8 @@ def initialize_database():
             PRAGMA mmap_size = 2147483648;
             PRAGMA temp_store = MEMORY;
             PRAGMA cache_size = -64000;
-        """)
-        # Using executescript for bulk schema generation is significantly faster
-        # as it avoids round-tripping through the Python SQLite wrapper for each table.
-        conn.executescript("""
-            -- MCQ Bank Table
+
+            -- 1. Master Question Bank (Legacy & Custom Prepared Questions)
             CREATE TABLE IF NOT EXISTS mcq_bank (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_file TEXT NOT NULL,
@@ -46,6 +52,7 @@ def initialize_database():
                 opt_d TEXT NOT NULL,
                 correct_opt TEXT NOT NULL CHECK(correct_opt IN ('A', 'B', 'C', 'D')),
                 csv_explanation TEXT,
+                llm_explanation TEXT DEFAULT '',
                 image_path TEXT,
                 state INTEGER DEFAULT 0,
                 difficulty REAL DEFAULT 0.0,
@@ -58,12 +65,68 @@ def initialize_database():
             );
             CREATE INDEX IF NOT EXISTS idx_mcq_due ON mcq_bank (due_timestamp, state);
 
-            -- Persistent Priority Queue for Async LLM Tasks
+            -- 2. CSV Questions Table (With FSRS v4.5 & LLM Explanation Columns)
+            CREATE TABLE IF NOT EXISTS csv_questions (
+                id TEXT PRIMARY KEY,
+                file_path TEXT,
+                topic_name TEXT,
+                question TEXT,
+                opt_a TEXT,
+                opt_b TEXT,
+                opt_c TEXT,
+                opt_d TEXT,
+                correct_answer TEXT,
+                explanation TEXT,
+                llm_explanation TEXT DEFAULT '',
+                state INTEGER DEFAULT 0,
+                difficulty REAL DEFAULT 0.0,
+                stability REAL DEFAULT 0.0,
+                reps INTEGER DEFAULT 0,
+                lapses INTEGER DEFAULT 0,
+                last_review REAL,
+                due_timestamp REAL DEFAULT 0.0
+            );
+            CREATE INDEX IF NOT EXISTS idx_csv_topic ON csv_questions(topic_name);
+            CREATE INDEX IF NOT EXISTS idx_csv_due ON csv_questions(due_timestamp, state);
+
+            -- 3. FTS5 Virtual Table for Sub-Millisecond Keyword Filtering
+            CREATE VIRTUAL TABLE IF NOT EXISTS csv_questions_fts USING fts5(
+                id UNINDEXED,
+                question,
+                opt_a,
+                opt_b,
+                opt_c,
+                opt_d,
+                content='csv_questions',
+                content_rowid='rowid'
+            );
+
+            -- Triggers to keep FTS5 table synchronized with csv_questions
+            CREATE TRIGGER IF NOT EXISTS csv_questions_ai AFTER INSERT ON csv_questions BEGIN
+                INSERT INTO csv_questions_fts(rowid, id, question, opt_a, opt_b, opt_c, opt_d)
+                VALUES (new.rowid, new.id, new.question, new.opt_a, new.opt_b, new.opt_c, new.opt_d);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS csv_questions_ad AFTER DELETE ON csv_questions BEGIN
+                INSERT INTO csv_questions_fts(csv_questions_fts, rowid, id, question, opt_a, opt_b, opt_c, opt_d)
+                VALUES('delete', old.rowid, old.id, old.question, old.opt_a, old.opt_b, old.opt_c, old.opt_d);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS csv_questions_au AFTER UPDATE OF question, opt_a, opt_b, opt_c, opt_d ON csv_questions BEGIN
+                INSERT INTO csv_questions_fts(csv_questions_fts, rowid, id, question, opt_a, opt_b, opt_c, opt_d)
+                VALUES('delete', old.rowid, old.id, old.question, old.opt_a, old.opt_b, old.opt_c, old.opt_d);
+                INSERT INTO csv_questions_fts(rowid, id, question, opt_a, opt_b, opt_c, opt_d)
+                VALUES (new.rowid, new.id, new.question, new.opt_a, new.opt_b, new.opt_c, new.opt_d);
+            END;
+
+            -- 4. Persistent Priority Queue for Async Reference & LLM Tasks
             CREATE TABLE IF NOT EXISTS task_queue (
                 task_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_type TEXT NOT NULL,
                 priority INTEGER DEFAULT 3,
                 mcq_id INTEGER,
+                session_id TEXT,
+                topic_name TEXT,
                 payload TEXT NOT NULL,
                 status TEXT DEFAULT 'PENDING',
                 error_message TEXT,
@@ -72,8 +135,9 @@ def initialize_database():
                 FOREIGN KEY(mcq_id) REFERENCES mcq_bank(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_task_priority ON task_queue (status, priority, task_id);
+            CREATE INDEX IF NOT EXISTS idx_task_session ON task_queue (session_id, status);
 
-            -- Synthesis & Topic Dossier Cache
+            -- 5. Synthesis & Topic Dossier Cache
             CREATE TABLE IF NOT EXISTS cached_syntheses (
                 topic_key TEXT PRIMARY KEY,
                 display_title TEXT NOT NULL,
@@ -88,6 +152,7 @@ def initialize_database():
                 updated_at REAL DEFAULT (unixepoch('now'))
             );
 
+            -- 6. Configured Offline Knowledge Sources
             CREATE TABLE IF NOT EXISTS knowledge_sources (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -99,58 +164,40 @@ def initialize_database():
                 pdfEngine TEXT DEFAULT 'fitz'
             );
 
-            CREATE TABLE IF NOT EXISTS csv_questions (
-                id TEXT PRIMARY KEY,
-                file_path TEXT,
-                topic_name TEXT,
-                question TEXT,
-                opt_a TEXT,
-                opt_b TEXT,
-                opt_c TEXT,
-                opt_d TEXT,
-                correct_answer TEXT,
-                explanation TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_csv_topic ON csv_questions(topic_name);
-
-            -- FTS5 Virtual Table for fast keyword searching
-            CREATE VIRTUAL TABLE IF NOT EXISTS csv_questions_fts USING fts5(
-                id UNINDEXED,
-                question,
-                opt_a,
-                opt_b,
-                opt_c,
-                opt_d,
-                content='csv_questions',
-                content_rowid='rowid'
-            );
-
+            -- 7. Quiz Sessions & Knowledge Hub Cards (Supports 1-2-3 Status Circles & Draft Topics)
             CREATE TABLE IF NOT EXISTS quiz_sessions (
                 id TEXT PRIMARY KEY,
                 subject_name TEXT NOT NULL,
+                custom_title TEXT DEFAULT '',
                 date TEXT NOT NULL,
                 timestamp REAL NOT NULL,
+                last_attempted REAL DEFAULT 0.0,
                 total_questions INTEGER NOT NULL,
-                correct_answers INTEGER NOT NULL,
-                wrong_answers INTEGER NOT NULL,
-                unanswered INTEGER NOT NULL,
-                score INTEGER NOT NULL,
-                max_score INTEGER NOT NULL,
-                accuracy REAL NOT NULL,
+                correct_answers INTEGER NOT NULL DEFAULT 0,
+                wrong_answers INTEGER NOT NULL DEFAULT 0,
+                unanswered INTEGER NOT NULL DEFAULT 0,
+                score INTEGER NOT NULL DEFAULT 0,
+                max_score INTEGER NOT NULL DEFAULT 0,
+                accuracy REAL NOT NULL DEFAULT 0.0,
                 time_limit_seconds INTEGER,
-                time_used_seconds INTEGER NOT NULL,
-                mode TEXT NOT NULL,
-                is_completed INTEGER DEFAULT 1,
+                time_used_seconds INTEGER NOT NULL DEFAULT 0,
+                mode TEXT NOT NULL DEFAULT 'learn',
+                is_completed INTEGER DEFAULT 0,
+                topics_reviewed INTEGER DEFAULT 0,
+                refs_status TEXT DEFAULT 'none',
+                llm_status TEXT DEFAULT 'none',
+                topic_list_json TEXT DEFAULT '[]',
                 created_at REAL DEFAULT (unixepoch('now'))
             );
 
+            -- 8. Session Questions (Individual MCQ Records + LLM Detailed Explanations)
             CREATE TABLE IF NOT EXISTS session_questions (
                 session_id TEXT NOT NULL,
                 question_id TEXT NOT NULL,
                 selected_option TEXT,
-                is_correct INTEGER NOT NULL,
-                timed_out INTEGER NOT NULL,
-                time_spent_ms INTEGER NOT NULL,
+                is_correct INTEGER NOT NULL DEFAULT 0,
+                timed_out INTEGER NOT NULL DEFAULT 0,
+                time_spent_ms INTEGER NOT NULL DEFAULT 0,
                 timestamp REAL NOT NULL,
                 question_text TEXT,
                 opt_a TEXT,
@@ -159,66 +206,88 @@ def initialize_database():
                 opt_d TEXT,
                 correct_answer TEXT,
                 explanation TEXT,
+                llm_explanation TEXT DEFAULT '',
                 topic TEXT,
+                question_topics_json TEXT DEFAULT '[]',
+                PRIMARY KEY (session_id, question_id),
                 FOREIGN KEY(session_id) REFERENCES quiz_sessions(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_session_questions_sid ON session_questions (session_id);
 
-            CREATE TABLE IF NOT EXISTS zim_titles (
-                title TEXT PRIMARY KEY
-            );
+            -- 9. Extracted Topics per Question
             CREATE TABLE IF NOT EXISTS extracted_topics (
                 question_id TEXT NOT NULL,
                 topic_name TEXT NOT NULL,
                 is_main_topic INTEGER DEFAULT 0,
+                verified INTEGER DEFAULT 0,
+                selected INTEGER DEFAULT 1,
                 PRIMARY KEY (question_id, topic_name)
             );
 
+            -- 10. Permanent Ignore List (Populated via Double-Click in Topic Verification Modal)
+            CREATE TABLE IF NOT EXISTS ignored_topics (
+                topic_norm TEXT PRIMARY KEY,
+                original_text TEXT NOT NULL,
+                created_at REAL DEFAULT (unixepoch('now'))
+            );
+
+            -- 11. Optional ZIM Title Cache (Used only for fast lookups when populated)
+            CREATE TABLE IF NOT EXISTS zim_titles (
+                title TEXT PRIMARY KEY
+            );
+
+            -- 12. Persistent User & App State
             CREATE TABLE IF NOT EXISTS user_state (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL,
                 updated_at REAL DEFAULT (unixepoch('now'))
             );
-
-            -- Triggers to keep FTS table in sync with csv_questions
-            CREATE TRIGGER IF NOT EXISTS csv_questions_ai AFTER INSERT ON csv_questions BEGIN
-                INSERT INTO csv_questions_fts(rowid, id, question, opt_a, opt_b, opt_c, opt_d)
-                VALUES (new.rowid, new.id, new.question, new.opt_a, new.opt_b, new.opt_c, new.opt_d);
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS csv_questions_ad AFTER DELETE ON csv_questions BEGIN
-                INSERT INTO csv_questions_fts(csv_questions_fts, rowid, id, question, opt_a, opt_b, opt_c, opt_d)
-                VALUES('delete', old.rowid, old.id, old.question, old.opt_a, old.opt_b, old.opt_c, old.opt_d);
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS csv_questions_au AFTER UPDATE ON csv_questions BEGIN
-                INSERT INTO csv_questions_fts(csv_questions_fts, rowid, id, question, opt_a, opt_b, opt_c, opt_d)
-                VALUES('delete', old.rowid, old.id, old.question, old.opt_a, old.opt_b, old.opt_c, old.opt_d);
-                INSERT INTO csv_questions_fts(rowid, id, question, opt_a, opt_b, opt_c, opt_d)
-                VALUES (new.rowid, new.id, new.question, new.opt_a, new.opt_b, new.opt_c, new.opt_d);
-            END;
         """)
 
-        try:
-            conn.execute("ALTER TABLE knowledge_sources ADD COLUMN pdfEngine TEXT DEFAULT 'fitz'")
-        except sqlite3.OperationalError:
-            pass # Column likely already exists
+        # Idempotent schema migrations for pre-existing databases
+        _safe_add_column(conn, "knowledge_sources", "pdfEngine TEXT DEFAULT 'fitz'")
+        _safe_add_column(conn, "mcq_bank", "llm_explanation TEXT DEFAULT ''")
 
-        # Migrations for mcq_bank FSRS columns
-        for col, col_type in [
-            ("state", "INTEGER DEFAULT 0"),
-            ("difficulty", "REAL DEFAULT 0.0"),
-            ("stability", "REAL DEFAULT 0.0"),
-            ("reps", "INTEGER DEFAULT 0"),
-            ("lapses", "INTEGER DEFAULT 0"),
-            ("last_review", "REAL"),
-            ("due_timestamp", "REAL DEFAULT 0.0")
+        for col_def in [
+            "state INTEGER DEFAULT 0",
+            "difficulty REAL DEFAULT 0.0",
+            "stability REAL DEFAULT 0.0",
+            "reps INTEGER DEFAULT 0",
+            "lapses INTEGER DEFAULT 0",
+            "last_review REAL",
+            "due_timestamp REAL DEFAULT 0.0",
         ]:
-            try:
-                conn.execute(f"ALTER TABLE mcq_bank ADD COLUMN {col} {col_type}")
-            except sqlite3.OperationalError:
-                pass
+            _safe_add_column(conn, "mcq_bank", col_def)
+            _safe_add_column(conn, "csv_questions", col_def)
 
+        _safe_add_column(conn, "csv_questions", "llm_explanation TEXT DEFAULT ''")
 
+        for col_def in [
+            "custom_title TEXT DEFAULT ''",
+            "last_attempted REAL DEFAULT 0.0",
+            "topics_reviewed INTEGER DEFAULT 0",
+            "refs_status TEXT DEFAULT 'none'",
+            "llm_status TEXT DEFAULT 'none'",
+            "topic_list_json TEXT DEFAULT '[]'",
+        ]:
+            _safe_add_column(conn, "quiz_sessions", col_def)
+
+        for col_def in [
+            "llm_explanation TEXT DEFAULT ''",
+            "question_topics_json TEXT DEFAULT '[]'",
+        ]:
+            _safe_add_column(conn, "session_questions", col_def)
+
+        for col_def in [
+            "verified INTEGER DEFAULT 0",
+            "selected INTEGER DEFAULT 1",
+        ]:
+            _safe_add_column(conn, "extracted_topics", col_def)
+
+        for col_def in [
+            "session_id TEXT",
+            "topic_name TEXT",
+        ]:
+            _safe_add_column(conn, "task_queue", col_def)
 
         conn.commit()

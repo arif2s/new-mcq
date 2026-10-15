@@ -3,32 +3,58 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Medisearch AI</title>
+    <title>Medisearch AI — Clinical MCQ Hub</title>
     <link rel="stylesheet" href="/css/main.css" />
     <link rel="stylesheet" href="/css/animations.css" />
-    <!-- Safe Markdown and HTML Sanitization for LLM/CSV Outputs -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
-<script>
-tailwind.config = {
-  theme: {
-    extend: {
-      colors: {
-        brand: { 300: "#8b5cf6", 400: "#7c3aed", 500: "#6d28d9" },
-        success: { 400: "#4ade80", 500: "#22c55e" },
-        warning: { 200: "#fef08a", 400: "#facc15", 500: "#eab308" },
-        danger: { 400: "#f87171", 500: "#ef4444" }
+
+    <!-- Offline-First Vendor CSS & JS (Cached locally in ui/vendor/ by run.py) -->
+    <link
+      rel="stylesheet"
+      href="/vendor/katex.min.css"
+      onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css';"
+    />
+    <script
+      src="/vendor/marked.min.js"
+      onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/marked/marked.min.js';"
+    ></script>
+    <script
+      src="/vendor/purify.min.js"
+      onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js';"
+    ></script>
+    <script
+      src="/vendor/katex.min.js"
+      onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js';"
+    ></script>
+    <script
+      src="/vendor/auto-render.min.js"
+      onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js';"
+    ></script>
+    <script
+      src="/vendor/tailwind.js"
+      onerror="this.onerror=null;this.src='https://cdn.tailwindcss.com';"
+    ></script>
+    <script>
+      if (window.tailwind) {
+        tailwind.config = {
+          theme: {
+            extend: {
+              colors: {
+                brand: { 300: "#8b5cf6", 400: "#7c3aed", 500: "#6d28d9", 600: "#5b21b6" },
+                success: { 300: "#86efac", 400: "#4ade80", 500: "#22c55e" },
+                warning: { 200: "#fef08a", 400: "#facc15", 500: "#eab308" },
+                danger: { 300: "#fca5a5", 400: "#f87171", 500: "#ef4444", 600: "#dc2626" }
+              }
+            }
+          }
+        };
       }
-    }
-  }
-}
-</script>
-</head>
+    </script>
+  </head>
+
   <body class="light-theme">
     <div class="background-animation"></div>
     <div class="app-container glass-panel">
-      <!-- LEFT RAIL -->
+      <!-- 1. COLLAPSIBLE LEFT NAVIGATION RAIL -->
       <nav class="left-rail glass-panel">
         <div class="app-header flex items-center justify-between">
           <div class="flex items-center gap-3">
@@ -49,7 +75,7 @@ tailwind.config = {
         </div>
 
         <div class="search-container sidebar-text">
-            <input type="text" id="global-search" class="glass-input" placeholder="Search knowledge..." />
+          <input type="text" id="global-search" class="glass-input" placeholder="Search knowledge (Enter)..." />
         </div>
 
         <h3 class="nav-heading sidebar-text">Navigation</h3>
@@ -111,40 +137,38 @@ tailwind.config = {
         </ul>
       </nav>
 
-      <!-- CENTER STAGE -->
+      <!-- 2. CENTER STAGE -->
       <main class="main-content relative-container">
-
         <!-- DASHBOARD VIEW -->
         <section id="dashboard-view" class="view-section active fade-enter-active">
-          <!-- Populated dynamically by dashboard.js for true TSX fidelity -->
+          <!-- Populated dynamically by dashboard.js -->
         </section>
 
         <!-- MCQ EXTRACTOR VIEW -->
         <section id="home-view" class="view-section fade-enter">
           <div class="w-full">
             <header class="view-header">
-              <h2>Medical Entity Extractor & MCQ</h2>
-              <p class="subtitle">Extract clinical entities and analyze MCQ questions.</p>
+              <h2>Medical Entity Extractor &amp; MCQ Analyzer</h2>
+              <p class="subtitle">Extract canonical medical topics (medSpaCy + ZIM synonyms) and inspect synthesized notes.</p>
             </header>
 
             <div class="card glass-card">
-              <textarea id="mcq-text" class="glass-input large-textarea" placeholder="Enter MCQ stem text here...">The patient has dyspnea but no asthma. They were prescribed amoxicillin.</textarea>
+              <textarea id="mcq-text" class="glass-input large-textarea" placeholder="Enter MCQ stem and options here...">A 68-year-old patient presents with dyspnea and amyloidosis of the heart, but no asthma. They were prescribed amoxicillin after a heart attack.</textarea>
               <div class="action-bar">
                 <button id="extract-btn" class="primary-btn pulse-on-hover">Extract Entities</button>
               </div>
             </div>
 
             <div class="card glass-card topics-section">
-              <h3>Extracted Entities</h3>
-              <div id="topics-container" class="chip-container">
-                <!-- Extracted topics will be dynamically rendered here as chips -->
-              </div>
+              <h3>Extracted Medical Topics</h3>
+              <p class="text-xs text-muted mb-2">Green underlined chips are verified clinical entities. Click any chip to load its synthesis and reference links.</p>
+              <div id="topics-container" class="chip-container"></div>
             </div>
 
-            <div class="card glass-card explanation-section" style="margin-top: 20px;">
-              <h3>Explanation & Topics</h3>
-              <div id="explanation-container" class="content-placeholder">
-                <p>Analyze an MCQ to view explanations and relevant medical topics here.</p>
+            <div class="card glass-card explanation-section mt-20">
+              <h3>Topic Synthesis &amp; Reference Preview</h3>
+              <div id="explanation-container" class="content-placeholder prose max-w-none">
+                <p>Extract entities above and click a topic chip to view its clinical synthesis.</p>
               </div>
             </div>
           </div>
@@ -152,65 +176,7 @@ tailwind.config = {
 
         <!-- QUIZ ENGINE VIEW -->
         <section id="quiz-view" class="view-section fade-enter">
-          <div class="w-full">
-            <header class="view-header">
-              <h2>Quiz Engine</h2>
-              <p class="subtitle">Test your knowledge against your database.</p>
-            </header>
-
-            <div id="quiz-setup" class="card glass-card">
-              <h3>Setup Quiz</h3>
-              <div class="grid-2col mt-15">
-                <div class="form-group mt-5">
-                  <label>Subject</label>
-                  <select id="quiz-subject-select" class="glass-select"><option value="all">Loading...</option></select>
-                </div>
-                <div class="form-group mt-5">
-                  <label>Topic</label>
-                  <select id="quiz-topic-select" class="glass-select"><option value="all">Loading...</option></select>
-                </div>
-                <div class="form-group mt-5">
-                  <label>Keyword Search</label>
-                  <input type="text" id="quiz-keyword" class="glass-input" placeholder="Optional keyword...">
-                </div>
-                <div class="form-group mt-5">
-                  <label>Question Count</label>
-                  <input type="number" id="quiz-count" class="glass-input" value="10" min="1" max="100">
-                </div>
-                <div class="form-group mt-5">
-                  <label>Time Limit (Minutes, 0 for infinite)</label>
-                  <input type="number" id="quiz-time" class="glass-input" value="0" min="0">
-                </div>
-              </div>
-              <p id="quiz-match-count" class="text-sm text-brand-400 mt-10">Matching Questions: 0</p>
-              <button id="start-quiz-btn" class="primary-btn mt-20">Start Quiz</button>
-            </div>
-
-            <div id="quiz-active" class="card glass-card" style="display: none;">
-              <div class="flex justify-between items-center mb-10">
-                  <h3 id="quiz-progress">Question 1 of 10</h3>
-                  <div id="quiz-timer-display" class="text-xl font-mono text-brand-400"></div>
-              </div>
-              <div class="mb-20 text-lg p-4 glass-card rounded-xl border border-gray-700" id="quiz-stem"></div>
-              <div id="quiz-options" class="flex flex-col gap-3"></div>
-              <div class="flex justify-between mt-20">
-                  <button id="quiz-prev-btn" class="secondary-btn" disabled>Previous</button>
-                  <button id="quiz-next-btn" class="secondary-btn">Next</button>
-              </div>
-            </div>
-
-            <div id="quiz-results" class="card glass-card" style="display: none;">
-              <h3 class="text-center text-2xl mb-10">Quiz Completed</h3>
-              <div class="flex justify-center gap-10 mb-20">
-                  <div class="text-center"><div class="text-3xl text-brand-400 font-bold" id="res-score"></div><div>Score</div></div>
-                  <div class="text-center"><div class="text-3xl font-bold" id="res-correct"></div><div>Correct</div></div>
-                  <div class="text-center"><div class="text-3xl font-bold" id="res-time"></div><div>Time</div></div>
-              </div>
-              <h4 class="mb-10 text-lg">Review</h4>
-              <div id="res-explanations" class="flex flex-col gap-4 max-h-[500px] overflow-y-auto pr-2"></div>
-              <button id="quiz-done-btn" class="primary-btn w-full mt-20">Back to Setup</button>
-            </div>
-          </div>
+          <!-- Populated dynamically by quiz.js -->
         </section>
 
         <!-- KNOWLEDGE HUB VIEW -->
@@ -218,87 +184,84 @@ tailwind.config = {
           <header class="view-header flex justify-between items-center mb-8">
             <div>
               <h2>Knowledge Hub</h2>
-              <p class="subtitle">Your centralized repository of medical concepts and notes.</p>
+              <p class="subtitle">Your curated question sets, 1-2-3 synthesis status, and topic dossiers. Click any card to inspect analytics in the Right Sidebar.</p>
             </div>
             <div class="flex items-center gap-3 relative">
               <button id="hub-delete-btn" class="flex items-center gap-2 px-3 py-1.5 bg-danger-600 hover:bg-danger-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors" style="display: none;">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg> Delete Selected (<span id="hub-delete-count">0</span>)
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+                Delete Selected (<span id="hub-delete-count">0</span>)
               </button>
-              <button id="hub-edit-btn" class="p-2 rounded-lg transition-colors secondary-btn">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+              <button id="hub-edit-btn" class="p-2 rounded-lg transition-colors secondary-btn" title="Select Cards to Delete">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
               </button>
             </div>
           </header>
 
           <div id="hub-main-container">
-            <div id="hub-loading" class="text-center py-12 text-muted">Loading your study history...</div>
+            <div id="hub-loading" class="text-center py-12 text-muted">Loading your study sets...</div>
             <div id="hub-empty" class="text-center py-16 glass-panel rounded-2xl border border-gray-700" style="display: none;">
               <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-brand-500 mb-4 opacity-50"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
-              <h2 class="text-xl font-semibold mb-2">No Study Sessions Yet</h2>
-              <p class="text-muted">Complete a quiz to see your history here.</p>
+              <h2 class="text-xl font-semibold mb-2">No Study Sets in Hub Yet</h2>
+              <p class="text-muted">Curate a question set in the Quiz Engine and click "Start Quiz Now" or "Confirm &amp; Launch".</p>
             </div>
-            <div id="hub-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6" style="display: none;">
-              <!-- Cards rendered via JS Templates -->
-            </div>
+            <div id="hub-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" style="display: none;"></div>
           </div>
 
           <!-- Session Review Sub-View -->
           <div id="hub-review-container" style="display: none;" class="w-full flex flex-col">
-              <div class="flex justify-between items-center mb-6">
-                <button id="hub-review-back-btn" class="flex items-center gap-2 text-muted hover:text-brand-400 transition-colors cursor-pointer border-none bg-transparent">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg> Back to Hub
-                </button>
-                <h2 class="text-xl font-bold">Session Review</h2>
-              </div>
-              <div id="hub-review-questions" class="space-y-4">
-                  <!-- Questions rendered via Template -->
-              </div>
+            <div class="flex justify-between items-center mb-6">
+              <button id="hub-review-back-btn" class="flex items-center gap-2 text-muted hover:text-brand-400 transition-colors cursor-pointer border-none bg-transparent">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+                Back to Hub
+              </button>
+              <h2 class="text-xl font-bold">Session Review &amp; Dual Explanations</h2>
+            </div>
+            <div id="hub-review-questions" class="space-y-4"></div>
           </div>
 
           <!-- Topic Carousel Sub-View -->
           <div id="hub-carousel-container" style="display: none;" class="flex-1 flex flex-col h-full overflow-hidden absolute inset-0 glass-panel z-40">
-             <div class="h-16 flex items-center justify-between px-4 md:px-8 border-b border-gray-800 glass-panel">
-                <button id="hub-carousel-back-btn" class="flex items-center gap-2 text-muted hover:text-brand-400 transition-colors cursor-pointer border-none bg-transparent">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg> Back to Hub
-                </button>
-                <div class="text-sm font-medium text-muted hidden md:block" id="hub-carousel-counter">
-                  Topic 1 of 1
+            <div class="h-16 flex items-center justify-between px-4 md:px-8 border-b border-gray-800 glass-panel">
+              <button id="hub-carousel-back-btn" class="flex items-center gap-2 text-muted hover:text-brand-400 transition-colors cursor-pointer border-none bg-transparent">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+                Back to Hub
+              </button>
+              <div class="text-sm font-medium text-muted" id="hub-carousel-counter">Topic 1 of 1</div>
+            </div>
+            <div class="flex-1 overflow-y-auto p-4 md:p-8">
+              <div class="max-w-4xl mx-auto">
+                <div class="mb-6">
+                  <h2 class="text-3xl font-bold" id="hub-carousel-title">Topic Title</h2>
+                  <span id="hub-carousel-status" class="inline-block mt-2 px-3 py-1 bg-brand-600/20 text-brand-400 text-xs rounded-full border border-brand-500/20">
+                    Clinical Synthesis &amp; Reference
+                  </span>
+                </div>
+
+                <div class="glass-card rounded-2xl shadow-xl overflow-hidden mb-8">
+                  <div id="hub-carousel-content" class="p-6 md:p-8 prose max-w-none text-sm"></div>
+                </div>
+
+                <div id="hub-carousel-references" class="mt-4 border-t border-gray-700/50 pt-4">
+                  <h4 class="text-sm font-semibold mb-3 flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+                    Verified Reference Links (Click to Open)
+                  </h4>
+                  <div id="hub-carousel-ref-list" class="flex flex-wrap gap-2"></div>
+                </div>
+
+                <div class="mt-8 pt-6 border-t border-gray-800 flex justify-between items-center mb-8">
+                  <button id="hub-carousel-prev" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    Previous
+                  </button>
+                  <div class="text-xs text-muted hidden md:block">Use Left/Right arrow keys to navigate</div>
+                  <button id="hub-carousel-next" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg">
+                    Next
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                  </button>
                 </div>
               </div>
-              <div class="flex-1 overflow-y-auto p-4 md:p-8">
-                  <div class="max-w-4xl mx-auto">
-                    <div class="mb-6">
-                      <h2 class="text-3xl font-bold" id="hub-carousel-title">Topic Title</h2>
-                      <span id="hub-carousel-status" class="inline-block mt-2 px-3 py-1 bg-brand-600/20 text-brand-400 text-xs rounded-full border border-brand-500/20">
-                        Clinical Synthesis & Reference
-                      </span>
-                    </div>
-
-                    <div class="glass-card rounded-2xl shadow-xl overflow-hidden mb-8">
-                      <div id="hub-carousel-content" class="p-6 md:p-8 prose prose-brand max-w-none text-sm">
-                         <!-- Content dynamically injected here via DOM builder -->
-                      </div>
-                    </div>
-
-                    <div id="hub-carousel-references" class="mt-4 border-t border-gray-700/50 pt-4">
-                        <h4 class="text-sm font-semibold mb-3 flex items-center gap-2">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
-                            Related Knowledge
-                        </h4>
-                        <div id="hub-carousel-ref-list" class="flex flex-wrap gap-2"></div>
-                    </div>
-
-                    <div class="mt-8 pt-6 border-t border-gray-800 flex justify-between items-center mb-8">
-                      <button id="hub-carousel-prev" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg> Previous
-                      </button>
-                      <div class="text-xs text-muted hidden md:block">Use Left/Right arrow keys to navigate</div>
-                      <button id="hub-carousel-next" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg">
-                        Next <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-                      </button>
-                    </div>
-                  </div>
-              </div>
+            </div>
           </div>
         </section>
 
@@ -309,17 +272,14 @@ tailwind.config = {
               <div>
                 <h1 class="text-3xl font-bold flex items-center gap-3">
                   <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
-                  Offline Knowledge Sources & RAG Vault
+                  Offline Knowledge Sources &amp; RAG Vault
                 </h1>
                 <p class="subtitle mt-1">
-                  Configure local folders (Obsidian Notes, Medical PDFs, ZIM archives) for local AI RAG synthesis
+                  Configure local folders (Obsidian Vaults, Medical PDFs, &gt;10GB ZIM archives) for hybrid search &amp; synthesis.
                 </p>
               </div>
 
-              <button
-                id="start-indexing-btn"
-                class="primary-btn flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all disabled:opacity-40 shadow-lg"
-              >
+              <button id="start-indexing-btn" class="primary-btn flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all disabled:opacity-40 shadow-lg">
                 <svg id="indexing-icon-play" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                 <svg id="indexing-icon-spin" class="animate-spin hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                 <span id="indexing-btn-text">Build/Update Tantivy Index</span>
@@ -332,11 +292,7 @@ tailwind.config = {
                 <span id="indexing-progress-text" class="text-sm font-bold text-brand-400">0%</span>
               </div>
               <div class="w-full glass-panel rounded-full h-3 overflow-hidden">
-                <div
-                  id="indexing-progress-bar"
-                  class="bg-gradient-to-r from-brand-500 to-purple-500 h-3 rounded-full transition-all duration-300"
-                  style="width: 0%"
-                ></div>
+                <div id="indexing-progress-bar" class="bg-gradient-to-r from-brand-500 to-purple-500 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
               </div>
             </div>
 
@@ -345,10 +301,7 @@ tailwind.config = {
               <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                 <div>
                   <label class="text-xs text-muted block mb-1">Source Type</label>
-                  <select
-                    id="new-source-type"
-                    class="w-full glass-select rounded-lg px-3 py-2 text-sm"
-                  >
+                  <select id="new-source-type" class="w-full glass-select rounded-lg px-3 py-2 text-sm">
                     <option value="obsidian">Obsidian Vault (Folder)</option>
                     <option value="pdf">PDF Textbooks (File / Folder)</option>
                     <option value="zim">ZIM Archive (.zim File)</option>
@@ -356,27 +309,13 @@ tailwind.config = {
                 </div>
                 <div>
                   <label class="text-xs text-muted block mb-1">Display Label</label>
-                  <input
-                    type="text"
-                    id="new-source-name"
-                    placeholder="e.g. Surgical Anatomy Vault"
-                    class="w-full glass-input rounded-lg px-3 py-2 text-sm"
-                  />
+                  <input type="text" id="new-source-name" placeholder="e.g. Surgical Anatomy Vault" class="w-full glass-input rounded-lg px-3 py-2 text-sm" />
                 </div>
                 <div class="md:col-span-2">
                   <label class="text-xs text-muted block mb-1">Local Path</label>
                   <div class="flex gap-2">
-                    <input
-                      type="text"
-                      id="new-source-path"
-                      placeholder="C:\Users\Doctor\Vaults\Surgery or ./data/pdfs/sabiston.pdf"
-                      class="flex-1 glass-input rounded-lg px-3 py-2 text-sm font-mono"
-                    />
-                    <button
-                      id="add-source-btn"
-                      disabled
-                      class="primary-btn px-4 py-2 rounded-lg text-sm disabled:opacity-40 transition-colors font-medium cursor-pointer disabled:cursor-default"
-                    >
+                    <input type="text" id="new-source-path" placeholder="C:\Users\Doctor\Vaults\Surgery or ./data/pdfs/sabiston.pdf" class="flex-1 glass-input rounded-lg px-3 py-2 text-sm font-mono" />
+                    <button id="add-source-btn" disabled class="primary-btn px-4 py-2 rounded-lg text-sm disabled:opacity-40 transition-colors font-medium cursor-pointer disabled:cursor-default">
                       Add Source
                     </button>
                   </div>
@@ -387,29 +326,18 @@ tailwind.config = {
                 <label class="text-sm font-medium block mb-2">PDF Extraction Engine</label>
                 <div class="flex flex-col sm:flex-row gap-4">
                   <label id="pdf-engine-fitz-label" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors bg-brand-600/10 border-brand-500">
-                    <input
-                      type="radio"
-                      name="pdfEngine"
-                      value="fitz"
-                      checked
-                      class="mt-1 text-brand-500 focus:ring-brand-500"
-                    />
+                    <input type="radio" name="pdfEngine" value="fitz" checked class="mt-1 text-brand-500 focus:ring-brand-500" />
                     <div>
                       <div class="font-medium text-sm">PyMuPDF (Fitz)</div>
-                      <div class="text-xs text-muted mt-1 leading-relaxed">Fast standard text extraction. Best for single-column text without complex tables.</div>
+                      <div class="text-xs text-muted mt-1 leading-relaxed">Fast text + font-size heading extraction. Best for standard textbooks.</div>
                     </div>
                   </label>
 
                   <label id="pdf-engine-docling-label" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors glass-panel border-gray-700">
-                    <input
-                      type="radio"
-                      name="pdfEngine"
-                      value="docling"
-                      class="mt-1 text-brand-500 focus:ring-brand-500"
-                    />
+                    <input type="radio" name="pdfEngine" value="docling" class="mt-1 text-brand-500 focus:ring-brand-500" />
                     <div>
-                      <div class="font-medium text-sm">Docling (ML)</div>
-                      <div class="text-xs text-muted mt-1 leading-relaxed">Extracts layout, tables, headings, and multicolumn structure accurately. Slower but better quality.</div>
+                      <div class="font-medium text-sm">Docling (ML Layout)</div>
+                      <div class="text-xs text-muted mt-1 leading-relaxed">Preserves complex multi-column tables and staging hierarchies.</div>
                     </div>
                   </label>
                 </div>
@@ -421,33 +349,14 @@ tailwind.config = {
               <div id="sources-list-empty" class="hidden text-muted text-sm text-center py-8">
                 No knowledge sources configured yet.
               </div>
-              <div id="sources-list" class="space-y-3">
-                <!-- Sources rendered via JS -->
-              </div>
+              <div id="sources-list" class="space-y-3"></div>
             </div>
           </div>
         </section>
 
         <!-- HABIT TRACKER VIEW -->
         <section id="habit-tracker-view" class="view-section fade-enter">
-          <div class="w-full">
-            <header class="view-header">
-              <h2>Habit Tracker</h2>
-              <p class="subtitle">Track your learning and review habits over time.</p>
-            </header>
-            <div class="card glass-card">
-               <div class="grid-2col mb-20">
-                  <div class="stat-box"><div class="stat-val text-brand-400" id="ht-active-streak">0 Days</div><div class="stat-label">Active Streak</div></div>
-                  <div class="stat-box"><div class="stat-val text-brand-400" id="ht-longest-streak">0 Days</div><div class="stat-label">Longest Streak</div></div>
-                  <div class="stat-box"><div class="stat-val" id="ht-week-q">0</div><div class="stat-label">Questions (Last 7 Days)</div></div>
-                  <div class="stat-box"><div class="stat-val" id="ht-month-q">0</div><div class="stat-label">Questions (Last 30 Days)</div></div>
-               </div>
-               <div class="mt-20 overflow-x-auto">
-                   <h4 class="mb-10 text-sm text-muted">Activity Calendar (Last 365 Days)</h4>
-                   <div id="ht-calendar" class="min-w-[800px] p-4 glass-panel rounded border border-gray-700"></div>
-               </div>
-            </div>
-          </div>
+          <!-- Populated dynamically by habits.js -->
         </section>
 
         <!-- EXPERTISE MAP VIEW -->
@@ -456,31 +365,28 @@ tailwind.config = {
             <header class="view-header flex justify-between items-center mb-6">
               <div>
                 <h2>Expertise Map</h2>
-                <p class="subtitle">Track your mastery level across all topics and subjects.</p>
+                <p class="subtitle">Track your mastery level across all medical topics and subjects.</p>
               </div>
             </header>
 
             <div id="expertise-empty" class="text-center py-20 hidden">
-                <h2 class="text-xl text-muted mb-2">No expertise data yet</h2>
-                <p class="text-muted">Complete quizzes to start building your expertise map!</p>
+              <h2 class="text-xl text-muted mb-2">No expertise data yet</h2>
+              <p class="text-muted">Complete quizzes to start building your expertise map!</p>
             </div>
 
             <div id="expertise-content" class="hidden">
-                <!-- Overall Distribution -->
-                <div class="glass-card rounded-xl p-6 mb-8">
-                    <h3 class="text-lg font-semibold mb-4">📊 Expertise Distribution</h3>
-                    <div id="expertise-distribution-grid" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"></div>
-                    <div class="w-full h-6 rounded-full overflow-hidden flex" id="expertise-distribution-bar"></div>
-                </div>
+              <div class="glass-card rounded-xl p-6 mb-8">
+                <h3 class="text-lg font-semibold mb-4">📊 Expertise Distribution</h3>
+                <div id="expertise-distribution-grid" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"></div>
+                <div class="w-full h-6 rounded-full overflow-hidden flex" id="expertise-distribution-bar"></div>
+              </div>
 
-                <!-- Recommendations -->
-                <div class="bg-gradient-to-r from-purple-600/20 to-brand-600/20 rounded-xl p-6 border border-purple-500/30 mb-8">
-                    <h3 class="text-lg font-semibold mb-4">🎯 Focus Recommendations</h3>
-                    <div id="expertise-recommendations" class="space-y-3"></div>
-                </div>
+              <div class="bg-gradient-to-r from-purple-600/20 to-brand-600/20 rounded-xl p-6 border border-purple-500/30 mb-8">
+                <h3 class="text-lg font-semibold mb-4">🎯 Focus Recommendations</h3>
+                <div id="expertise-recommendations" class="space-y-3"></div>
+              </div>
 
-                <!-- By Subject -->
-                <div id="expertise-subjects-container"></div>
+              <div id="expertise-subjects-container"></div>
             </div>
           </div>
         </section>
@@ -490,37 +396,37 @@ tailwind.config = {
           <div class="w-full">
             <header class="view-header">
               <h2>Processing Queue <span id="queue-worker-status" class="badge bg-warning ml-2">Checking...</span></h2>
-              <p class="subtitle">Monitor background tasks and LLM generation queue.</p>
+              <p class="subtitle">Monitor background reference resolution and LM Studio synthesis tasks.</p>
             </header>
 
-            <div class="grid-4col mb-20 gap-4" style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr;">
+            <div class="grid-4col mb-20 gap-4" style="display: grid; grid-template-columns: repeat(4, 1fr);">
               <div class="card glass-card text-center p-4">
-                  <div class="text-3xl font-bold" id="queue-pending">0</div>
-                  <div class="text-sm text-muted">Pending</div>
+                <div class="text-3xl font-bold" id="queue-pending">0</div>
+                <div class="text-sm text-muted">Pending</div>
               </div>
               <div class="card glass-card text-center p-4">
-                  <div class="text-3xl font-bold text-brand-400" id="queue-processing">0</div>
-                  <div class="text-sm text-muted">Processing</div>
+                <div class="text-3xl font-bold text-brand-400" id="queue-processing">0</div>
+                <div class="text-sm text-muted">Processing</div>
               </div>
               <div class="card glass-card text-center p-4">
-                  <div class="text-3xl font-bold text-success-400" id="queue-completed">0</div>
-                  <div class="text-sm text-muted">Completed</div>
+                <div class="text-3xl font-bold text-success-400" id="queue-completed">0</div>
+                <div class="text-sm text-muted">Completed</div>
               </div>
               <div class="card glass-card text-center p-4">
-                  <div class="text-3xl font-bold text-danger-400" id="queue-failed">0</div>
-                  <div class="text-sm text-muted">Failed</div>
+                <div class="text-3xl font-bold text-danger-400" id="queue-failed">0</div>
+                <div class="text-sm text-muted">Failed</div>
               </div>
             </div>
 
             <div class="card glass-card">
-               <div class="flex justify-between items-center mb-10">
-                   <h3 id="queue-total">Recent Tasks</h3>
-                   <div class="flex gap-2">
-                       <button id="queue-retry-btn" class="secondary-btn text-xs">Retry Failed</button>
-                       <button id="queue-clear-btn" class="secondary-btn text-xs" style="color: #ef4444; border-color: #ef4444;">Clear Failed</button>
-                   </div>
-               </div>
-               <div id="queue-tasks-list" class="max-h-[400px] overflow-y-auto"></div>
+              <div class="flex justify-between items-center mb-10">
+                <h3 id="queue-total">Recent Tasks</h3>
+                <div class="flex gap-2">
+                  <button id="queue-retry-btn" class="secondary-btn text-xs">Retry Failed</button>
+                  <button id="queue-clear-btn" class="secondary-btn text-xs" style="color: #ef4444; border-color: #ef4444;">Clear Failed</button>
+                </div>
+              </div>
+              <div id="queue-tasks-list" class="max-h-[450px] overflow-y-auto"></div>
             </div>
           </div>
         </section>
@@ -530,95 +436,180 @@ tailwind.config = {
           <div class="w-full">
             <header class="view-header">
               <h2>System Settings</h2>
-              <p class="subtitle">Diagnostics, model configuration, and database management.</p>
+              <p class="subtitle">Diagnostics, AI synthesis controls, background transparency, and offline model management.</p>
             </header>
 
             <div class="grid-2col">
-                <div class="card glass-card">
-                  <h3>Database Construction</h3>
-                  <p class="text-muted">Build the Tantivy index from your documents.</p>
-                  <button id="build-db-btn" class="primary-btn">Build Database</button>
-                  <div class="progress-container mt-15" style="display: none;" id="build-progress-container">
-                      <div class="progress-bar-bg">
-                          <div class="progress-bar-fill" id="build-progress" style="width: 0%"></div>
-                      </div>
+              <div class="card glass-card">
+                <h3>Database Construction</h3>
+                <p class="text-muted mb-4">Reload CSV question banks and build the hybrid Tantivy/LanceDB index.</p>
+                <button id="build-db-btn" class="primary-btn">Build Database</button>
+                <div class="progress-container mt-15" style="display: none;" id="build-progress-container">
+                  <div class="progress-bar-bg">
+                    <div class="progress-bar-fill" id="build-progress" style="width: 0%"></div>
                   </div>
-                  <p id="build-status" class="status-text mt-10" style="display: none;"></p>
                 </div>
+                <p id="build-status" class="status-text mt-10" style="display: none;"></p>
+              </div>
 
-                <div class="card glass-card">
-                  <h3>System Diagnostics</h3>
-                  <ul id="diagnostics-list" class="diag-list">
-                    <li><span class="diag-label">LM Studio (Port 1234):</span> <span id="diag-lm-studio" class="badge bg-warning">Checking...</span></li>
-                    <li><span class="diag-label">Database Row Counts:</span> <span id="diag-db-rows" class="badge bg-warning">Checking...</span></li>
-                    <li><span class="diag-label">SumatraPDF:</span> <span id="diag-sumatra" class="badge bg-warning">Checking...</span></li>
-                  </ul>
-                  <button id="refresh-diag-btn" class="secondary-btn mt-15">Refresh</button>
-                </div>
+              <div class="card glass-card">
+                <h3>System Diagnostics</h3>
+                <ul id="diagnostics-list" class="diag-list">
+                  <li><span class="diag-label">LM Studio (Port 1234):</span> <span id="diag-lm-studio" class="badge bg-warning">Checking...</span></li>
+                  <li><span class="diag-label">Database Row Counts:</span> <span id="diag-db-rows" class="badge bg-warning">Checking...</span></li>
+                  <li><span class="diag-label">SumatraPDF:</span> <span id="diag-sumatra" class="badge bg-warning">Checking...</span></li>
+                  <li><span class="diag-label">Offline UI Libraries (Vendor Cache):</span> <span id="diag-vendor-assets" class="badge bg-warning">Checking...</span></li>
+                </ul>
+                <button id="refresh-diag-btn" class="secondary-btn mt-15">Refresh Diagnostics</button>
+              </div>
             </div>
 
             <div class="grid-2col mt-20">
-                <div class="card glass-card">
-                  <h3>App Preferences</h3>
-                  <div class="form-group mt-5">
-                    <label>Daily Questions Target:</label>
-                    <input type="number" id="set-q-target" class="glass-input">
-                  </div>
-                  <div class="form-group mt-5">
-                    <label>Daily Correct Target:</label>
-                    <input type="number" id="set-c-target" class="glass-input">
-                  </div>
+              <div class="card glass-card">
+                <h3>App Preferences</h3>
+                <div class="form-group mt-5">
+                  <label for="set-q-target">Daily Questions Target:</label>
+                  <input type="number" id="set-q-target" class="glass-input" value="50" />
                 </div>
+                <div class="form-group mt-5">
+                  <label for="set-c-target">Daily Correct Target:</label>
+                  <input type="number" id="set-c-target" class="glass-input" value="40" />
+                </div>
+              </div>
 
-                <div class="card glass-card">
-                  <h3>Queue Configuration</h3>
-                  <div class="form-group mt-5">
-                    <label>Processing Queue Limit:</label>
-                    <input type="number" id="set-q-limit" class="glass-input">
-                    <p class="text-xs text-muted mt-1">Number of items pulled per batch.</p>
-                  </div>
-                  <div class="form-group mt-5">
-                    <label>Processing Queue Hard Limit:</label>
-                    <input type="number" id="set-qh-limit" class="glass-input">
-                    <p class="text-xs text-muted mt-1">Global maximum size of the pending queue.</p>
-                  </div>
+              <div class="card glass-card">
+                <h3>Queue Configuration</h3>
+                <div class="form-group mt-5">
+                  <label for="set-q-limit">Processing Queue Limit:</label>
+                  <input type="number" id="set-q-limit" class="glass-input" value="10" />
+                  <p class="text-xs text-muted mt-1">Number of items pulled per batch.</p>
                 </div>
+                <div class="form-group mt-5">
+                  <label for="set-qh-limit">Processing Queue Hard Limit:</label>
+                  <input type="number" id="set-qh-limit" class="glass-input" value="100" />
+                  <p class="text-xs text-muted mt-1">Maximum tasks displayed in the queue monitor.</p>
+                </div>
+              </div>
             </div>
 
-            <div class="mt-24"><button id="save-settings-btn" class="primary-btn w-full sm:w-auto">Save App Settings</button></div>
+            <!-- Phase 5 Settings Cards: LLM Toggle, Obsidian Mode, Transparency & Wallpaper Rotation -->
+            <div id="phase5-extra-settings" class="grid-2col mt-20">
+              <div class="card glass-card">
+                <h3>AI Synthesis &amp; Note Viewer</h3>
+                <div class="form-group mt-5">
+                  <label class="flex items-center justify-between cursor-pointer">
+                    <span>Enable LM Studio Processing (LLM Notes &amp; MCQ Breakdown)</span>
+                    <input type="checkbox" id="set-llm-enabled" class="w-5 h-5 accent-brand-500 cursor-pointer" checked />
+                  </label>
+                  <p class="text-xs text-muted mt-1">
+                    When turned OFF, only verified reference links (PDF, Obsidian, ZIM) are shown in the Right Sidebar without calling LM Studio.
+                  </p>
+                </div>
 
+                <div class="form-group mt-10">
+                  <label for="set-obsidian-mode">Obsidian Note Click Behavior:</label>
+                  <select id="set-obsidian-mode" class="glass-select">
+                    <option value="browser">Render Note in Browser (LaTeX, Markdown Tables, HTML, Images)</option>
+                    <option value="app">Open Directly in Obsidian Desktop App (obsidian://)</option>
+                  </select>
+                </div>
 
+                <div class="form-group mt-10">
+                  <label for="set-extractor-strategy">Medical Topic Extractor Engine:</label>
+                  <select id="set-extractor-strategy" class="glass-select">
+                    <option value="medspacy">medSpaCy Clinical NER + ZIM Synonym Canonicalizer</option>
+                    <option value="regex">Fast Clinical Phrase Regex + ZIM Canonicalizer</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="card glass-card">
+                <h3>Appearance, Transparency &amp; Wallpaper</h3>
+                <div class="form-group mt-5">
+                  <div class="flex justify-between items-center mb-1">
+                    <label for="set-panel-opacity" class="mb-0">Non-Card Area Opacity (App Frame &amp; Sidebars):</label>
+                    <span id="set-panel-opacity-val" class="text-xs font-mono font-bold text-brand-400">78%</span>
+                  </div>
+                  <input type="range" id="set-panel-opacity" min="0.15" max="0.95" step="0.02" value="0.78" class="w-full accent-brand-500" />
+                  <p class="text-xs text-muted mt-1">Lower values make non-card areas more transparent so more of the background wallpaper shines through.</p>
+                </div>
+
+                <div class="form-group mt-10">
+                  <div class="flex justify-between items-center mb-1">
+                    <label for="set-card-opacity" class="mb-0">Card Surface Opacity:</label>
+                    <span id="set-card-opacity-val" class="text-xs font-mono font-bold text-brand-400">82%</span>
+                  </div>
+                  <input type="range" id="set-card-opacity" min="0.40" max="0.98" step="0.02" value="0.82" class="w-full accent-brand-500" />
+                </div>
+
+                <div class="form-group mt-10">
+                  <label for="set-wallpaper-interval">Wallpaper Rotation Duration:</label>
+                  <div class="flex gap-3 items-center">
+                    <select id="set-wallpaper-interval" class="glass-select flex-1">
+                      <option value="5">Every 5 Minutes</option>
+                      <option value="15">Every 15 Minutes</option>
+                      <option value="30">Every 30 Minutes</option>
+                      <option value="60">Every 1 Hour</option>
+                      <option value="120" selected>Every 2 Hours</option>
+                      <option value="360">Every 6 Hours</option>
+                      <option value="0">Never (Manual Only)</option>
+                    </select>
+                    <button type="button" id="change-wallpaper-now-btn" class="secondary-btn whitespace-nowrap px-4 py-3 text-xs">
+                      🖼️ Change Now
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-24">
+              <button id="save-settings-btn" class="primary-btn w-full sm:w-auto">Save App Settings</button>
+            </div>
+
+            <!-- Offline Model Configuration Card -->
             <div class="card glass-card mt-20">
-              <h3>Model Configuration</h3>
+              <h3>Offline Model Configuration</h3>
+              <p class="text-xs text-muted mb-4">Select a model and click "Download for Offline Use" to cache weights locally on disk.</p>
+
               <div class="form-group mt-5">
-                <label for="cpu-embed-model-select">CPU Embedding Model:</label>
+                <label for="cpu-embed-model-select">CPU Embedding Model (ONNX):</label>
                 <select id="cpu-embed-model-select" class="glass-select">
                   <option value="loading">Loading models...</option>
                 </select>
+                <div class="flex items-center justify-between gap-3 mt-2">
+                  <span id="embed-model-dl-badge" class="badge bg-warning">Checking cache...</span>
+                  <button type="button" id="download-embed-model-btn" class="secondary-btn px-3 py-1.5 text-xs">
+                    ⬇️ Download for Offline Use
+                  </button>
+                </div>
               </div>
 
-              <div class="form-group mt-5">
-                <label for="flashrank-model-select">FlashRank Model:</label>
+              <div class="form-group mt-10">
+                <label for="flashrank-model-select">FlashRank Cross-Encoder Reranker:</label>
                 <select id="flashrank-model-select" class="glass-select">
                   <option value="loading">Loading models...</option>
                 </select>
+                <div class="flex items-center justify-between gap-3 mt-2">
+                  <span id="flashrank-model-dl-badge" class="badge bg-warning">Checking cache...</span>
+                  <button type="button" id="download-flashrank-model-btn" class="secondary-btn px-3 py-1.5 text-xs">
+                    ⬇️ Download for Offline Use
+                  </button>
+                </div>
               </div>
             </div>
 
-            <!-- Data Management -->
+            <!-- Backup & Transfer -->
             <div class="p-4 border-t border-gray-700 mt-8">
               <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success-400"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-                Backup & Transfer
+                Backup &amp; Transfer
               </h3>
               <div class="grid md:grid-cols-2 gap-4">
                 <button id="export-data-btn" class="w-full py-3 secondary-btn flex items-center justify-center gap-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                   Export Backup (JSON)
                 </button>
                 <input type="file" id="import-data-file" accept=".json" class="hidden" />
                 <button id="import-data-btn" class="w-full py-3 secondary-btn flex items-center justify-center gap-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="3"></line></svg>
                   Import Backup (JSON)
                 </button>
               </div>
@@ -626,112 +617,50 @@ tailwind.config = {
           </div>
         </section>
 
-        <!-- ZIM VIEWER OVERLAY -->
+        <!-- IN-BROWSER DOCUMENT READER OVERLAY (OBSIDIAN & ZIM) -->
         <div id="zim-viewer-container" class="overlay-panel fade-enter" style="display: none;">
           <div class="overlay-header">
-            <h2>ZIM Viewer</h2>
-            <button id="close-zim-viewer-btn" class="icon-btn cursor-pointer">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            <h2>Document Viewer</h2>
+            <button id="close-zim-viewer-btn" class="icon-btn cursor-pointer" title="Close Reader">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
             </button>
           </div>
-          <div id="zim-content-area" class="overlay-content">
-            <!-- ZIM HTML will go here -->
-          </div>
+          <div id="zim-content-area" class="overlay-content"></div>
         </div>
-            </main>
+      </main>
 
-      <!-- RIGHT INSPECTOR (Contextual Sidebar) -->
-      <aside class="right-inspector glass-panel collapsed" id="right-sidebar" style="width: 0; padding: 0; border: none; overflow: hidden; transition: all 0.3s ease;">
-        <div class="flex justify-between items-center mb-4 border-b border-white/10 pb-3" style="min-width: 300px;">
-           <h3 class="font-bold text-brand-400 flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
-              Clinical Inspector
-           </h3>
-           <button id="close-inspector-btn" class="text-muted hover:text-brand-400 transition-colors">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-           </button>
+      <!-- 3. CONTEXTUAL 3RD-COLUMN RIGHT INSPECTOR (Default Hidden via .collapsed) -->
+      <aside class="right-inspector glass-panel collapsed" id="right-sidebar">
+        <div class="flex justify-between items-center mb-4 border-b border-white/10 pb-3">
+          <h3 class="font-bold text-brand-400 flex items-center gap-2 text-sm truncate">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+            <span>Clinical Inspector</span>
+          </h3>
+          <button id="close-inspector-btn" class="text-muted hover:text-brand-400 transition-colors bg-transparent border-none cursor-pointer p-1" title="Hide Inspector">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
         </div>
-        <div id="inspector-content" class="overflow-y-auto flex-1 pr-2" style="min-width: 300px;">
-           <div class="text-center py-12 opacity-50">
-               <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto mb-4"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-               <p class="text-sm">Start a quiz or select an entity to view details here.</p>
-           </div>
+        <div id="inspector-content" class="overflow-y-auto flex-1 pr-1">
+          <div class="text-center py-12 opacity-50">
+            <p class="text-sm">Start a quiz, search a topic, or select a Knowledge Hub card to view contextual details here.</p>
+          </div>
         </div>
       </aside>
     </div>
 
-    <!-- PRE-QUIZ MODAL -->
-    <div id="pre-quiz-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 100;">
-      <div class="modal glass-modal w-full max-w-md">
-        <h2 class="text-xl font-bold mb-2">Quiz Ready!</h2>
-        <p class="text-muted mb-6 text-sm" id="pre-quiz-modal-text">
-          You are about to start a new quiz. Would you like to study the related topics first, or start the MCQ directly?
-        </p>
-        <div class="flex flex-col gap-3">
-          <button id="study-topics-first-btn" class="w-full flex items-center justify-center gap-2 px-6 py-4 secondary-btn rounded-xl transition-all font-medium cursor-pointer">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg> Study Topics First
-          </button>
-          <button id="start-mcq-directly-btn" class="w-full flex items-center justify-center gap-2 px-6 py-4 primary-btn rounded-xl transition-all font-medium shadow-lg cursor-pointer border-none">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> Start MCQ Directly
-          </button>
-          <button id="cancel-pre-quiz-btn" class="mt-2 w-full py-2 text-sm text-muted hover:text-brand-400 transition-colors bg-transparent border-none cursor-pointer">
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- TOPIC EDITOR MODAL -->
-    <div id="topic-editor-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 100;">
+    <!-- TOPIC VERIFICATION POPUP MODAL -->
+    <div id="topic-editor-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 150;">
       <div class="glass-modal w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl relative text-left p-0">
-        <div class="p-4 border-b border-gray-700 flex justify-between items-center glass-panel rounded-t-24">
-          <div class="flex items-center gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-            <h2 class="text-lg font-bold">Review & Edit Extracted Topics</h2>
-          </div>
-          <button id="close-topic-editor-btn" class="text-muted hover:text-brand-400 transition-colors bg-transparent border-none cursor-pointer">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-          </button>
-        </div>
-
-        <div class="p-4 overflow-y-auto flex-1 space-y-4" id="topic-editor-content">
-          <p class="text-sm text-muted mb-4">
-            Topics have been extracted automatically.
-            <br/><strong>Single-click</strong> a topic to exclude it (strikethrough).
-            <br/><strong>Double-click</strong> a topic to edit its name (press Enter to save).
-            <br/><span class="text-green-500 font-bold">Dark Green</span>: Notes already exist. <span class="text-yellow-500 font-bold">Dark Yellow</span>: Duplicate topic in this batch.
-          </p>
-          <div id="topic-editor-questions"></div>
-          <div class="mt-4 pt-4 border-t border-gray-700/50 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-            <span class="text-sm font-medium whitespace-nowrap">Add Custom Topic:</span>
-            <div class="flex w-full sm:w-auto gap-2">
-              <input type="text" id="custom-topic-input" class="glass-input flex-1 py-2 px-3 text-sm" placeholder="Type new topic...">
-              <select id="custom-topic-question-select" class="glass-select py-2 px-3 text-sm max-w-[200px]">
-                <!-- Options populated dynamically -->
-              </select>
-              <button id="add-custom-topic-btn" class="secondary-btn py-2 px-4 flex items-center gap-2 whitespace-nowrap">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> Add
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div class="p-4 border-t border-gray-700 flex justify-end gap-3 glass-panel rounded-b-24">
-          <button id="cancel-topic-editor-btn" class="px-4 py-2 text-sm secondary-btn border-none">
-            Cancel
-          </button>
-          <button id="confirm-topic-editor-btn" class="px-6 py-2 text-sm primary-btn flex items-center gap-2 font-medium transition-all cursor-pointer">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> Confirm & Queue
-          </button>
-        </div>
+        <!-- Populated dynamically by window.openTopicVerificationModal in quiz.js -->
+        <div id="topic-editor-questions" class="p-6"></div>
       </div>
     </div>
 
-    <!-- MODAL -->
+    <!-- MISSING DATABASE MODAL -->
     <div id="missing-db-modal" class="modal-backdrop fade-enter" style="display: none;">
       <div class="modal glass-modal">
-        <h3>Database Not Built</h3>
-        <p>The Tantivy index is missing or incomplete. Please go to the Settings panel to build the database before searching.</p>
+        <h3>Database Index Not Built</h3>
+        <p>Please configure your knowledge sources in the RAG Vault or Settings panel and build the index before searching.</p>
         <div class="modal-actions mt-24 flex gap-4 justify-end">
           <button id="close-modal-btn" class="secondary-btn">Close</button>
           <button id="go-to-settings-btn" class="primary-btn">Go to Settings</button>
@@ -743,94 +672,49 @@ tailwind.config = {
     <div id="help-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 200;">
       <div class="modal glass-modal w-full max-w-3xl max-h-[85vh] flex flex-col text-left p-0">
         <div class="flex items-center justify-between p-4 border-b border-gray-700 glass-panel rounded-t-24">
-          <h2 class="text-xl font-bold flex items-center gap-2">📚 Help & Documentation</h2>
-          <button id="close-help-btn" class="p-2 text-muted hover:text-brand-400 bg-transparent border-none cursor-pointer"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+          <h2 class="text-xl font-bold flex items-center gap-2">📚 Help &amp; Platform Guide</h2>
+          <button id="close-help-btn" class="p-2 text-muted hover:text-brand-400 bg-transparent border-none cursor-pointer">✕</button>
         </div>
-        <div class="flex-1 overflow-y-auto p-6 space-y-8 text-sm">
+        <div class="flex-1 overflow-y-auto p-6 space-y-6 text-sm">
           <section>
-            <h3 class="text-lg font-semibold text-brand-400 mb-2">🎮 Quiz Modes</h3>
-            <ul class="space-y-2">
-              <li><strong>📝 Test Mode:</strong> Auto-advances quickly. Explanations shown at the end.</li>
-              <li><strong>📖 Learn Mode:</strong> Shows detailed explanations immediately after answering.</li>
-              <li><strong>🎯 Target Mode:</strong> Quiz runs infinitely until you hit your target correct count.</li>
-            </ul>
+            <h3 class="text-base font-semibold text-brand-400 mb-1">🩺 Topic Verification &amp; Knowledge Hub Circles (① ② ③)</h3>
+            <p class="text-muted">
+              • <strong>Circle ①:</strong> Set created (if ② and ③ are grey, click ① or "Review Topics" to confirm the medical topic list).<br/>
+              • <strong>Circle ②:</strong> Blinking while resolving PDF, Obsidian, and ZIM reference links; solid when ready.<br/>
+              • <strong>Circle ③:</strong> Blinking while LM Studio synthesizes detailed MCQ explanations and topic notes; solid when ready.
+            </p>
           </section>
           <section>
-            <h3 class="text-lg font-semibold text-brand-400 mb-2">🧠 Spaced Repetition</h3>
-            <p>Uses the FSRS algorithm. Questions answered incorrectly or slowly will appear more frequently in future sets. Toggle this in the Quiz Configuration menu.</p>
-          </section>
-          <section>
-            <h3 class="text-lg font-semibold text-brand-400 mb-2">🏅 Rank Simulation</h3>
-            <p>Estimates exam percentiles based on projected marks. Click "Edit Rank Data" in the Dashboard to map your own competitive exam cutoffs.</p>
+            <h3 class="text-base font-semibold text-brand-400 mb-1">🖱️ Topic Chip Controls</h3>
+            <p class="text-muted">
+              • <strong>Normal Text:</strong> Verified clinical topic (matched via ZIM dictionary/synonyms).<br/>
+              • <strong>Grey Text:</strong> Unverified/doubtful term.<br/>
+              • <strong>Single-Click:</strong> Toggle green outline &amp; underline (selected for note generation).<br/>
+              • <strong>Double-Click:</strong> Permanently add false-positive terms to your Ignore List.<br/>
+              • <strong>Click Outside Popup:</strong> Auto-saves your partial topic review to Knowledge Hub.
+            </p>
           </section>
         </div>
       </div>
     </div>
 
-    <!-- TEMPLATES (For Security & Robust DOM Manipulation) -->
-    <template id="hub-card-template">
-      <div class="hub-card glass-card rounded-xl transition-all flex flex-col h-full overflow-hidden shadow-lg relative cursor-default">
-        <div class="hub-select-container absolute top-3 right-3 z-10 hidden">
-          <input type="checkbox" class="hub-select-cb w-5 h-5 rounded glass-input text-brand-500 focus:ring-brand-500 cursor-pointer">
-        </div>
-        <div class="p-5 flex-1 hub-card-body">
-          <div class="flex justify-between items-start mb-3 pr-8">
-            <span class="hub-card-subject text-xs font-medium px-2.5 py-1 bg-brand-600/20 text-brand-400 rounded-lg truncate max-w-[150px]"></span>
-            <div class="hub-card-date text-xs text-muted flex items-center gap-1 shrink-0">
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-              <span></span>
-            </div>
-          </div>
-          <h3 class="hub-card-title text-lg font-semibold mb-2"></h3>
-          <div class="hub-card-topics flex flex-wrap gap-1 mb-4 h-[44px] overflow-hidden relative"></div>
-          <div class="grid grid-cols-2 gap-4 glass-panel rounded-lg p-3 border border-gray-700/50 mb-2">
-            <div class="text-center">
-              <p class="text-xs text-muted mb-1">Score</p>
-              <p class="hub-card-score text-lg font-bold"></p>
-            </div>
-            <div class="text-center">
-              <p class="text-xs text-muted mb-1">Accuracy</p>
-              <p class="hub-card-accuracy text-lg font-bold"></p>
-            </div>
-          </div>
-          <div class="flex justify-between text-xs text-muted px-1">
-            <span><span class="hub-card-correct text-success-400 font-bold"></span> Correct</span>
-            <span><span class="hub-card-wrong text-danger-400 font-bold"></span> Wrong</span>
-          </div>
-        </div>
-        <div class="border-t border-gray-700 p-3 glass-panel grid grid-cols-2 gap-2">
-          <button class="btn-study cursor-pointer py-2 px-3 text-xs font-medium bg-brand-600/20 text-brand-400 hover:bg-brand-600/30 hover:text-brand-300 rounded-lg transition-colors flex items-center justify-center gap-1.5 col-span-2 border-none">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg> Study Topics Covered
-          </button>
-          <button class="btn-review secondary-btn cursor-pointer py-2 px-3 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> Explanations
-          </button>
-          <button class="btn-retake secondary-btn cursor-pointer py-2 px-3 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg> Retake Set
-          </button>
-        </div>
-      </div>
-    </template>
-
+    <!-- TEMPLATES FOR SESSION REVIEW -->
     <template id="review-card-template">
       <div class="review-card glass-card rounded-xl p-6">
         <div class="flex items-start gap-4">
           <div class="review-icon mt-1"></div>
           <div class="flex-1 min-w-0">
             <div class="flex justify-between mb-2 text-sm text-muted">
-              <span class="review-q-num"></span>
-              <span class="review-q-topic glass-panel px-2 py-0.5 rounded text-xs truncate max-w-[200px]"></span>
+              <span class="review-q-num font-bold"></span>
+              <span class="review-q-topic glass-panel px-2.5 py-0.5 rounded text-xs truncate max-w-[240px]"></span>
             </div>
-            <p class="review-q-text mb-4 whitespace-pre-wrap"></p>
+            <p class="review-q-text mb-4 whitespace-pre-wrap font-medium"></p>
             <div class="review-options grid grid-cols-1 md:grid-cols-2 gap-3 mb-4"></div>
-            <div class="review-explanation-container bg-brand-900/30 border border-brand-500/30 p-4 rounded-lg mt-4 text-sm hidden">
-              <p class="font-semibold text-brand-400 mb-1">Explanation:</p>
+            <div class="review-explanation-container glass-panel border border-brand-500/30 p-4 rounded-xl mt-4 text-sm hidden">
               <div class="review-explanation prose prose-sm max-w-none"></div>
             </div>
             <div class="review-references-container mt-4 border-t border-gray-700/50 pt-4 hidden">
-              <h4 class="text-sm font-semibold mb-3 flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg> Related Knowledge
-              </h4>
+              <h4 class="text-xs font-bold uppercase tracking-wider text-muted mb-2.5">🔗 Verified Reference Links</h4>
               <div class="review-references flex flex-wrap gap-2"></div>
             </div>
           </div>
@@ -845,16 +729,17 @@ tailwind.config = {
       </div>
     </template>
 
+    <!-- APPLICATION SCRIPTS -->
     <script src="/js/state.js"></script>
+    <script src="/js/app.js"></script>
     <script src="/js/dashboard.js"></script>
     <script src="/js/quiz.js"></script>
-    <script src="/js/habits.js"></script>
     <script src="/js/hub.js"></script>
-    <script src="/js/queue.js"></script>
+    <script src="/js/habits.js"></script>
     <script src="/js/expertise.js"></script>
+    <script src="/js/queue.js"></script>
     <script src="/js/settings.js"></script>
     <script src="/js/vault.js"></script>
-    <script src="/js/app.js"></script>
     <script src="/js/search.js"></script>
   </body>
 </html>

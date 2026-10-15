@@ -1,7 +1,13 @@
 import io
 import logging
 import functools
-import fitz
+import hashlib
+
+try:
+    import fitz
+except ImportError:
+    fitz = None
+
 try:
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -20,12 +26,14 @@ except ImportError:
 logger = logging.getLogger(__name__)
 _converter = None
 
-def get_converter() -> DocumentConverter:
+
+def get_converter():
     """Singleton loader for Docling ML models."""
     global _converter
+    if DocumentConverter is None:
+        raise RuntimeError("Docling is not installed in the current environment.")
     if _converter is None:
         pipeline_options = PdfPipelineOptions()
-        # Keep heavy OCR/image generation disabled for text/table structure speed
         pipeline_options.do_table_structure = True
         pipeline_options.generate_page_images = False
 
@@ -35,26 +43,25 @@ def get_converter() -> DocumentConverter:
         )
     return _converter
 
+
 @functools.lru_cache(maxsize=64)
 def extract_structured_layout(file_path: str, page_number: int) -> str:
     """
-    Extracts structured markdown from a specific PDF page using Docling.
+    Extracts structured markdown (tables, columns, headings) from a specific PDF page using Docling.
     Cached in memory to prevent redundant ML conversions on the same page.
     """
+    if fitz is None:
+        return ""
     try:
-        # Open directly (EAFP) instead of using os.path.exists()
         with fitz.open(file_path) as doc:
-            target_page_index = max(0, page_number - 1)
-
+            target_page_index = max(0, int(page_number) - 1)
             if target_page_index >= doc.page_count:
                 return ""
 
-            # Isolate the target page in memory to prevent Docling from scanning the entire PDF
             with fitz.open() as single_page_doc:
                 single_page_doc.insert_pdf(doc, from_page=target_page_index, to_page=target_page_index)
                 pdf_bytes = single_page_doc.tobytes()
 
-        # Execute ML conversion entirely in memory
         converter = get_converter()
         stream = DocumentStream(name=f"page_{page_number}.pdf", stream=io.BytesIO(pdf_bytes))
         conversion_result = converter.convert(stream)
@@ -67,11 +74,11 @@ def extract_structured_layout(file_path: str, page_number: int) -> str:
         logger.error(f"Docling extraction failed for {file_path} page {page_number}: {e}")
         return ""
 
+
 def extract_pdf_structure(file_path: str) -> list:
     """
-    Extracts structured data from a PDF, identifying headings, paragraphs, and tables,
-    and returns a list of dictionaries with page, heading, and text.
-    Handles multicolumn texts natively through Docling.
+    Extracts structured sections from a PDF, preserving hierarchical headings,
+    paragraphs, markdown tables, and section character lengths.
     """
     try:
         converter = get_converter()
@@ -85,60 +92,47 @@ def extract_pdf_structure(file_path: str) -> list:
         def get_current_heading():
             if not heading_stack:
                 return "Untitled"
-            # Return headings sorted by level
             return " > ".join([heading_stack[k] for k in sorted(heading_stack.keys())])
 
         def save_section(page_num):
             if current_text:
                 text_content = "\n\n".join(current_text).strip()
                 if text_content:
+                    h_path = get_current_heading()
                     sections.append({
                         "page": page_num,
-                        "heading": get_current_heading(),
-                        "text": text_content
+                        "heading": h_path,
+                        "subheading": h_path.split(" > ")[-1] if " > " in h_path else h_path,
+                        "text": text_content,
+                        "article_length": len(text_content),
                     })
 
         for item, level in conversion_result.document.iterate_items():
             item_page = current_page
-            if hasattr(item, 'prov') and item.prov:
+            if hasattr(item, "prov") and item.prov:
                 item_page = item.prov[0].page_no
 
-            # Whenever we cross a page boundary, we must save the current chunk
-            # and start a new one on the new page, carrying over the same heading.
             if item_page != current_page and current_text:
                 save_section(current_page)
                 current_text = []
                 current_page = item_page
 
-            if isinstance(item, TextItem):
-                if isinstance(item, SectionHeaderItem) or getattr(item, 'label', None) in ['section_header', 'title', 'page_header']:
-                    # New section starts, save the previous one
+            if TextItem and isinstance(item, TextItem):
+                if (SectionHeaderItem and isinstance(item, SectionHeaderItem)) or getattr(item, "label", None) in ["section_header", "title", "page_header"]:
                     save_section(current_page)
-                    # Update heading stack
-                    # Determine level (use getattr to be safe, fallback to 'level' from iterate_items if needed, or 1)
-                    item_level = getattr(item, 'level', 1)
-                    if item_level is None:
-                        item_level = 1
-
-                    # Remove any heading at this level or deeper
-                    keys_to_remove = [k for k in heading_stack.keys() if k >= item_level]
-                    for k in keys_to_remove:
+                    item_level = getattr(item, "level", 1) or 1
+                    for k in [k for k in heading_stack.keys() if k >= item_level]:
                         del heading_stack[k]
-
                     heading_stack[item_level] = item.text.strip()
-
-
-                    # We inject the full hierarchy into the text output
                     current_text = [f"[{get_current_heading()}]"]
                     current_page = item_page
                 elif item.text.strip():
                     current_text.append(item.text)
                     current_page = item_page
-            elif isinstance(item, TableItem):
+            elif TableItem and isinstance(item, TableItem):
                 current_text.append(item.export_to_markdown())
                 current_page = item_page
 
-        # Save the last section
         save_section(current_page)
         return sections
 
@@ -148,12 +142,11 @@ def extract_pdf_structure(file_path: str) -> list:
         logger.error(f"Full PDF Docling extraction failed for {file_path}: {e}")
         return []
 
-def ingest_to_lancedb(file_path: str, source_article: str, main_topic: str = ""):
+
+def ingest_to_lancedb(file_path: str, source_article: str, main_topic: str = "") -> int:
     """
-    Extracts PDF structure and ingests it into LanceDB, generating embeddings using the CPU engine.
-    The parent_content retains the full section text, and individual items are treated as child chunks.
+    Extracts PDF structure and ingests it into LanceDB with heading paths and article lengths.
     """
-    import hashlib
     from parsers.embedding_engine import CPUEmbeddingEngine
     from parsers.lancedb_engine import LanceDBEngine
 
@@ -161,8 +154,8 @@ def ingest_to_lancedb(file_path: str, source_article: str, main_topic: str = "")
     if not sections:
         return 0
 
-    engine = LanceDBEngine()
     embedder = CPUEmbeddingEngine()
+    engine = LanceDBEngine(vector_dim=embedder.get_dimension())
 
     records = []
     chunk_index = 0
@@ -170,18 +163,15 @@ def ingest_to_lancedb(file_path: str, source_article: str, main_topic: str = "")
     for section in sections:
         page_num = section["page"]
         heading = section["heading"]
+        subheading = section.get("subheading", heading)
         parent_content = section["text"]
+        art_len = section.get("article_length", len(parent_content))
 
-        # Split parent text into child chunks based on double newlines
         child_chunks = [chunk.strip() for chunk in parent_content.split("\n\n") if chunk.strip()]
 
-        # Determine subheading from the last part of the hierarchical heading
-        subheading = heading.split(" > ")[-1] if " > " in heading else heading
-
         for child_content in child_chunks:
-            # We don't want to just embed the heading over and over as the child content if it's the only thing
             if child_content.startswith("[") and child_content.endswith("]") and child_content[1:-1] == heading:
-                continue # Skip the injected heading chunk itself
+                continue
 
             vector = embedder.embed_single(child_content)
             if not vector:
@@ -193,12 +183,15 @@ def ingest_to_lancedb(file_path: str, source_article: str, main_topic: str = "")
                 "id": chunk_id,
                 "vector": vector,
                 "source_article": source_article,
-                "main_topic": main_topic,
+                "file_path": str(file_path),
+                "main_topic": main_topic or heading,
                 "subheading": subheading,
+                "heading_path": heading,
                 "chunk_index": chunk_index,
                 "page_number": page_num,
+                "article_length": art_len,
                 "parent_content": parent_content,
-                "child_content": child_content
+                "child_content": child_content,
             })
             chunk_index += 1
 

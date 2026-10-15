@@ -1,20 +1,18 @@
-# Python version recommendation: Python 3.10 or 3.11 is highly recommended
-# due to compatibility with scientific libraries like medspacy, docling, and libzim on Windows.
-# Ensure you are using a 64-bit version of Python.
+# Python 3.10 or 3.11 (64-bit) recommended on Windows 10/11
 
 # Core FastAPI & Web Server
 fastapi
-uvicorn
+uvicorn[standard]
 httpx
 jinja2
 pydantic
 
-# Document Parsers & Data Extraction
+# Document Parsers & Offline Archive Extraction
 docling
 pymupdf
 libzim
 
-# LLM & Text Processing / NLP
+# Clinical NLP & Tokenization
 tiktoken
 spacy
 typer
@@ -22,19 +20,16 @@ medspacy
 medspacy_quickumls
 en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 
-# Search & Indexing Engine
+# Hybrid Lexical + Semantic Search & Zero-VRAM Reranking
 tantivy>=0.22
-
-# Browser Automation (for frontend verification/testing)
-playwright
-
-# Testing
-pytest
-
-# Vector DB and Embeddings
-numpy<2.0.0
 lancedb
 pyarrow<17.0.0
+numpy<2.0.0
 onnxruntime
 tokenizers
 huggingface_hub
+flashrank
+
+# Testing & Verification
+pytest
+playwright

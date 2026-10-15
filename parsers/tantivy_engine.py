@@ -1,196 +1,236 @@
 import os
 import re
-import logging
-import tantivy
 import math
+import shutil
+import logging
+from typing import Dict, Any, List
+
+try:
+    import tantivy
+except ImportError:
+    tantivy = None
 
 from config import INDEX_PATH
-from parsers.zim_reader import expand_query_via_zim
+from parsers.zim_reader import expand_query_via_zim, search_zim_articles
+from parsers.reranker import rerank_chunks
 
 logger = logging.getLogger(__name__)
 
 _schema = None
 _index = None
 
+
 def get_schema():
     global _schema
+    if tantivy is None:
+        return None
     if _schema is None:
         builder = tantivy.SchemaBuilder()
         builder.add_text_field("doc_id", stored=True)
         builder.add_text_field("source_type", stored=True)
         builder.add_text_field("file_path", stored=True)
         builder.add_integer_field("page_number", stored=True)
-        builder.add_text_field("title", stored=True)
+        builder.add_text_field("title", stored=True, tokenizer_name="en_stem")
+        builder.add_text_field("heading_path", stored=True, tokenizer_name="en_stem")
+        builder.add_integer_field("doc_length", stored=True)
+        builder.add_text_field("snippet", stored=True, tokenizer_name="en_stem")
         builder.add_text_field("document_body", stored=False, tokenizer_name="en_stem")
         builder.add_text_field("obsidian_body", stored=True, tokenizer_name="en_stem")
         _schema = builder.build()
     return _schema
 
-def get_index():
+
+def get_index(reset: bool = False):
     global _index
+    if tantivy is None:
+        return None
+    if reset:
+        _index = None
+        if os.path.exists(INDEX_PATH):
+            shutil.rmtree(INDEX_PATH, ignore_errors=True)
     if _index is None:
         os.makedirs(INDEX_PATH, exist_ok=True)
-        _index = tantivy.Index(get_schema(), path=str(INDEX_PATH))
+        try:
+            _index = tantivy.Index(get_schema(), path=str(INDEX_PATH))
+        except Exception as e:
+            logger.warning(f"Recreating Tantivy index due to schema upgrade ({e})...")
+            shutil.rmtree(INDEX_PATH, ignore_errors=True)
+            os.makedirs(INDEX_PATH, exist_ok=True)
+            _index = tantivy.Index(get_schema(), path=str(INDEX_PATH))
     return _index
 
-def search_index(query_str: str, limit_per_source: int = 3) -> dict:
-    # 1. Expand query using offline Wikipedia (ZIM)
+
+def _compute_depth_score(
+    bm25_score: float,
+    query_str: str,
+    query_terms: set,
+    title: str,
+    heading_path: str,
+    body_text: str,
+    doc_length: int,
+) -> tuple[float, float]:
+    """
+    Computes a composite score that ensures retrieved articles discuss the topic in detail
+    (not just a passing mention) and favors longer, comprehensive articles:
+    1. Exact/phrase match in Title or Section Heading Path (+15 to +25)
+    2. Topic Mention Frequency & Density (multiple occurrences of topic terms in the text)
+    3. Logarithmic Article Length bonus (log10(doc_length + 1) * 3.0)
+    """
+    q_lower = query_str.lower().strip()
+    title_lower = (title or "").lower()
+    heading_lower = (heading_path or "").lower()
+    body_lower = (body_text or "").lower()
+
+    # 1. Heading & Title Relevance Boost
+    heading_boost = 0.0
+    if q_lower and q_lower in title_lower:
+        heading_boost += 20.0
+    if q_lower and q_lower in heading_lower:
+        heading_boost += 15.0
+
+    # 2. Topic Mention Count (Depth of Coverage vs. Single Passing Mention)
+    exact_phrase_mentions = body_lower.count(q_lower) if len(q_lower) >= 3 else 0
+    term_mentions = sum(body_lower.count(t) for t in query_terms if len(t) >= 3)
+    distinct_terms_matched = sum(
+        1 for t in query_terms if t in body_lower or t in title_lower or t in heading_lower
+    )
+
+    if exact_phrase_mentions >= 3 or term_mentions >= 5:
+        coverage_boost = 12.0 + min(exact_phrase_mentions * 2.5 + term_mentions * 0.8, 25.0)
+    elif exact_phrase_mentions >= 1 or term_mentions >= 2:
+        coverage_boost = 5.0 + exact_phrase_mentions * 2.0 + term_mentions * 0.5
+    else:
+        coverage_boost = distinct_terms_matched * 1.5
+
+    # 3. Comprehensive Article Length Bonus
+    effective_length = max(doc_length, len(body_text))
+    length_boost = math.log10(effective_length + 10) * 3.0
+
+    depth_bonus = heading_boost + coverage_boost + length_boost
+    total_score = (bm25_score * 1.2) + depth_bonus
+    return total_score, depth_bonus
+
+
+def search_index(query_str: str, limit_per_source: int = 3) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Executes a depth-weighted hybrid lexical + semantic reranked search across
+    Obsidian notes, PDF textbooks, and >10GB ZIM archives.
+    """
+    results: Dict[str, List[Dict[str, Any]]] = {"obsidian": [], "pdf": [], "zim": []}
+    if not query_str or not query_str.strip():
+        return results
+
     expanded_query_str = expand_query_via_zim(query_str)
-
-    index = get_index()
-    searcher = index.searcher()
-
-    # Strip punctuation and collapse whitespace for a safer base query
-    safe_query = re.sub(r'[^\w\s]', ' ', expanded_query_str)
-    safe_query = re.sub(r'\s+', ' ', safe_query).strip()
-
-    # Pre-allocate expected keys to guarantee strict downstream dictionary shapes
-    results = {"obsidian": [], "pdf": [], "zim": []}
+    safe_query = re.sub(r"[^\w\s]", " ", expanded_query_str)
+    safe_query = re.sub(r"\s+", " ", safe_query).strip()
+    clean_raw_query = re.sub(r"[^\w\s]", " ", query_str).strip()
 
     if not safe_query:
         return results
 
-    word_count = len(safe_query.split())
-
     try:
-        if word_count <= 2:
-            # For 1-2 word topics, strongly boost title and exact phrase matches in body
-            boosted_query_str = f'title:"{safe_query}"^5 OR document_body:"{safe_query}"^2 OR obsidian_body:"{safe_query}"^2 OR {safe_query}'
-            query = index.parse_query(boosted_query_str, ["title", "document_body", "obsidian_body"])
-        else:
-            query = index.parse_query(query_str, ["title", "document_body", "obsidian_body"])
-    except ValueError:
-        try:
-            query = index.parse_query(safe_query, ["title", "document_body", "obsidian_body"])
-        except ValueError as e:
-            logger.error(f"Failed to parse fallback query '{safe_query}': {e}")
-            return results
+        index = get_index()
+        if index is not None:
+            index.reload()
+            searcher = index.searcher()
+            search_fields = ["title", "heading_path", "snippet", "document_body", "obsidian_body"]
 
-    # Stage 1: Lexical Retrieval
-    top_docs = searcher.search(query, limit=50)
-    candidates = []
-    query_terms = set(query_str.lower().split())
-
-    for bm25_score, doc_address in top_docs.hits:
-        doc = searcher.doc(doc_address)
-
-        source_list = doc.get("source_type", [])
-        if not source_list:
-            continue
-
-        source = source_list[0]
-
-        if source == "obsidian" or source == "zim":
-            body_field = doc.get("obsidian_body", [""])
-            body_text = body_field[0] if body_field else ""
-        else:
-            body_text = ""
-
-        chunk_length = len(body_text)
-        term_count = sum(1 for term in query_terms if term in body_text.lower() or term in (doc.get("title", [""])[0] or "").lower())
-
-        composite_score = bm25_score * 1.0 + math.log10(chunk_length + 1) * 0.5 + term_count * 1.5
-
-        candidates.append({
-            "doc": doc,
-            "score": composite_score,
-            "source": source
-        })
-
-    candidates.sort(key=lambda x: x["score"], reverse=True)
-
-    # Stage 2: Zero-VRAM Semantic Reranking
-    top_20 = candidates[:20]
-
-    if top_20:
-        try:
-            from flashrank import Ranker, RerankRequest
-            ranker = Ranker(model_name="ms-marco-TinyBERT-L-2-v2", cache_dir="./data/models/flashrank")
-
-            passages = []
-            for i, candidate in enumerate(top_20):
-                doc = candidate["doc"]
-                source = candidate["source"]
-
-                if source == "obsidian" or source == "zim":
-                    text = doc.get("obsidian_body", [""])[0] or doc.get("title", [""])[0] or " "
+            word_count = len(clean_raw_query.split())
+            try:
+                if word_count <= 3 and clean_raw_query:
+                    boosted = (
+                        f'title:"{clean_raw_query}"^6 OR heading_path:"{clean_raw_query}"^5 '
+                        f'OR document_body:"{clean_raw_query}"^3 OR obsidian_body:"{clean_raw_query}"^3 '
+                        f'OR {safe_query}'
+                    )
+                    query = index.parse_query(boosted, search_fields)
                 else:
-                    text = doc.get("title", [""])[0] or " "
+                    query = index.parse_query(safe_query, search_fields)
+            except Exception:
+                query = index.parse_query(safe_query, ["title", "document_body", "obsidian_body"])
 
-                passages.append({
-                    "id": i,
-                    "text": text
+            top_docs = searcher.search(query, limit=60)
+            candidates = []
+            query_terms = {t for t in clean_raw_query.lower().split() if len(t) >= 2}
+
+            for bm25_score, doc_address in top_docs.hits:
+                doc = searcher.doc(doc_address)
+                source_list = doc.get("source_type", [])
+                if not source_list:
+                    continue
+
+                source = source_list[0]
+                if source not in results:
+                    continue
+
+                title = (doc.get("title", ["Untitled"]) or ["Untitled"])[0]
+                heading_path = (doc.get("heading_path", [title]) or [title])[0]
+                file_path = (doc.get("file_path", [""]) or [""])[0]
+                doc_id = (doc.get("doc_id", [""]) or [""])[0]
+                page_num = (doc.get("page_number", [1]) or [1])[0]
+
+                body_text = (
+                    (doc.get("obsidian_body", [""]) or [""])[0]
+                    or (doc.get("snippet", [""]) or [""])[0]
+                )
+                stored_len_list = doc.get("doc_length", [])
+                doc_length = int(stored_len_list[0]) if stored_len_list else len(body_text)
+
+                comp_score, depth_bonus = _compute_depth_score(
+                    bm25_score=bm25_score,
+                    query_str=clean_raw_query,
+                    query_terms=query_terms,
+                    title=title,
+                    heading_path=heading_path,
+                    body_text=body_text,
+                    doc_length=doc_length,
+                )
+
+                candidates.append({
+                    "doc_id": doc_id,
+                    "source": source,
+                    "file_path": file_path,
+                    "page": page_num,
+                    "title": title,
+                    "heading_path": heading_path,
+                    "snippet": body_text[:800],
+                    "doc_length": doc_length,
+                    "score": comp_score,
+                    "depth_bonus": depth_bonus,
                 })
 
-            request = RerankRequest(query=query_str, passages=passages)
-            reranked_results = ranker.rerank(request)
+            candidates.sort(key=lambda x: x["score"], reverse=True)
 
-            reranked_candidates = []
-            for res in reranked_results:
-                idx = res["id"]
-                cand = top_20[idx]
-                cand["score"] = float(res["score"]) # Update with semantic score
-                reranked_candidates.append(cand)
+            # Stage 2: Cross-Encoder Reranking (with automatic fallback to composite depth score)
+            top_candidates = candidates[:24]
+            reranked = rerank_chunks(query_str, top_candidates, top_k=24) if top_candidates else []
 
-            reranked_candidates.sort(key=lambda x: x["score"], reverse=True)
-
-            for candidate in reranked_candidates:
-                doc = candidate["doc"]
-                source = candidate["source"]
-
-                if len(results[source]) < limit_per_source:
-                    file_path_list = doc.get("file_path", [])
-                    doc_id_list = doc.get("doc_id", [])
-                    title_list = doc.get("title", [])
-                    page_list = doc.get("page_number", [])
-
-                    results[source].append({
-                        "doc_id": doc_id_list[0] if doc_id_list else "",
-                        "file_path": file_path_list[0] if file_path_list else "",
-                        "page": page_list[0] if page_list else 0,
-                        "title": title_list[0] if title_list else "Untitled",
-                        "score": candidate["score"]
+            for cand in reranked:
+                src = cand["source"]
+                if len(results[src]) < limit_per_source:
+                    results[src].append({
+                        "doc_id": cand["doc_id"],
+                        "file_path": cand["file_path"],
+                        "page": cand["page"],
+                        "title": cand["title"],
+                        "heading": cand.get("heading_path", cand["title"]),
+                        "snippet": cand.get("snippet", "")[:400],
+                        "doc_length": cand.get("doc_length", 0),
+                        "score": round(float(cand.get("rerank_score", cand["score"])), 4),
                     })
+    except Exception as e:
+        logger.warning(f"Tantivy search error for '{query_str}': {e}")
 
-                    if all(len(v) >= limit_per_source for k, v in results.items() if k in ("obsidian", "pdf", "zim")):
-                        break
-
-        except Exception as e:
-            logger.error(f"FlashRank reranking failed: {e}. Falling back to lexical scores.")
-            # Fallback handling skipped for brevity, but logic remains intact
-
-    # --- DIRECT ZIM LOOKUP BYPASS ---
-    # Runs even if Tantivy returns zero hits, guaranteeing Wikipedia context if the topic matches.
+    # Stage 3: Zero-Copy >10GB ZIM Lookup & Synonym Redirect Bypass
     if len(results["zim"]) < limit_per_source:
         try:
-            from core.database import get_db_connection
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-
-                # Check if the extracted topic exactly matches a known ZIM article
-                cursor.execute("SELECT title FROM zim_titles WHERE title LIKE ? COLLATE NOCASE LIMIT 1", (query_str,))
-                zim_match = cursor.fetchone()
-
-                if zim_match:
-                    matched_title = zim_match[0] if isinstance(zim_match, tuple) else zim_match["title"]
-
-                    # Fetch the absolute path of the enabled ZIM file
-                    cursor.execute("SELECT path FROM knowledge_sources WHERE type = 'zim' AND enabled = 1 LIMIT 1")
-                    src_row = cursor.fetchone()
-
-                    if src_row:
-                        zim_path = src_row[0] if isinstance(src_row, tuple) else src_row["path"]
-
-                        # Inject a synthetic "perfect score" hit
-                        results["zim"].append({
-                            "doc_id": f"zim_{matched_title}",
-                            "file_path": zim_path,
-                            "page": 1,
-                            "title": matched_title,
-                            "score": 100.0
-                        })
+            zim_hits = search_zim_articles(query_str, limit=limit_per_source - len(results["zim"]))
+            existing_titles = {r["title"].lower() for r in results["zim"]}
+            for zh in zim_hits:
+                if zh["title"].lower() not in existing_titles:
+                    results["zim"].append(zh)
+                    existing_titles.add(zh["title"].lower())
         except Exception as e:
-            logger.error(f"ZIM direct lookup bypass failed: {e}")
-    # --- END ZIM BYPASS ---
+            logger.debug(f"ZIM direct search bypass skipped: {e}")
 
     return results
