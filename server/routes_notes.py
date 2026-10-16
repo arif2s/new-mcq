@@ -7,12 +7,12 @@ import urllib.parse
 from pathlib import Path
 from typing import Optional
 from contextlib import closing
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
 from core.database import get_db_connection
 from parsers.obsidian_reader import read_obsidian_for_browser
-from parsers.zim_reader import get_zim_article_html
+from parsers.zim_reader import get_zim_article_html, get_zim_asset
 
 router = APIRouter(prefix="/api/notes", tags=["Notes & Readers"])
 
@@ -158,3 +158,14 @@ def zim_article(article_id: str, zim_path: Optional[str] = None):
     automatically following ZIM redirects and rewriting internal links.
     """
     return get_zim_article_html(article_id, zim_path=zim_path)
+
+
+@router.get("/zim-asset")
+def zim_asset(path: str, zim_path: Optional[str] = None):
+    """
+    Serves images, illustrations, and media assets extracted from a local ZIM archive.
+    """
+    asset = get_zim_asset(path, zim_path=zim_path)
+    if not asset:
+        raise HTTPException(status_code=404, detail=f"ZIM asset '{path}' not found")
+    return Response(content=asset["content"], media_type=asset["mimetype"])

@@ -1,6 +1,7 @@
 import time
 import json
-from typing import Union, Optional, Dict
+import logging
+from typing import Union, Optional, Dict, List
 from contextlib import closing
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -10,6 +11,8 @@ from core.scheduler import calculate_fsrs_next_interval
 from core.queue_manager import is_llm_processing_enabled
 from agents.tema_q.topic_extractor import extract_topics_local
 from parsers.tantivy_engine import search_index
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/mcq", tags=["mcq"])
 
@@ -208,3 +211,151 @@ def get_synthesis(topic: str, resolve_if_missing: bool = True):
             "unified_article": (row["unified_article"] or "") if (row and llm_enabled) else "",
             "references": references,
         }
+
+
+class BatchTopicRequest(BaseModel):
+    topics: List[str]
+    mode: str = "missing"  # "missing" or "all"
+
+
+class TopicStatusRequest(BaseModel):
+    topics: List[str]
+
+
+@router.post("/topics/status")
+def get_topics_status(payload: TopicStatusRequest):
+    """
+    Returns reference and LLM note availability statuses for a list of topics.
+    """
+    statuses = {}
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        for t in payload.topics:
+            t_clean = t.strip()
+            if not t_clean:
+                continue
+            topic_key = t_clean.lower().replace(" ", "-")
+            cursor.execute(
+                "SELECT unified_article, top_references FROM cached_syntheses WHERE topic_key = ?",
+                (topic_key,),
+            )
+            row = cursor.fetchone()
+            has_refs = False
+            has_note = False
+            if row:
+                if row["top_references"]:
+                    try:
+                        refs = json.loads(row["top_references"])
+                        has_refs = any(refs.values())
+                    except Exception:
+                        pass
+                art = row["unified_article"] or ""
+                if art and "LM Studio processing skipped" not in art and "Please add reference material" not in art:
+                    has_note = True
+            statuses[t_clean] = {
+                "has_refs": has_refs,
+                "has_note": has_note,
+            }
+    return {"status": "success", "topics": statuses}
+
+
+@router.post("/topics/generate_references")
+def batch_generate_references(payload: BatchTopicRequest):
+    """
+    Resolves and caches reference links for a list of topics.
+    """
+    processed = []
+    skipped = []
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        for topic in payload.topics:
+            t_clean = topic.strip()
+            if not t_clean:
+                continue
+            topic_key = t_clean.lower().replace(" ", "-")
+
+            if payload.mode == "missing":
+                cursor.execute("SELECT top_references FROM cached_syntheses WHERE topic_key = ?", (topic_key,))
+                row = cursor.fetchone()
+                if row and row["top_references"]:
+                    try:
+                        refs = json.loads(row["top_references"])
+                        if any(refs.values()):
+                            skipped.append(t_clean)
+                            continue
+                    except Exception:
+                        pass
+
+            try:
+                refs = search_index(t_clean, limit_per_source=3)
+                has_obs = 1 if refs.get("obsidian") else 0
+                has_pdf = 1 if refs.get("pdf") else 0
+                has_zim = 1 if refs.get("zim") else 0
+                cursor.execute(
+                    """
+                    INSERT INTO cached_syntheses (
+                        topic_key, display_title, enhanced_explanation, distractor_analysis,
+                        unified_article, top_references, has_obsidian_note, has_pdf_match, has_zim_match, updated_at
+                    ) VALUES (?, ?, '', '', '', ?, ?, ?, ?, unixepoch('now'))
+                    ON CONFLICT(topic_key) DO UPDATE SET
+                        top_references = excluded.top_references,
+                        has_obsidian_note = excluded.has_obsidian_note,
+                        has_pdf_match = excluded.has_pdf_match,
+                        has_zim_match = excluded.has_zim_match,
+                        updated_at = unixepoch('now')
+                    """,
+                    (topic_key, t_clean, json.dumps(refs), has_obs, has_pdf, has_zim),
+                )
+                conn.commit()
+                processed.append(t_clean)
+            except Exception as e:
+                logger.error(f"Error generating references for '{t_clean}': {e}")
+
+    return {
+        "status": "success",
+        "processed": processed,
+        "skipped": skipped,
+        "count": len(processed),
+    }
+
+
+@router.post("/topics/generate_explanations")
+def batch_generate_explanations(payload: BatchTopicRequest):
+    """
+    Enqueues synthesis tasks in task_queue for LM Studio LLM note/explanation generation.
+    """
+    queued = []
+    skipped = []
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        for topic in payload.topics:
+            t_clean = topic.strip()
+            if not t_clean:
+                continue
+            topic_key = t_clean.lower().replace(" ", "-")
+
+            if payload.mode == "missing":
+                cursor.execute("SELECT unified_article FROM cached_syntheses WHERE topic_key = ?", (topic_key,))
+                row = cursor.fetchone()
+                if row and row["unified_article"]:
+                    art = row["unified_article"]
+                    if art and "LM Studio processing skipped" not in art and "Please add reference material" not in art:
+                        skipped.append(t_clean)
+                        continue
+
+            cursor.execute(
+                """
+                INSERT INTO task_queue (task_type, priority, topic_name, payload)
+                VALUES ('synthesis', 2, ?, ?)
+                """,
+                (t_clean, json.dumps({"topic": t_clean})),
+            )
+            queued.append(t_clean)
+        conn.commit()
+
+    return {
+        "status": "success",
+        "queued": queued,
+        "skipped": skipped,
+        "count": len(queued),
+    }

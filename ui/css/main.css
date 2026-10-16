@@ -395,6 +395,8 @@ body.dark-theme .moon-icon { display: none; }
   overflow-x: hidden;
   border-radius: 20px;
   flex-shrink: 0;
+  position: relative;
+  z-index: 20;
   transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
               min-width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
               padding 0.3s ease,
@@ -840,27 +842,45 @@ body.dark-theme .moon-icon { display: none; }
   line-height: 1.6;
 }
 
-.prose table {
+.prose p, .prose div, .prose span, .prose li, .prose td, .prose th {
+  color: var(--text-primary);
+}
+
+.prose table, .prose .wikitable, .prose .infobox {
   width: 100%;
+  max-width: 100%;
   border-collapse: collapse;
   margin: 1.25em 0;
   font-size: 0.9em;
-  border-radius: 8px;
+  border-radius: 12px;
   overflow: hidden;
+  background: var(--glass-subpanel-bg);
+  border: 1px solid var(--panel-border);
+  color: var(--text-primary) !important;
 }
 
-.prose th, .prose td {
+.prose th, .prose td, .prose .wikitable th, .prose .wikitable td, .prose .infobox th, .prose .infobox td {
   border: 1px solid var(--panel-border);
   padding: 8px 12px;
   text-align: left;
+  color: var(--text-primary) !important;
 }
 
-.prose th {
-  background: rgba(139, 92, 246, 0.12);
+.prose th, .prose .wikitable th, .prose .infobox th {
+  background: rgba(139, 92, 246, 0.18);
   font-weight: 700;
+  color: var(--text-primary) !important;
 }
 
 .prose tr:nth-child(even) { background: rgba(128, 128, 128, 0.05); }
+
+.prose img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 0.75rem 0;
+  display: block;
+}
 
 .prose pre {
   background: rgba(15, 23, 42, 0.85);

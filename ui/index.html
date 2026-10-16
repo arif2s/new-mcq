@@ -774,6 +774,25 @@
       </div>
     </div>
 
+    <!-- REGENERATE CHOICE MODAL -->
+    <div id="regenerate-confirm-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 200;">
+      <div class="modal glass-modal text-left">
+        <h3 id="regen-modal-title" class="text-lg font-bold mb-2">Generate Topic Data</h3>
+        <p id="regen-modal-desc" class="text-sm text-muted mb-6">Choose whether to process all topics or only topics without generated data.</p>
+        <div class="flex flex-col gap-3">
+          <button id="regen-opt-missing" class="primary-btn w-full py-2.5 text-xs font-bold rounded-xl cursor-pointer">
+            Only for Topics Without One
+          </button>
+          <button id="regen-opt-all" class="secondary-btn w-full py-2.5 text-xs font-bold rounded-xl cursor-pointer">
+            Regenerate for All Topics
+          </button>
+          <button id="regen-opt-cancel" class="text-xs text-muted hover:text-brand-400 py-1 cursor-pointer bg-transparent border-none mt-1 text-center">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- HELP MODAL -->
     <div id="help-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 200;">
       <div class="modal glass-modal w-full max-w-3xl max-h-[85vh] flex flex-col text-left p-0">

@@ -3,6 +3,7 @@ import os
 import html
 import logging
 import functools
+import urllib.parse
 from typing import Optional, Dict, Any, List
 from contextlib import closing
 
@@ -230,6 +231,10 @@ def get_zim_article_html(title_or_path: str, zim_path: Optional[str] = None) -> 
             if body_match:
                 safe_html = body_match.group(1)
 
+            # Remove hardcoded inline text colors and background attributes that break table readability
+            safe_html = re.sub(r'\s*(bgcolor|color|text)=["\'][^"\']*["\']', '', safe_html, flags=re.IGNORECASE)
+            safe_html = re.sub(r'style=["\'][^"\']*(?:color|background)[^"\']*["\']', '', safe_html, flags=re.IGNORECASE)
+
             # Rewrite relative internal ZIM links into clickable data-article-id attributes
             def _rewrite_href(match):
                 href = match.group(1)
@@ -244,6 +249,21 @@ def get_zim_article_html(title_or_path: str, zim_path: Optional[str] = None) -> 
 
             safe_html = _HREF_RE.sub(_rewrite_href, safe_html)
 
+            # Rewrite img/source src attributes to point to local /api/notes/zim-asset endpoint
+            _SRC_RE = re.compile(r'(src|srcset)=["\']([^"\']+)["\']', flags=re.IGNORECASE)
+            def _rewrite_src(match):
+                attr = match.group(1)
+                src = match.group(2)
+                if src.startswith(("http://", "https://", "data:", "#")):
+                    return match.group(0)
+                cleaned_src = src.lstrip("./").lstrip("/")
+                encoded_src = urllib.parse.quote(cleaned_src)
+                encoded_zp = urllib.parse.quote(zp)
+                url = f"/api/notes/zim-asset?path={encoded_src}&zim_path={encoded_zp}"
+                return f'{attr}="{url}"'
+
+            safe_html = _SRC_RE.sub(_rewrite_src, safe_html)
+
             return {
                 "status": "success",
                 "title": canonical_title,
@@ -255,6 +275,56 @@ def get_zim_article_html(title_or_path: str, zim_path: Optional[str] = None) -> 
             logger.warning(f"Error reading HTML from ZIM {zp} for '{title_or_path}': {e}")
 
     return {"status": "error", "message": f"Article '{title_or_path}' not found in ZIM archive."}
+
+
+def get_zim_asset(asset_path: str, zim_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Extracts binary asset content (images, graphics) from a local .zim archive.
+    """
+    paths = [zim_path] if (zim_path and os.path.exists(zim_path)) else get_enabled_zim_paths()
+    if not paths:
+        return None
+
+    clean_path = asset_path.lstrip("./").lstrip("/")
+    candidates = [clean_path]
+    if not clean_path.startswith(("I/", "A/", "C/", "-/", "m/")):
+        candidates.extend([f"I/{clean_path}", f"I/m/{clean_path}", f"A/{clean_path}", f"-/{clean_path}"])
+
+    for zp in paths:
+        try:
+            archive = get_archive(zp)
+            for cand in candidates:
+                try:
+                    entry = archive.get_entry_by_path(cand)
+                    if not entry:
+                        continue
+                    entry = _follow_redirect(entry)
+                    if not entry:
+                        continue
+                    item = entry.get_item()
+                    content_bytes = bytes(item.content)
+                    mimetype = getattr(item, "mimetype", "") or "image/jpeg"
+                    if mimetype == "application/octet-stream":
+                        ext = os.path.splitext(cand)[1].lower()
+                        if ext in (".png", ".apng"):
+                            mimetype = "image/png"
+                        elif ext in (".jpg", ".jpeg"):
+                            mimetype = "image/jpeg"
+                        elif ext == ".svg":
+                            mimetype = "image/svg+xml"
+                        elif ext == ".webp":
+                            mimetype = "image/webp"
+                    return {
+                        "content": content_bytes,
+                        "mimetype": mimetype,
+                        "zim_path": zp,
+                    }
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f"Error reading ZIM asset {asset_path} from {zp}: {e}")
+
+    return None
 
 
 def search_zim_articles(query: str, limit: int = 3) -> List[Dict[str, Any]]:

@@ -130,6 +130,189 @@ window.closeInspector = function() {
 };
 
 // =========================================================
+// Study Topics Right Sidebar Topic List Controller
+// =========================================================
+window.currentStudyTopics = ['Amyloidosis', 'Amoxicillin', 'Myocardial Infarction'];
+
+function openRegenerateModal(type) {
+    const modal = document.getElementById('regenerate-confirm-modal');
+    const title = document.getElementById('regen-modal-title');
+    const desc = document.getElementById('regen-modal-desc');
+    const btnMissing = document.getElementById('regen-opt-missing');
+    const btnAll = document.getElementById('regen-opt-all');
+    const btnCancel = document.getElementById('regen-opt-cancel');
+
+    if (!modal) return;
+
+    if (type === 'refs') {
+        if (title) title.textContent = "Generate Reference Links";
+        if (desc) desc.textContent = "Do you want to generate reference links for all topics or only for topics without references?";
+        if (btnMissing) btnMissing.textContent = "Only for Topics Without References";
+        if (btnAll) btnAll.textContent = "Regenerate for All Topics";
+    } else {
+        if (title) title.textContent = "Generate LLM Explanations";
+        if (desc) desc.textContent = "Do you want to generate LLM explanations for all topics or only for topics without explanations?";
+        if (btnMissing) btnMissing.textContent = "Only for Topics Without Explanations";
+        if (btnAll) btnAll.textContent = "Regenerate for All Topics";
+    }
+
+    modal.style.display = 'flex';
+
+    const handleChoice = async (mode) => {
+        modal.style.display = 'none';
+        const topics = window.currentStudyTopics;
+        if (!topics || topics.length === 0) return;
+
+        if (type === 'refs') {
+            if (window.showToast) window.showToast("Resolving reference links for topics...");
+            try {
+                const res = await fetch('/api/mcq/topics/generate_references', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ topics: topics, mode: mode })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (window.showToast) window.showToast(`Reference links generated for ${data.count} topic(s)!`);
+                    window.renderStudyTopicsInspector(null, false);
+                }
+            } catch (e) {
+                console.error("Failed to generate references:", e);
+            }
+        } else {
+            if (window.showToast) window.showToast("Queuing LLM explanation tasks...");
+            try {
+                const res = await fetch('/api/mcq/topics/generate_explanations', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ topics: topics, mode: mode })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (window.showToast) window.showToast(`Enqueued ${data.count} LLM synthesis task(s)!`);
+                    window.renderStudyTopicsInspector(null, false);
+                }
+            } catch (e) {
+                console.error("Failed to generate explanations:", e);
+            }
+        }
+    };
+
+    if (btnMissing) btnMissing.onclick = () => handleChoice('missing');
+    if (btnAll) btnAll.onclick = () => handleChoice('all');
+    if (btnCancel) btnCancel.onclick = () => { modal.style.display = 'none'; };
+}
+
+window.renderStudyTopicsInspector = async function(topicsList = null, forceOpen = true) {
+    if (Array.isArray(topicsList) && topicsList.length > 0) {
+        window.currentStudyTopics = topicsList.map(t => (typeof t === 'string' ? t : t.name)).filter(Boolean);
+    }
+
+    const topics = window.currentStudyTopics;
+    if (!topics || topics.length === 0) {
+        window.openInspector(
+            "Study Topics List",
+            `<div class="space-y-4 text-xs p-2 text-center text-muted">
+                <p>Extract entities in MCQ Extractor to load study topics here.</p>
+            </div>`,
+            forceOpen
+        );
+        return;
+    }
+
+    let statuses = {};
+    try {
+        const statusRes = await fetch('/api/mcq/topics/status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ topics: topics })
+        });
+        if (statusRes.ok) {
+            const data = await statusRes.json();
+            statuses = data.topics || {};
+        }
+    } catch (e) {
+        console.warn("Failed to fetch topic statuses:", e);
+    }
+
+    let html = `<div class="flex flex-col h-full text-xs space-y-4 justify-between">`;
+    html += `<div class="space-y-2 overflow-y-auto flex-1 pr-1">`;
+    html += `<p class="text-[11px] text-muted mb-2">Click any topic to open notes &amp; references:</p>`;
+
+    topics.forEach((topic, idx) => {
+        const st = statuses[topic] || { has_refs: false, has_note: false };
+        html += `
+            <div class="study-topic-item glass-panel p-3 rounded-xl border border-gray-700/50 hover:border-brand-500 cursor-pointer transition-all flex items-center justify-between gap-2"
+                 data-topic="${window.escapeHTML(topic)}">
+                <div class="min-w-0 flex-1">
+                    <p class="font-bold text-xs truncate text-neutral-100">${idx + 1}. ${window.escapeHTML(topic)}</p>
+                </div>
+                <div class="flex items-center gap-1.5 shrink-0">
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-mono ${st.has_refs ? 'bg-brand-600/20 text-brand-300 border border-brand-500/30' : 'opacity-40 glass-panel'}" title="${st.has_refs ? 'Reference links resolved' : 'No reference links'}">
+                        🔗 ${st.has_refs ? 'Refs' : 'No Refs'}
+                    </span>
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-mono ${st.has_note ? 'bg-success-500/20 text-success-300 border border-success-500/30' : 'opacity-40 glass-panel'}" title="${st.has_note ? 'LLM explanation ready' : 'No LLM note'}">
+                        🤖 ${st.has_note ? 'Note' : 'No Note'}
+                    </span>
+                </div>
+            </div>
+        `;
+    });
+    html += `</div>`;
+
+    html += `
+        <div class="pt-3 border-t border-gray-700/50 space-y-2 mt-auto">
+            <button id="btn-sidebar-gen-refs" class="secondary-btn w-full py-2.5 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer">
+                🔗 Generate Reference Links
+            </button>
+            <button id="btn-sidebar-gen-llm" class="primary-btn w-full py-2.5 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer">
+                🤖 Generate LLM Explanations
+            </button>
+        </div>
+    `;
+    html += `</div>`;
+
+    window.openInspector("Study Topics List", html, forceOpen);
+
+    const contentEl = document.getElementById('inspector-content');
+    contentEl?.querySelectorAll('.study-topic-item').forEach(item => {
+        item.addEventListener('click', async () => {
+            const topic = item.dataset.topic;
+            if (!topic) return;
+            const expContainer = document.getElementById('explanation-container');
+            if (expContainer) {
+                expContainer.classList.remove('content-placeholder');
+                expContainer.innerHTML = `<div class="text-center py-8 text-muted animate-pulse">Loading synthesis for ${window.escapeHTML(topic)}...</div>`;
+            }
+            try {
+                const sRes = await fetch(`/api/mcq/synthesis?topic=${encodeURIComponent(topic)}`);
+                if (sRes.ok) {
+                    const sData = await sRes.json();
+                    if (expContainer) {
+                        let textToRender = sData.unified_article || sData.enhanced_explanation;
+                        if (!textToRender) {
+                            textToRender = `### ${topic}\n\nReferences resolved for **${topic}**.`;
+                        }
+                        window.renderMarkdownAndMath(textToRender, expContainer);
+                        expContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to load topic synthesis:", e);
+            }
+        });
+    });
+
+    document.getElementById('btn-sidebar-gen-refs')?.addEventListener('click', () => {
+        openRegenerateModal('refs');
+    });
+
+    document.getElementById('btn-sidebar-gen-llm')?.addEventListener('click', () => {
+        openRegenerateModal('llm');
+    });
+};
+
+// =========================================================
 // Unified In-Browser Document Reader (Obsidian & ZIM)
 // =========================================================
 window.openDocumentReader = function({ title, sourceType, htmlContent, markdownContent, filePath }) {
@@ -152,8 +335,8 @@ window.openDocumentReader = function({ title, sourceType, htmlContent, markdownC
     } else if (htmlContent !== undefined && htmlContent !== null) {
         const safeHTML = window.DOMPurify
             ? window.DOMPurify.sanitize(htmlContent, {
-                ADD_TAGS: ['img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'style'],
-                ADD_ATTR: ['class', 'style', 'src', 'href', 'data-article-id', 'data-file']
+                ADD_TAGS: ['img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'style', 'figure', 'figcaption', 'span', 'div', 'p', 'b', 'i', 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote'],
+                ADD_ATTR: ['class', 'style', 'src', 'href', 'data-article-id', 'data-file', 'alt', 'title', 'width', 'height', 'target']
             })
             : htmlContent;
         wrapper.innerHTML = safeHTML;
@@ -302,6 +485,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             if (targetId === 'knowledge-hub-view' && typeof window.loadSessions === 'function') {
                 window.loadSessions();
+            }
+            if (targetId === 'home-view' && typeof window.renderStudyTopicsInspector === 'function') {
+                window.renderStudyTopicsInspector(null, true);
             }
         });
     });
@@ -607,6 +793,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
                 const data = await res.json();
                 const details = data.topic_details || (data.topics || []).map(t => ({ name: t, verified: true }));
+                const topicNames = details.map(d => d.name).filter(Boolean);
 
                 if (chipsContainer) {
                     chipsContainer.innerHTML = details.map(d => `
@@ -635,6 +822,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                         });
                     });
                 }
+
+                if (typeof window.renderStudyTopicsInspector === 'function') {
+                    window.renderStudyTopicsInspector(topicNames, true);
+                }
             } catch (e) {
                 console.error('Entity extraction failed:', e);
             } finally {
@@ -642,6 +833,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 extractBtn.textContent = 'Extract Entities';
             }
         });
+    }
+
+    // Initialize Study Topics Inspector on load if on #home-view
+    if (document.getElementById('home-view')?.classList.contains('active')) {
+        window.renderStudyTopicsInspector(['Amyloidosis', 'Amoxicillin', 'Myocardial Infarction'], true);
     }
 
     // Global Click Delegation for PDF, Obsidian, and ZIM Citations
