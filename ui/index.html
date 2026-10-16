@@ -61,7 +61,7 @@
             <button id="sidebar-toggle" class="icon-btn" aria-label="Toggle Sidebar">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
             </button>
-            <div class="app-logo sidebar-text">Medisearch</div>
+            <div class="app-logo sidebar-text font-bold tracking-tight">Medisearch</div>
           </div>
           <div class="flex gap-1 sidebar-text">
             <button id="open-help-btn" class="icon-btn" aria-label="Help">
@@ -433,128 +433,269 @@
 
         <!-- SETTINGS VIEW -->
         <section id="settings-view" class="view-section fade-enter">
-          <div class="w-full">
-            <header class="view-header">
-              <h2>System Settings</h2>
-              <p class="subtitle">Diagnostics, AI synthesis controls, background transparency, and offline model management.</p>
+          <div class="w-full max-w-6xl mx-auto space-y-6">
+            <header class="view-header mb-6">
+              <h2 class="text-2xl font-bold text-neutral-900 dark:text-neutral-100">System Settings &amp; Offline Management</h2>
+              <p class="subtitle text-sm text-neutral-600 dark:text-neutral-400">Manage offline ontologies, biomedical NER models, diagnostics, and glassmorphic appearance.</p>
             </header>
 
-            <div class="grid-2col">
-              <div class="card glass-card">
-                <h3>Database Construction</h3>
-                <p class="text-muted mb-4">Reload CSV question banks and build the hybrid Tantivy/LanceDB index.</p>
-                <button id="build-db-btn" class="primary-btn">Build Database</button>
-                <div class="progress-container mt-15" style="display: none;" id="build-progress-container">
-                  <div class="progress-bar-bg">
-                    <div class="progress-bar-fill" id="build-progress" style="width: 0%"></div>
+            <!-- 1. SYSTEM DIAGNOSTICS & OFFLINE HEALTH TELEMETRY -->
+            <div class="glass-card p-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md">
+              <div class="flex items-center justify-between pb-3 mb-4 border-b border-white/10">
+                <div class="flex items-center gap-2.5">
+                  <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-sm border border-amber-500/30">
+                    🩺
+                  </div>
+                  <div>
+                    <h3 class="font-semibold text-sm text-neutral-100">System Diagnostics &amp; Offline Health</h3>
+                    <p class="text-xs text-neutral-400">Real-time status of local LLM, SQLite WAL storage, PDF viewer, and search indices</p>
                   </div>
                 </div>
-                <p id="build-status" class="status-text mt-10" style="display: none;"></p>
+                <button id="btn-refresh-diagnostics" class="text-xs px-3 py-1.5 rounded-lg border border-white/15 hover:bg-white/10 text-neutral-300 transition-colors flex items-center gap-1.5 cursor-pointer">
+                  🔄 Refresh
+                </button>
               </div>
 
-              <div class="card glass-card">
-                <h3>System Diagnostics</h3>
-                <ul id="diagnostics-list" class="diag-list">
-                  <li><span class="diag-label">LM Studio (Port 1234):</span> <span id="diag-lm-studio" class="badge bg-warning">Checking...</span></li>
-                  <li><span class="diag-label">Database Row Counts:</span> <span id="diag-db-rows" class="badge bg-warning">Checking...</span></li>
-                  <li><span class="diag-label">SumatraPDF:</span> <span id="diag-sumatra" class="badge bg-warning">Checking...</span></li>
-                  <li><span class="diag-label">Offline UI Libraries (Vendor Cache):</span> <span id="diag-vendor-assets" class="badge bg-warning">Checking...</span></li>
-                </ul>
-                <button id="refresh-diag-btn" class="secondary-btn mt-15">Refresh Diagnostics</button>
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div class="p-3 rounded-xl bg-white/5 border border-white/5">
+                  <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">LM Studio Server</div>
+                  <div id="diag-lm-studio-status" class="text-xs text-neutral-300">Checking :1234...</div>
+                </div>
+                <div class="p-3 rounded-xl bg-white/5 border border-white/5">
+                  <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">SQLite WAL Store</div>
+                  <div id="diag-db-status" class="text-xs text-neutral-300">Inspecting database...</div>
+                </div>
+                <div class="p-3 rounded-xl bg-white/5 border border-white/5">
+                  <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">SumatraPDF Viewer</div>
+                  <div id="diag-sumatra-status" class="text-xs text-neutral-300">Locating SumatraPDF.exe...</div>
+                </div>
+                <div class="p-3 rounded-xl bg-white/5 border border-white/5">
+                  <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">Tantivy BM25 Engine</div>
+                  <div id="diag-tantivy-status" class="text-xs text-neutral-300">Checking index directory...</div>
+                </div>
+                <div class="p-3 rounded-xl bg-white/5 border border-white/5">
+                  <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">Vendor Asset Cache</div>
+                  <div id="diag-vendor-status" class="text-xs text-neutral-300">Checking ui/vendor/ assets...</div>
+                </div>
+                <div class="p-3 rounded-xl bg-white/5 border border-white/5 flex flex-col justify-between">
+                  <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">Question Bank (CSV)</div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs text-neutral-300">Build / Refresh DB</span>
+                    <button id="build-db-btn" class="text-xs px-2.5 py-1 bg-brand-600 hover:bg-brand-500 text-white rounded font-medium transition-colors cursor-pointer">
+                      Rebuild
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Database Build Progress (Collapsible) -->
+              <div class="progress-container mt-3" style="display: none;" id="build-progress-container">
+                <div class="progress-bar-bg h-2 rounded-full bg-white/10 overflow-hidden">
+                  <div class="progress-bar-fill h-full bg-brand-500 transition-all duration-300" id="build-progress" style="width: 0%"></div>
+                </div>
+                <p id="build-status" class="text-xs text-brand-300 mt-1" style="display: none;"></p>
               </div>
             </div>
 
-            <div class="grid-2col mt-20">
-              <div class="card glass-card">
-                <h3>App Preferences</h3>
-                <div class="form-group mt-5">
-                  <label for="set-q-target">Daily Questions Target:</label>
-                  <input type="number" id="set-q-target" class="glass-input" value="50" />
+            <!-- 2. SCISPACY BIOMEDICAL NER PIPELINE CARD -->
+            <div class="glass-card p-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md">
+              <div class="flex items-center justify-between pb-3 mb-4 border-b border-white/10">
+                <div class="flex items-center gap-2.5">
+                  <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-sm border border-emerald-500/30">
+                    🔬
+                  </div>
+                  <div>
+                    <h3 class="font-semibold text-sm text-neutral-100">SciSpaCy Biomedical NER Pipeline</h3>
+                    <p class="text-xs text-neutral-400">Extracts Anatomy, Microorganisms, Disease Subtypes, and Procedures on CPU</p>
+                  </div>
                 </div>
-                <div class="form-group mt-5">
-                  <label for="set-c-target">Daily Correct Target:</label>
-                  <input type="number" id="set-c-target" class="glass-input" value="40" />
+                <div id="scispacy-model-status-badge" class="px-2.5 py-1 rounded-md text-xs font-semibold bg-neutral-800 text-neutral-400 border border-white/5">
+                  Checking...
                 </div>
               </div>
 
-              <div class="card glass-card">
-                <h3>Queue Configuration</h3>
-                <div class="form-group mt-5">
-                  <label for="set-q-limit">Processing Queue Limit:</label>
-                  <input type="number" id="set-q-limit" class="glass-input" value="10" />
-                  <p class="text-xs text-muted mt-1">Number of items pulled per batch.</p>
+              <div class="space-y-4">
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  <select id="select-scispacy-model" class="flex-1 bg-black/40 border border-white/15 rounded-xl px-3.5 py-2 text-xs text-neutral-200 focus:outline-none focus:border-emerald-500/60 font-medium">
+                    <!-- Populated dynamically by settings.js -->
+                  </select>
+                  <button id="btn-download-scispacy" class="text-xs px-4 py-2 rounded-lg font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center justify-center gap-1.5 shadow-md cursor-pointer">
+                    Download &amp; Install Offline
+                  </button>
                 </div>
-                <div class="form-group mt-5">
-                  <label for="set-qh-limit">Processing Queue Hard Limit:</label>
-                  <input type="number" id="set-qh-limit" class="glass-input" value="100" />
-                  <p class="text-xs text-muted mt-1">Maximum tasks displayed in the queue monitor.</p>
+
+                <div id="scispacy-model-details" class="p-3.5 rounded-xl bg-black/30 border border-white/5">
+                  <!-- Populated dynamically by settings.js -->
+                </div>
+
+                <!-- Download Progress Bar -->
+                <div id="scispacy-download-progress-container" class="hidden space-y-2 p-3 rounded-xl bg-black/40 border border-white/10">
+                  <div class="flex justify-between text-xs text-neutral-300">
+                    <span id="scispacy-download-progress-msg" class="truncate pr-2">Downloading package...</span>
+                    <span id="scispacy-download-progress-label" class="font-mono font-bold text-emerald-400">0%</span>
+                  </div>
+                  <div class="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                    <div id="scispacy-download-progress-bar" class="h-full bg-emerald-500 transition-all duration-300" style="width: 0%"></div>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <!-- Phase 5 Settings Cards: LLM Toggle, Obsidian Mode, Transparency & Wallpaper Rotation -->
-            <div id="phase5-extra-settings" class="grid-2col mt-20">
-              <div class="card glass-card">
-                <h3>AI Synthesis &amp; Note Viewer</h3>
-                <div class="form-group mt-5">
+            <!-- 3. OFFLINE BIOMEDICAL ONTOLOGIES & LINKERS CARD -->
+            <div class="glass-card p-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md">
+              <div class="flex items-center justify-between pb-3 mb-4 border-b border-white/10">
+                <div class="flex items-center gap-2.5">
+                  <div class="w-8 h-8 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-sm border border-blue-500/30">
+                    🧬
+                  </div>
+                  <div>
+                    <h3 class="font-semibold text-sm text-neutral-100">Offline Biomedical Ontologies &amp; Linkers</h3>
+                    <p class="text-xs text-neutral-400">Zero-RAM SQLite synonym resolution across UMLS, MeSH, RxNorm, HPO, and GO</p>
+                  </div>
+                </div>
+                <span id="tui-tree-status-badge" class="text-[11px] text-neutral-500 font-medium">Checking TUI...</span>
+              </div>
+
+              <!-- Detected Linkers Grid -->
+              <div id="ontology-sources-list" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
+                <!-- Populated dynamically by settings.js -->
+              </div>
+
+              <!-- Compiled Index Summary Banner -->
+              <div id="ontology-db-summary" class="p-3.5 rounded-xl bg-black/30 border border-white/5 mb-4">
+                <!-- Populated dynamically by settings.js -->
+              </div>
+
+              <!-- Indexer Action & Rebuild Toggle -->
+              <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
+                <label class="inline-flex items-center gap-2 text-xs text-neutral-400 cursor-pointer">
+                  <input type="checkbox" id="checkbox-force-rebuild-ontology" class="rounded bg-neutral-800 border-white/20 text-emerald-500 focus:ring-0" />
+                  <span>Force rebuild from scratch</span>
+                </label>
+                <button id="btn-build-ontology-index" class="text-xs px-4 py-2 rounded-lg font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+                  ⚡ Build / Update Offline Ontology Index
+                </button>
+              </div>
+
+              <!-- Indexing Progress Bar -->
+              <div id="ontology-index-progress-container" class="hidden mt-4 space-y-2 p-3.5 rounded-xl bg-black/40 border border-white/10">
+                <div class="flex justify-between text-xs text-neutral-300">
+                  <span id="ontology-index-stage-label" class="font-semibold text-neutral-200">Initializing...</span>
+                  <span id="ontology-index-progress-label" class="font-mono font-bold text-emerald-400">0%</span>
+                </div>
+                <div class="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                  <div id="ontology-index-progress-bar" class="h-full bg-emerald-500 transition-all duration-300" style="width: 0%"></div>
+                </div>
+                <p id="ontology-index-progress-msg" class="text-[11px] text-neutral-400 truncate">Preparing streaming compiler...</p>
+              </div>
+            </div>
+
+            <!-- 4. CPU EMBEDDINGS & CROSS-ENCODER RERANKERS -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div class="glass-card p-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md">
+                <div class="flex items-center gap-2.5 mb-3">
+                  <div class="w-7 h-7 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold text-xs border border-purple-500/30">
+                    📐
+                  </div>
+                  <div>
+                    <h3 class="font-semibold text-sm text-neutral-100">CPU Embedding Models (ONNX)</h3>
+                    <p class="text-xs text-neutral-400">Zero-VRAM CPU sentence vectorization</p>
+                  </div>
+                </div>
+                <div id="embedding-models-list" class="space-y-2 mt-4">
+                  <!-- Populated dynamically by settings.js -->
+                </div>
+              </div>
+
+              <div class="glass-card p-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md">
+                <div class="flex items-center gap-2.5 mb-3">
+                  <div class="w-7 h-7 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center font-bold text-xs border border-cyan-500/30">
+                    ⚡
+                  </div>
+                  <div>
+                    <h3 class="font-semibold text-sm text-neutral-100">FlashRank Cross-Encoder Rerankers</h3>
+                    <p class="text-xs text-neutral-400">Lightweight high-precision deep reranking</p>
+                  </div>
+                </div>
+                <div id="flashrank-models-list" class="space-y-2 mt-4">
+                  <!-- Populated dynamically by settings.js -->
+                </div>
+              </div>
+            </div>
+
+            <!-- 5. APP PREFERENCES, SYNTHESIS CONTROLS & APPEARANCE -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <!-- AI Synthesis & Note Behavior -->
+              <div class="glass-card p-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md space-y-4">
+                <h3 class="font-semibold text-sm text-neutral-100 flex items-center gap-2 border-b border-white/10 pb-3">
+                  <span>🤖</span> AI Synthesis &amp; Note Reader
+                </h3>
+
+                <div class="form-group">
                   <label class="flex items-center justify-between cursor-pointer">
-                    <span>Enable LM Studio Processing (LLM Notes &amp; MCQ Breakdown)</span>
-                    <input type="checkbox" id="set-llm-enabled" class="w-5 h-5 accent-brand-500 cursor-pointer" checked />
+                    <span class="text-xs text-neutral-200 font-medium">Enable LM Studio Processing</span>
+                    <input type="checkbox" id="setting-llm-enabled" class="w-4 h-4 accent-brand-500 cursor-pointer" checked />
                   </label>
-                  <p class="text-xs text-muted mt-1">
-                    When turned OFF, only verified reference links (PDF, Obsidian, ZIM) are shown in the Right Sidebar without calling LM Studio.
+                  <p class="text-[11px] text-neutral-400 mt-1">
+                    When OFF, only verified reference links (PDF, Obsidian, ZIM) are resolved without querying LM Studio.
                   </p>
                 </div>
 
-                <div class="form-group mt-10">
-                  <label for="set-obsidian-mode">Obsidian Note Click Behavior:</label>
-                  <select id="set-obsidian-mode" class="glass-select">
-                    <option value="browser">Render Note in Browser (LaTeX, Markdown Tables, HTML, Images)</option>
-                    <option value="app">Open Directly in Obsidian Desktop App (obsidian://)</option>
+                <div class="form-group pt-2">
+                  <label for="setting-obsidian-mode" class="text-xs text-neutral-300 block mb-1">Obsidian Note Click Behavior:</label>
+                  <select id="setting-obsidian-mode" class="glass-select w-full rounded-lg px-3 py-2 text-xs bg-black/40 border border-white/15">
+                    <option value="browser">Render in Browser (LaTeX, Tables, HTML, Images)</option>
+                    <option value="app">Open in Obsidian Desktop App (obsidian://)</option>
                   </select>
                 </div>
 
-                <div class="form-group mt-10">
-                  <label for="set-extractor-strategy">Medical Topic Extractor Engine:</label>
-                  <select id="set-extractor-strategy" class="glass-select">
-                    <option value="medspacy">medSpaCy Clinical NER + ZIM Synonym Canonicalizer</option>
-                    <option value="regex">Fast Clinical Phrase Regex + ZIM Canonicalizer</option>
-                  </select>
+                <div class="grid grid-cols-2 gap-3 pt-2">
+                  <div>
+                    <label for="set-q-target" class="text-xs text-neutral-300 block mb-1">Daily Target (MCQs):</label>
+                    <input type="number" id="set-q-target" class="glass-input w-full rounded-lg px-3 py-1.5 text-xs" value="50" />
+                  </div>
+                  <div>
+                    <label for="set-c-target" class="text-xs text-neutral-300 block mb-1">Daily Correct Target:</label>
+                    <input type="number" id="set-c-target" class="glass-input w-full rounded-lg px-3 py-1.5 text-xs" value="40" />
+                  </div>
                 </div>
               </div>
 
-              <div class="card glass-card">
-                <h3>Appearance, Transparency &amp; Wallpaper</h3>
-                <div class="form-group mt-5">
+              <!-- Appearance, Glassmorphic Opacities & Wallpaper Rotation -->
+              <div class="glass-card p-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md space-y-4">
+                <h3 class="font-semibold text-sm text-neutral-100 flex items-center gap-2 border-b border-white/10 pb-3">
+                  <span>🎨</span> Appearance &amp; Glassmorphic Opacities
+                </h3>
+
+                <div class="form-group">
                   <div class="flex justify-between items-center mb-1">
-                    <label for="set-panel-opacity" class="mb-0">Non-Card Area Opacity (App Frame &amp; Sidebars):</label>
-                    <span id="set-panel-opacity-val" class="text-xs font-mono font-bold text-brand-400">78%</span>
+                    <label for="setting-panel-alpha" class="text-xs text-neutral-300 mb-0">Non-Card Panel Opacity (--panel-alpha):</label>
+                    <span id="setting-panel-alpha-val" class="text-xs font-mono font-bold text-brand-400">78%</span>
                   </div>
-                  <input type="range" id="set-panel-opacity" min="0.15" max="0.95" step="0.02" value="0.78" class="w-full accent-brand-500" />
-                  <p class="text-xs text-muted mt-1">Lower values make non-card areas more transparent so more of the background wallpaper shines through.</p>
+                  <input type="range" id="setting-panel-alpha" min="0.15" max="0.95" step="0.02" value="0.78" class="w-full accent-brand-500" />
                 </div>
 
-                <div class="form-group mt-10">
+                <div class="form-group">
                   <div class="flex justify-between items-center mb-1">
-                    <label for="set-card-opacity" class="mb-0">Card Surface Opacity:</label>
-                    <span id="set-card-opacity-val" class="text-xs font-mono font-bold text-brand-400">82%</span>
+                    <label for="setting-card-alpha" class="text-xs text-neutral-300 mb-0">Card Surface Opacity (--card-alpha):</label>
+                    <span id="setting-card-alpha-val" class="text-xs font-mono font-bold text-brand-400">82%</span>
                   </div>
-                  <input type="range" id="set-card-opacity" min="0.40" max="0.98" step="0.02" value="0.82" class="w-full accent-brand-500" />
+                  <input type="range" id="setting-card-alpha" min="0.40" max="0.98" step="0.02" value="0.82" class="w-full accent-brand-500" />
                 </div>
 
-                <div class="form-group mt-10">
-                  <label for="set-wallpaper-interval">Wallpaper Rotation Duration:</label>
-                  <div class="flex gap-3 items-center">
-                    <select id="set-wallpaper-interval" class="glass-select flex-1">
+                <div class="form-group pt-1">
+                  <label for="setting-wallpaper-timer" class="text-xs text-neutral-300 block mb-1">Wallpaper Rotation Duration:</label>
+                  <div class="flex gap-2.5 items-center">
+                    <select id="setting-wallpaper-timer" class="glass-select flex-1 rounded-lg px-3 py-2 text-xs bg-black/40 border border-white/15">
                       <option value="5">Every 5 Minutes</option>
                       <option value="15">Every 15 Minutes</option>
-                      <option value="30">Every 30 Minutes</option>
+                      <option value="30" selected>Every 30 Minutes</option>
                       <option value="60">Every 1 Hour</option>
-                      <option value="120" selected>Every 2 Hours</option>
+                      <option value="120">Every 2 Hours</option>
                       <option value="360">Every 6 Hours</option>
                       <option value="0">Never (Manual Only)</option>
                     </select>
-                    <button type="button" id="change-wallpaper-now-btn" class="secondary-btn whitespace-nowrap px-4 py-3 text-xs">
+                    <button type="button" id="btn-rotate-wallpaper-now" class="text-xs px-3.5 py-2 rounded-lg font-medium border border-white/15 hover:bg-white/10 text-neutral-200 transition-colors whitespace-nowrap cursor-pointer">
                       🖼️ Change Now
                     </button>
                   </div>
@@ -562,54 +703,19 @@
               </div>
             </div>
 
-            <div class="mt-24">
-              <button id="save-settings-btn" class="primary-btn w-full sm:w-auto">Save App Settings</button>
-            </div>
-
-            <!-- Offline Model Configuration Card -->
-            <div class="card glass-card mt-20">
-              <h3>Offline Model Configuration</h3>
-              <p class="text-xs text-muted mb-4">Select a model and click "Download for Offline Use" to cache weights locally on disk.</p>
-
-              <div class="form-group mt-5">
-                <label for="cpu-embed-model-select">CPU Embedding Model (ONNX):</label>
-                <select id="cpu-embed-model-select" class="glass-select">
-                  <option value="loading">Loading models...</option>
-                </select>
-                <div class="flex items-center justify-between gap-3 mt-2">
-                  <span id="embed-model-dl-badge" class="badge bg-warning">Checking cache...</span>
-                  <button type="button" id="download-embed-model-btn" class="secondary-btn px-3 py-1.5 text-xs">
-                    ⬇️ Download for Offline Use
-                  </button>
-                </div>
-              </div>
-
-              <div class="form-group mt-10">
-                <label for="flashrank-model-select">FlashRank Cross-Encoder Reranker:</label>
-                <select id="flashrank-model-select" class="glass-select">
-                  <option value="loading">Loading models...</option>
-                </select>
-                <div class="flex items-center justify-between gap-3 mt-2">
-                  <span id="flashrank-model-dl-badge" class="badge bg-warning">Checking cache...</span>
-                  <button type="button" id="download-flashrank-model-btn" class="secondary-btn px-3 py-1.5 text-xs">
-                    ⬇️ Download for Offline Use
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Backup & Transfer -->
-            <div class="p-4 border-t border-gray-700 mt-8">
-              <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success-400"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-                Backup &amp; Transfer
+            <!-- 6. BACKUP & RECOVERY DATA TRANSFER -->
+            <div class="glass-card p-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md">
+              <h3 class="font-semibold text-sm text-neutral-100 mb-3 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success-400"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                Backup &amp; AppState Transfer
               </h3>
-              <div class="grid md:grid-cols-2 gap-4">
-                <button id="export-data-btn" class="w-full py-3 secondary-btn flex items-center justify-center gap-2">
+              <p class="text-xs text-neutral-400 mb-4">Export or import your user settings, streaks, and quiz session progress as JSON.</p>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <button id="export-data-btn" class="w-full py-2.5 secondary-btn text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer">
                   Export Backup (JSON)
                 </button>
                 <input type="file" id="import-data-file" accept=".json" class="hidden" />
-                <button id="import-data-btn" class="w-full py-3 secondary-btn flex items-center justify-center gap-2">
+                <button id="import-data-btn" class="w-full py-2.5 secondary-btn text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer">
                   Import Backup (JSON)
                 </button>
               </div>
@@ -729,7 +835,7 @@
       </div>
     </template>
 
-    <!-- APPLICATION SCRIPTS -->
+    <!-- APPLICATION SCRIPTS (STRICT LOADING ORDER) -->
     <script src="/js/state.js"></script>
     <script src="/js/app.js"></script>
     <script src="/js/dashboard.js"></script>
