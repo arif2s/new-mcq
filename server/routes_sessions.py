@@ -55,7 +55,8 @@ class SessionCreate(BaseModel):
 
 class UpdateSessionTopicsRequest(BaseModel):
     topic_list: List[Dict[str, Any]]
-    confirm: bool = True
+    confirm: bool = False
+    topics_reviewed: Optional[bool] = None
 
 
 class DeleteSessionsRequest(BaseModel):
@@ -376,6 +377,7 @@ def update_session_topics(session_id: str, req: UpdateSessionTopicsRequest):
     or confirms the topic list (confirm=True -> triggers Circle 2 & Circle 3 processing).
     """
     normalized = _normalize_topic_list(req.topic_list)
+    is_confirmed = req.confirm or bool(req.topics_reviewed)
     with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, refs_status, llm_status FROM quiz_sessions WHERE id = ?", (session_id,))
@@ -383,7 +385,7 @@ def update_session_topics(session_id: str, req: UpdateSessionTopicsRequest):
         if not row:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        if req.confirm:
+        if is_confirmed:
             refs_status = "processing"
             llm_status = "processing" if is_llm_processing_enabled() else "none"
             cursor.execute(
@@ -414,6 +416,42 @@ def update_session_topics(session_id: str, req: UpdateSessionTopicsRequest):
         "llm_status": llm_status,
         "topic_list": normalized,
     }
+
+
+@router.post("/{session_id}/retry")
+def retry_session_llm_tasks(session_id: str):
+    """
+    Retries failed LLM tasks for a Knowledge Hub session card.
+    Resets status of FAILED tasks for session_id to PENDING and sets llm_status = 'processing'.
+    """
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM quiz_sessions WHERE id = ?", (session_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        cursor.execute(
+            """
+            UPDATE task_queue
+            SET status = 'PENDING', priority = 1, error_message = NULL, updated_at = unixepoch('now')
+            WHERE session_id = ? AND status = 'FAILED'
+            """,
+            (session_id,),
+        )
+        reset_cnt = cursor.rowcount
+
+        if reset_cnt == 0:
+            _enqueue_session_processing(conn, session_id)
+            reset_cnt = 1
+
+        cursor.execute(
+            "UPDATE quiz_sessions SET llm_status = 'processing' WHERE id = ?",
+            (session_id,),
+        )
+        conn.commit()
+
+    queue_worker._notify_session_status(session_id)
+    return {"status": "success", "session_id": session_id, "retried_tasks": reset_cnt}
 
 
 @router.post("/delete")

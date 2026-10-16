@@ -32,12 +32,15 @@ let appState = JSON.parse(JSON.stringify(DEFAULT_PERSISTENCE));
 
 function applyAppearanceVariables(stateObj = appState) {
     const root = document.documentElement;
-    const panelAlpha = typeof stateObj.panelOpacity === 'number'
-        ? Math.min(0.95, Math.max(0.10, stateObj.panelOpacity))
-        : 0.78;
-    const cardAlpha = typeof stateObj.cardOpacity === 'number'
-        ? Math.min(0.98, Math.max(0.35, stateObj.cardOpacity))
-        : 0.82;
+    const rawPanel = typeof stateObj.panelOpacity === 'number'
+        ? stateObj.panelOpacity
+        : (typeof stateObj.panelAlpha === 'number' ? stateObj.panelAlpha : 0.78);
+    const panelAlpha = Math.min(0.95, Math.max(0.10, rawPanel));
+
+    const rawCard = typeof stateObj.cardOpacity === 'number'
+        ? stateObj.cardOpacity
+        : (typeof stateObj.cardAlpha === 'number' ? stateObj.cardAlpha : 0.82);
+    const cardAlpha = Math.min(0.98, Math.max(0.35, rawCard));
 
     root.style.setProperty('--panel-alpha', panelAlpha.toString());
     root.style.setProperty('--card-alpha', cardAlpha.toString());

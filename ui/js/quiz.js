@@ -53,6 +53,7 @@ function showToast(message) {
         setTimeout(() => { toast.style.display = 'none'; }, 300);
     }, 3200);
 }
+window.showToast = showToast;
 
 // =========================================================
 // 1. QUIZ CONFIGURATION & SETUP VIEW
@@ -693,6 +694,7 @@ async function finalizeTopicModalAction(actionMode) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    confirm: isConfirmed,
                     topics_reviewed: isConfirmed,
                     topic_list: session.topicList
                 })

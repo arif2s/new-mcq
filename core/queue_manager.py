@@ -214,7 +214,7 @@ class PriorityQueueWorker:
         self._notify_session_status(session_id)
 
     def _refresh_session_completion_state(self, session_id: str):
-        """Checks if any pending/processing tasks remain for session_id; if none, marks Circle 3 ready."""
+        """Checks if any pending/processing tasks remain for session_id; if none, updates Circle 3 llm_status."""
         with closing(get_db_connection()) as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -223,14 +223,32 @@ class PriorityQueueWorker:
             )
             remaining = cursor.fetchone()["cnt"]
             if remaining == 0:
+                cursor.execute(
+                    "SELECT COUNT(*) as cnt FROM task_queue WHERE session_id = ? AND status = 'FAILED'",
+                    (session_id,)
+                )
+                failed_cnt = cursor.fetchone()["cnt"]
+
+                cursor.execute(
+                    "SELECT COUNT(*) as cnt FROM task_queue WHERE session_id = ? AND status = 'COMPLETED'",
+                    (session_id,)
+                )
+                completed_cnt = cursor.fetchone()["cnt"]
+
                 cursor.execute("SELECT llm_status FROM quiz_sessions WHERE id = ?", (session_id,))
                 s_row = cursor.fetchone()
-                if s_row and s_row["llm_status"] == "processing":
-                    cursor.execute(
-                        "UPDATE quiz_sessions SET llm_status = 'ready' WHERE id = ?",
-                        (session_id,)
-                    )
-                    conn.commit()
+                if s_row:
+                    curr_status = (s_row["llm_status"] or "none").lower()
+                    if curr_status in ("processing", "ready", "failed", "partial"):
+                        if failed_cnt > 0:
+                            new_status = "partial" if completed_cnt > 0 else "failed"
+                        else:
+                            new_status = "ready"
+                        cursor.execute(
+                            "UPDATE quiz_sessions SET llm_status = ? WHERE id = ?",
+                            (new_status, session_id)
+                        )
+                        conn.commit()
         self._notify_session_status(session_id)
 
     def _persist_mcq_explanation(self, session_id: Optional[str], question_id: str, llm_explanation: str):
@@ -362,12 +380,32 @@ def get_session_queue_info(session_id: str) -> Dict[str, Any]:
     with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
         cursor.execute(
+            "SELECT COUNT(*) as cnt FROM task_queue WHERE session_id = ? AND status = 'FAILED'",
+            (session_id,)
+        )
+        failed_cnt = cursor.fetchone()["cnt"]
+
+        cursor.execute(
+            "SELECT COUNT(*) as cnt FROM task_queue WHERE session_id = ? AND status = 'COMPLETED'",
+            (session_id,)
+        )
+        completed_cnt = cursor.fetchone()["cnt"]
+
+        cursor.execute(
             "SELECT task_id, priority, status FROM task_queue WHERE session_id = ? AND status IN ('PENDING', 'PROCESSING') ORDER BY priority ASC, task_id ASC",
             (session_id,)
         )
         session_tasks = cursor.fetchall()
         if not session_tasks:
-            return {"in_queue": False, "position": 0, "total_pending": 0, "session_pending_count": 0, "top_priority": None}
+            return {
+                "in_queue": False,
+                "position": 0,
+                "total_pending": 0,
+                "session_pending_count": 0,
+                "failed_count": failed_cnt,
+                "completed_count": completed_cnt,
+                "top_priority": None
+            }
 
         first_task = session_tasks[0]
         first_id = first_task["task_id"]

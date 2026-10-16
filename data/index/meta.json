@@ -3,13 +3,7 @@
     "docstore_compression": "lz4",
     "docstore_blocksize": 16384
   },
-  "segments": [
-    {
-      "segment_id": "d50d8176-f870-4589-995d-8686831dd7c3",
-      "max_doc": 1,
-      "deletes": null
-    }
-  ],
+  "segments": [],
   "schema": [
     {
       "name": "doc_id",
@@ -67,14 +61,50 @@
         "indexing": {
           "record": "position",
           "fieldnorms": true,
-          "tokenizer": "default"
+          "tokenizer": "en_stem"
         },
         "stored": true,
         "fast": false
       }
     },
     {
-      "name": "body",
+      "name": "heading_path",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "position",
+          "fieldnorms": true,
+          "tokenizer": "en_stem"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "doc_length",
+      "type": "i64",
+      "options": {
+        "indexed": false,
+        "fieldnorms": false,
+        "fast": false,
+        "stored": true
+      }
+    },
+    {
+      "name": "snippet",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "position",
+          "fieldnorms": true,
+          "tokenizer": "en_stem"
+        },
+        "stored": true,
+        "fast": false
+      }
+    },
+    {
+      "name": "document_body",
       "type": "text",
       "options": {
         "indexing": {
@@ -85,7 +115,20 @@
         "stored": false,
         "fast": false
       }
+    },
+    {
+      "name": "obsidian_body",
+      "type": "text",
+      "options": {
+        "indexing": {
+          "record": "position",
+          "fieldnorms": true,
+          "tokenizer": "en_stem"
+        },
+        "stored": true,
+        "fast": false
+      }
     }
   ],
-  "opstamp": 6
+  "opstamp": 0
 }

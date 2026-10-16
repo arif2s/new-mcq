@@ -9,7 +9,7 @@ import logging
 import urllib.request
 import functools
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple, Set
+from typing import Dict, Any, List, Optional, Tuple, Set, Callable
 from contextlib import closing
 
 from config import (
@@ -58,7 +58,6 @@ CLINICAL_TUI_CATEGORIES: Dict[str, str] = {
     "T044": "physiology", "T045": "physiology",
 }
 
-# Explicitly blocked non-medical UMLS Semantic Types (Temporal, Qualitative, Quantitative, Geography, Demographics)
 BLOCKED_NON_MEDICAL_TUIS: Set[str] = {
     "T051", "T052", "T053", "T054", "T055", "T056", "T057", "T058",
     "T062", "T063", "T064", "T065", "T066", "T067", "T068", "T069",
@@ -109,12 +108,7 @@ ONTOLOGY_DEFS = {
 
 
 def normalize_alias(text: str) -> str:
-    """
-    Canonical normalization for ontology alias matching:
-    - Lowercases
-    - Converts inverted commas ('Infarction, Myocardial' -> 'myocardial infarction') if 2 parts
-    - Collapses punctuation/hyphens into single spaces
-    """
+    """Canonical normalization for ontology alias matching."""
     if not text:
         return ""
     raw = text.strip()
@@ -131,11 +125,7 @@ def normalize_alias(text: str) -> str:
 # ============================================================================
 
 def _find_linker_subfolder(kb_key: str) -> Optional[Path]:
-    """
-    Locates the folder containing concept_aliases.json / tfidf_vectorizer.joblib
-    for a given ontology ('umls', 'mesh', 'rxnorm', 'hpo', 'go').
-    Supports both flat (data/linkers/umls/) and S3 nested (data/linkers/2023-04-23/umls/) layouts.
-    """
+    """Locates the folder containing concept_aliases.json / tfidf_vectorizer.joblib."""
     candidates = [
         LINKERS_DIR / kb_key,
         LINKERS_DIR / "2023-04-23" / kb_key,
@@ -153,7 +143,6 @@ def _find_linker_subfolder(kb_key: str) -> Optional[Path]:
             if (folder / "concept_aliases.json").exists() or (folder / "tfidf_vectorizer.joblib").exists():
                 return folder
 
-    # Recursive fallback scan inside LINKERS_DIR
     if LINKERS_DIR.exists():
         for p in LINKERS_DIR.rglob("concept_aliases.json"):
             parent_name = p.parent.name.lower()
@@ -163,10 +152,7 @@ def _find_linker_subfolder(kb_key: str) -> Optional[Path]:
 
 
 def _find_kb_jsonl_file(kb_key: str) -> Optional[Path]:
-    """
-    Locates the .jsonl Knowledge Base definition file for a given ontology.
-    Checks data/linkers/kbs/, data/linkers/<kb_key>/, and recursive subdirectories.
-    """
+    """Locates the .jsonl Knowledge Base definition file for a given ontology."""
     meta = ONTOLOGY_DEFS.get(kb_key, {})
     filenames = meta.get("jsonl_candidates", [f"{kb_key}.jsonl"])
 
@@ -194,10 +180,7 @@ def _find_kb_jsonl_file(kb_key: str) -> Optional[Path]:
 
 
 def get_ontology_files_status() -> Dict[str, Any]:
-    """
-    Inspects data/linkers/ and ontology_kb.db to report which offline files are present
-    and how many concepts/aliases are currently indexed.
-    """
+    """Reports status of offline linker folders, .jsonl definitions, and compiled database."""
     os.makedirs(LINKERS_DIR, exist_ok=True)
     os.makedirs(KBS_DIR, exist_ok=True)
 
@@ -266,12 +249,12 @@ def get_ontology_files_status() -> Dict[str, Any]:
 
 
 # ============================================================================
-# 3. DISK-BACKED SQLITE ONTOLOGY COMPILER & ENGINE (< 25 MB RAM)
+# 3. DISK-BACKED SQLITE ONTOLOGY COMPILER & ENGINE (< 50 MB RAM)
 # ============================================================================
 
 def _get_ontology_db_conn() -> sqlite3.Connection:
     os.makedirs(ONTOLOGY_DB_PATH.parent, exist_ok=True)
-    conn = sqlite3.connect(ONTOLOGY_DB_PATH, timeout=30.0, check_same_thread=False)
+    conn = sqlite3.connect(str(ONTOLOGY_DB_PATH), timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript("""
         PRAGMA journal_mode = WAL;
@@ -286,26 +269,49 @@ def _init_ontology_db_schema(conn: sqlite3.Connection):
             cui TEXT PRIMARY KEY,
             canonical_name TEXT NOT NULL,
             kb_source TEXT NOT NULL,
-            semantic_category TEXT NOT NULL,
+            semantic_category TEXT NOT NULL DEFAULT 'clinical',
             tui_list TEXT DEFAULT '',
+            types TEXT DEFAULT '[]',
             definition TEXT DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS kb_aliases (
             alias_norm TEXT NOT NULL,
             cui TEXT NOT NULL,
+            canonical_name TEXT NOT NULL DEFAULT '',
+            kb_source TEXT NOT NULL DEFAULT '',
             is_canonical INTEGER DEFAULT 0,
-            priority INTEGER DEFAULT 3
+            priority INTEGER DEFAULT 3,
+            PRIMARY KEY (alias_norm, cui)
         );
     """)
 
+    # Safe migration to ensure columns exist on any pre-existing table
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(kb_concepts);")
+    concept_cols = {row["name"] for row in cursor.fetchall()}
+    if "semantic_category" not in concept_cols:
+        cursor.execute("ALTER TABLE kb_concepts ADD COLUMN semantic_category TEXT NOT NULL DEFAULT 'clinical';")
+    if "tui_list" not in concept_cols:
+        cursor.execute("ALTER TABLE kb_concepts ADD COLUMN tui_list TEXT DEFAULT '';")
+    if "types" not in concept_cols:
+        cursor.execute("ALTER TABLE kb_concepts ADD COLUMN types TEXT DEFAULT '[]';")
+
+    cursor.execute("PRAGMA table_info(kb_aliases);")
+    alias_cols = {row["name"] for row in cursor.fetchall()}
+    if "canonical_name" not in alias_cols:
+        cursor.execute("ALTER TABLE kb_aliases ADD COLUMN canonical_name TEXT NOT NULL DEFAULT '';")
+    if "kb_source" not in alias_cols:
+        cursor.execute("ALTER TABLE kb_aliases ADD COLUMN kb_source TEXT NOT NULL DEFAULT '';")
+    if "is_canonical" not in alias_cols:
+        cursor.execute("ALTER TABLE kb_aliases ADD COLUMN is_canonical INTEGER DEFAULT 0;")
+    if "priority" not in alias_cols:
+        cursor.execute("ALTER TABLE kb_aliases ADD COLUMN priority INTEGER DEFAULT 3;")
+    conn.commit()
+
 
 def _classify_tuis(tuis: List[str], default_category: str = "clinical") -> Optional[str]:
-    """
-    Maps a list of UMLS TUIs to a high-yield clinical category ('anatomy', 'microorganism',
-    'disease', 'sign_symptom', 'drug_chemical', 'procedure', 'physiology').
-    Returns None if the concept belongs strictly to blocked non-medical TUIs.
-    """
+    """Maps UMLS TUIs to high-yield clinical categories or returns None if strictly non-medical."""
     if not tuis:
         return default_category
 
@@ -328,36 +334,59 @@ def _classify_tuis(tuis: List[str], default_category: str = "clinical") -> Optio
 
 def build_offline_ontology_index(
     selected_ontologies: Optional[List[str]] = None,
-    progress_callback=None,
+    target_kbs: Optional[List[str]] = None,
+    kbs: Optional[List[str]] = None,
+    ontologies: Optional[List[str]] = None,
+    force_rebuild: bool = True,
+    progress_callback: Optional[Callable] = None,
+    **kwargs,
 ) -> Dict[str, Any]:
     """
-    Streams the downloaded .jsonl Knowledge Base files and/or concept_aliases.json files
-    into data/linkers/ontology_kb.db.
-    Designed to index 3M+ UMLS/MeSH/RxNorm/HPO/GO concepts in chunks while using < 50 MB RAM.
+    Streams downloaded .jsonl and alias files into ontology_kb.db in low-RAM batches.
+    Accepts flexible keyword arguments to accommodate all router caller contracts.
     """
-    if not selected_ontologies:
-        selected_ontologies = ["mesh", "rxnorm", "hpo", "go", "umls"]
+    active_kbs = selected_ontologies or target_kbs or kbs or ontologies
+    if not active_kbs:
+        active_kbs = ["mesh", "rxnorm", "hpo", "go", "umls"]
+
+    callback = progress_callback or kwargs.get("callback") or kwargs.get("progress")
+
+    def _report_progress(pct: float, stage: str, msg: str = ""):
+        if not callback:
+            return
+        try:
+            callback(pct, stage, msg)
+        except TypeError:
+            try:
+                callback(pct, f"{stage}: {msg}" if msg else stage)
+            except TypeError:
+                try:
+                    callback(pct)
+                except Exception:
+                    pass
 
     os.makedirs(LINKERS_DIR, exist_ok=True)
     total_concepts = 0
     total_aliases = 0
 
     with closing(_get_ontology_db_conn()) as conn:
-        conn.executescript("""
-            PRAGMA journal_mode = WAL;
-            PRAGMA synchronous = OFF;
-            PRAGMA temp_store = MEMORY;
-            PRAGMA cache_size = -128000;
-            DROP INDEX IF EXISTS idx_kb_aliases_norm;
-            DROP INDEX IF EXISTS idx_kb_aliases_cui;
-            DELETE FROM kb_concepts;
-            DELETE FROM kb_aliases;
-        """)
+        if force_rebuild:
+            conn.executescript("""
+                PRAGMA journal_mode = WAL;
+                PRAGMA synchronous = OFF;
+                PRAGMA temp_store = MEMORY;
+                PRAGMA cache_size = -128000;
+                DROP INDEX IF EXISTS idx_kb_aliases_norm;
+                DROP INDEX IF EXISTS idx_kb_aliases_cui;
+                DROP TABLE IF EXISTS kb_concepts;
+                DROP TABLE IF EXISTS kb_aliases;
+            """)
+
         _init_ontology_db_schema(conn)
         cursor = conn.cursor()
 
-        total_sources = len(selected_ontologies)
-        for s_idx, kb_key in enumerate(selected_ontologies):
+        total_sources = len(active_kbs)
+        for s_idx, kb_key in enumerate(active_kbs):
             if kb_key not in ONTOLOGY_DEFS:
                 continue
 
@@ -368,11 +397,8 @@ def build_offline_ontology_index(
             linker_folder = _find_linker_subfolder(kb_key)
             aliases_json_path = (linker_folder / "concept_aliases.json") if linker_folder else None
 
-            if progress_callback:
-                progress_callback(
-                    int(10 + 75 * (s_idx / max(total_sources, 1))),
-                    f"Indexing {meta['name']}..."
-                )
+            pct_base = int(10 + 75 * (s_idx / max(total_sources, 1)))
+            _report_progress(pct_base, f"Indexing {meta['name']}", f"Reading definitions for {kb_key.upper()}...")
 
             concept_batch = []
             alias_batch = []
@@ -384,8 +410,8 @@ def build_offline_ontology_index(
                     cursor.executemany(
                         """
                         INSERT OR REPLACE INTO kb_concepts
-                        (cui, canonical_name, kb_source, semantic_category, tui_list, definition)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                        (cui, canonical_name, kb_source, semantic_category, tui_list, types, definition)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
                         """,
                         concept_batch,
                     )
@@ -394,8 +420,8 @@ def build_offline_ontology_index(
                 if alias_batch:
                     cursor.executemany(
                         """
-                        INSERT INTO kb_aliases (alias_norm, cui, is_canonical, priority)
-                        VALUES (?, ?, ?, ?)
+                        INSERT OR REPLACE INTO kb_aliases (alias_norm, cui, canonical_name, kb_source, is_canonical, priority)
+                        VALUES (?, ?, ?, ?, ?, ?)
                         """,
                         alias_batch,
                     )
@@ -403,7 +429,7 @@ def build_offline_ontology_index(
                     alias_batch.clear()
                 conn.commit()
 
-            # Path A: Stream .jsonl Knowledge Base line-by-line (Constant ~5MB RAM)
+            # Path A: Stream .jsonl Knowledge Base line-by-line (Constant ~5 MB RAM)
             if jsonl_path and jsonl_path.exists():
                 logger.info(f"Streaming ontology JSONL: {jsonl_path}")
                 with open(jsonl_path, "r", encoding="utf-8", errors="ignore") as jf:
@@ -433,34 +459,36 @@ def build_offline_ontology_index(
                             kb_key,
                             sem_cat,
                             ",".join(tuis),
+                            json.dumps(tuis),
                             defn,
                         ))
                         seen_cuis_in_kb.add(cui)
 
                         canon_norm = normalize_alias(canonical)
                         if canon_norm and len(canon_norm) >= 2:
-                            alias_batch.append((canon_norm, cui, 1, prio))
+                            alias_batch.append((canon_norm, cui, canonical, kb_key, 1, prio))
 
                         seen_norms = {canon_norm}
                         for raw_alias in (obj.get("aliases") or [])[:25]:
                             a_norm = normalize_alias(raw_alias)
                             if a_norm and len(a_norm) >= 2 and a_norm not in seen_norms:
                                 seen_norms.add(a_norm)
-                                alias_batch.append((a_norm, cui, 0, prio))
+                                alias_batch.append((a_norm, cui, canonical, kb_key, 0, prio))
 
                         if len(concept_batch) >= 15000 or len(alias_batch) >= 40000:
                             _flush_batches()
 
                 _flush_batches()
 
-            # Path B: Also ingest concept_aliases.json if .jsonl was not present
+            # Path B: Handle concept_aliases.json if present without crashing on lists
             if aliases_json_path and aliases_json_path.exists() and not seen_cuis_in_kb:
-                logger.info(f"Ingesting concept_aliases.json from {aliases_json_path}")
+                logger.info(f"Checking concept_aliases.json from {aliases_json_path}")
                 try:
                     with open(aliases_json_path, "r", encoding="utf-8", errors="ignore") as af:
-                        aliases_dict = json.load(af)
-                    if isinstance(aliases_dict, dict):
-                        for cui, alias_list in aliases_dict.items():
+                        aliases_data = json.load(af)
+
+                    if isinstance(aliases_data, dict):
+                        for cui, alias_list in aliases_data.items():
                             if not alias_list or not isinstance(alias_list, list):
                                 continue
                             canonical = str(alias_list[0]).strip()
@@ -472,6 +500,7 @@ def build_offline_ontology_index(
                                 kb_key,
                                 default_cat,
                                 "",
+                                "[]",
                                 "",
                             ))
                             seen_norms = set()
@@ -479,16 +508,17 @@ def build_offline_ontology_index(
                                 a_norm = normalize_alias(str(a_str))
                                 if a_norm and len(a_norm) >= 2 and a_norm not in seen_norms:
                                     seen_norms.add(a_norm)
-                                    alias_batch.append((a_norm, str(cui), 1 if idx == 0 else 0, prio))
+                                    alias_batch.append((a_norm, str(cui), canonical, kb_key, 1 if idx == 0 else 0, prio))
 
                             if len(concept_batch) >= 15000 or len(alias_batch) >= 40000:
                                 _flush_batches()
                         _flush_batches()
+                    elif isinstance(aliases_data, list):
+                        logger.info(f"{aliases_json_path} contains {len(aliases_data):,} pre-indexed vector strings.")
                 except Exception as e:
-                    logger.warning(f"Failed reading {aliases_json_path}: {e}")
+                    logger.warning(f"Failed processing {aliases_json_path}: {e}")
 
-        if progress_callback:
-            progress_callback(90, "Building B-Tree lookup indices on ontology_kb.db...")
+        _report_progress(90.0, "Building Indexes", "Optimizing B-Tree lookup indices on ontology_kb.db...")
 
         conn.executescript("""
             CREATE INDEX IF NOT EXISTS idx_kb_aliases_norm ON kb_aliases(alias_norm, is_canonical DESC, priority ASC);
@@ -498,14 +528,17 @@ def build_offline_ontology_index(
         conn.commit()
 
     resolve_ontology_concept.cache_clear()
-    if progress_callback:
-        progress_callback(100, f"Indexed {total_concepts:,} concepts and {total_aliases:,} clinical aliases.")
+    _report_progress(100.0, "Completed", f"Indexed {total_concepts:,} concepts and {total_aliases:,} clinical aliases.")
 
     return {
         "status": "success",
         "indexed_concepts": total_concepts,
         "indexed_aliases": total_aliases,
     }
+
+
+# Alias for cross-module compatibility
+build_ontology_database = build_offline_ontology_index
 
 
 # ============================================================================
@@ -516,14 +549,10 @@ _TFIDF_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def _load_tfidf_matcher(kb_key: str) -> Optional[Dict[str, Any]]:
-    """
-    Lazy loader for offline character 3-gram TF-IDF matrices (mesh, rxnorm, hpo, go).
-    Uses scipy.sparse dot products so it runs on CPU with zero C++ nmslib crashes on Windows.
-    """
+    """Lazy loader for offline character 3-gram TF-IDF matrices (mesh, rxnorm, hpo, go)."""
     if kb_key in _TFIDF_CACHE:
         return _TFIDF_CACHE[kb_key]
 
-    # Avoid loading the 759MB/516MB UMLS matrix into RAM on 12GB systems; SQLite handles UMLS
     if kb_key == "umls":
         return None
 
@@ -547,23 +576,27 @@ def _load_tfidf_matcher(kb_key: str) -> Optional[Dict[str, Any]]:
         tfidf_matrix = scipy.sparse.load_npz(mat_path)
 
         with open(aliases_path, "r", encoding="utf-8", errors="ignore") as f:
-            cui_to_aliases = json.load(f)
+            raw_aliases = json.load(f)
 
-        alias_to_cui: List[Tuple[str, str]] = []
-        seen_aliases: Set[str] = set()
-        for cui, a_list in cui_to_aliases.items():
-            for a in a_list:
-                if a not in seen_aliases:
-                    seen_aliases.add(a)
-                    alias_to_cui.append((a, cui))
+        if isinstance(raw_aliases, list):
+            aliases = [str(a) for a in raw_aliases]
+        elif isinstance(raw_aliases, dict):
+            aliases = []
+            for cui, a_list in raw_aliases.items():
+                if isinstance(a_list, list):
+                    aliases.extend(str(a) for a in a_list)
+                else:
+                    aliases.append(str(a_list))
+        else:
+            aliases = []
 
         matcher = {
             "vectorizer": vectorizer,
             "matrix": tfidf_matrix,
-            "alias_to_cui": alias_to_cui,
+            "aliases": aliases,
         }
         _TFIDF_CACHE[kb_key] = matcher
-        logger.info(f"Loaded offline TF-IDF linker for '{kb_key}' ({len(alias_to_cui):,} aliases).")
+        logger.info(f"Loaded offline TF-IDF linker for '{kb_key}' ({len(aliases):,} aliases).")
         return matcher
     except Exception as e:
         logger.debug(f"TF-IDF matcher for {kb_key} skipped: {e}")
@@ -594,17 +627,12 @@ def resolve_ontology_concept(
     enable_fuzzy_tfidf: bool = True,
     min_tfidf_score: float = 0.84,
 ) -> Dict[str, Any]:
-    """
-    Resolves a candidate medical phrase against the offline UMLS / MeSH / RxNorm / HPO / GO
-    ontologies:
-    1. Exact normalized alias lookup in ontology_kb.db (< 0.3ms, 0 RAM).
-    2. Optional Character 3-gram TF-IDF cosine similarity lookup across MeSH/RxNorm/HPO.
-    """
+    """Resolves a clinical phrase against offline ontologies using exact B-Tree lookup + TF-IDF fallback."""
     norm = normalize_alias(term)
     if not norm or len(norm) < 2:
         return {"matched": False, "cui": "", "canonical_name": term, "semantic_category": "unknown", "score": 0.0}
 
-    # 1. Fast SQLite B-Tree Exact & Canonical Alias Lookup
+    # 1. Fast SQLite B-Tree Exact & Canonical Alias Lookup (< 0.3ms, 0 RAM)
     if ONTOLOGY_DB_PATH.exists():
         try:
             with closing(_get_ontology_db_conn()) as conn:
@@ -649,19 +677,35 @@ def resolve_ontology_concept(
                 scores = (matcher["matrix"] @ q_vec.T).toarray().ravel()
                 best_idx = int(np.argmax(scores))
                 best_score = float(scores[best_idx])
-                if best_score >= min_tfidf_score and best_idx < len(matcher["alias_to_cui"]):
-                    matched_alias, matched_cui = matcher["alias_to_cui"][best_idx]
-                    meta = _lookup_cui_metadata(matched_cui)
-                    return {
-                        "matched": True,
-                        "cui": matched_cui,
-                        "canonical_name": meta["canonical_name"] if meta else matched_alias,
-                        "kb_source": kb_key,
-                        "semantic_category": meta["semantic_category"] if meta else ONTOLOGY_DEFS[kb_key]["default_category"],
-                        "tui_list": meta["tui_list"] if meta else "",
-                        "definition": meta["definition"] if meta else "",
-                        "score": round(best_score, 4),
-                    }
+                if best_score >= min_tfidf_score and best_idx < len(matcher["aliases"]):
+                    matched_alias = matcher["aliases"][best_idx]
+                    matched_norm = normalize_alias(matched_alias)
+                    if ONTOLOGY_DB_PATH.exists():
+                        with closing(_get_ontology_db_conn()) as conn:
+                            cur = conn.cursor()
+                            cur.execute(
+                                """
+                                SELECT c.cui, c.canonical_name, c.kb_source, c.semantic_category, c.tui_list, c.definition
+                                FROM kb_aliases a
+                                JOIN kb_concepts c ON a.cui = c.cui
+                                WHERE a.alias_norm = ?
+                                ORDER BY a.is_canonical DESC, a.priority ASC
+                                LIMIT 1
+                                """,
+                                (matched_norm,)
+                            )
+                            row = cur.fetchone()
+                            if row:
+                                return {
+                                    "matched": True,
+                                    "cui": row["cui"],
+                                    "canonical_name": row["canonical_name"],
+                                    "kb_source": row["kb_source"],
+                                    "semantic_category": row["semantic_category"],
+                                    "tui_list": row["tui_list"] or "",
+                                    "definition": row["definition"] or "",
+                                    "score": round(best_score, 4),
+                                }
             except Exception:
                 continue
 
@@ -676,14 +720,10 @@ _LOADED_SCISPACY_PIPELINES: Dict[str, Any] = {}
 
 
 def _find_extracted_spacy_model_dir(model_name: str) -> Optional[Path]:
-    """
-    Searches data/models/scispacy/ for an extracted spaCy model folder containing config.cfg
-    or meta.json so models can load directly from disk without needing pip installation.
-    """
+    """Searches data/models/scispacy/ for an extracted spaCy model directory."""
     os.makedirs(SCISPACY_MODELS_DIR, exist_ok=True)
     target_root = SCISPACY_MODELS_DIR / model_name
 
-    # If a .tar.gz or .whl was dropped manually into data/models/scispacy/, auto-extract it
     for archive_path in SCISPACY_MODELS_DIR.glob(f"{model_name}*"):
         if archive_path.is_file() and (archive_path.name.endswith(".tar.gz") or archive_path.name.endswith(".whl")):
             if not target_root.exists():
@@ -705,7 +745,10 @@ def _extract_model_archive(archive_path: Path, dest_dir: Path) -> bool:
         os.makedirs(dest_dir, exist_ok=True)
         if archive_path.name.endswith(".tar.gz") or archive_path.name.endswith(".tgz"):
             with tarfile.open(archive_path, "r:gz") as tar:
-                tar.extractall(path=dest_dir)
+                if hasattr(tarfile, "data_filter"):
+                    tar.extractall(path=dest_dir, filter="data")
+                else:
+                    tar.extractall(path=dest_dir)
             return True
         elif archive_path.name.endswith(".whl") or archive_path.name.endswith(".zip"):
             with zipfile.ZipFile(archive_path, "r") as zf:
@@ -717,7 +760,7 @@ def _extract_model_archive(archive_path: Path, dest_dir: Path) -> bool:
 
 
 def is_scispacy_model_downloaded(model_id: str) -> bool:
-    """Checks if a SciSpaCy model (or ensemble) is installed in Python or extracted in data/models/scispacy/."""
+    """Checks if a SciSpaCy model is installed in Python or extracted in data/models/scispacy/."""
     if model_id == "en_core_sci_md+bionlp+bc5cdr":
         return all(
             is_scispacy_model_downloaded(m)
@@ -735,10 +778,7 @@ def is_scispacy_model_downloaded(model_id: str) -> bool:
 
 
 def download_scispacy_model(model_id: str) -> Dict[str, Any]:
-    """
-    Downloads the requested SciSpaCy model archive(s) from S3 into data/models/scispacy/
-    and extracts the spaCy pipeline folder for 100% offline loading.
-    """
+    """Downloads SciSpaCy model archive from S3 into data/models/scispacy/ and extracts it."""
     os.makedirs(SCISPACY_MODELS_DIR, exist_ok=True)
 
     if model_id not in SCISPACY_MODEL_CATALOG:
@@ -792,7 +832,7 @@ def download_scispacy_model(model_id: str) -> Dict[str, Any]:
 
 
 def get_configured_scispacy_model() -> str:
-    """Fetches the user-selected SciSpaCy model from SQLite user_state -> app_persistence."""
+    """Fetches user-selected SciSpaCy model from SQLite user_state."""
     try:
         with closing(get_db_connection()) as conn:
             cur = conn.cursor()
@@ -808,11 +848,7 @@ def get_configured_scispacy_model() -> str:
 
 
 def load_scispacy_pipeline(model_id: Optional[str] = None) -> List[Any]:
-    """
-    Loads and caches the configured SciSpaCy pipeline(s) (or falls back to any available
-    local SciSpaCy / medSpaCy / en_core_web_sm pipeline).
-    Returns a list of loaded spaCy Language objects (1 for single models, up to 3 for Ensemble).
-    """
+    """Loads and caches the configured SciSpaCy pipeline(s) on CPU."""
     target_id = model_id or get_configured_scispacy_model()
     if target_id in _LOADED_SCISPACY_PIPELINES:
         return _LOADED_SCISPACY_PIPELINES[target_id]
@@ -838,7 +874,6 @@ def load_scispacy_pipeline(model_id: Optional[str] = None) -> List[Any]:
         except Exception:
             pass
 
-    # Fallback chain if selected model is not downloaded yet
     if not pipelines:
         for fallback_name in ("en_core_sci_md", "en_core_sci_sm", "en_ner_bionlp13cg_md", "en_ner_bc5cdr_md", "en_core_web_sm"):
             try:

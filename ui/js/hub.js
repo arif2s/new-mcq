@@ -11,6 +11,9 @@ let hubSocket = null;
 
 // Expose globally so app.js and quiz.js can refresh the Hub after saving or confirming topics
 window.loadSessions = loadSessions;
+window.clearActiveInspectorSession = function() {
+    activeInspectorSessionId = null;
+};
 
 async function loadSessions(silent = false) {
     const loadingEl = document.getElementById('hub-loading');
@@ -49,13 +52,12 @@ function getCircleStates(session) {
         else c2State = 'blinking';
     }
 
-    // Circle 3: Greyed if topics not reviewed or llm_status is 'none'; blinking if 'processing'; solid if 'ready'
+    // Circle 3: Greyed if topics not reviewed; blinking if 'processing'; solid if 'ready'; red if 'failed'/'partial'
     let c3State = 'grey';
-    if (reviewed && refsStatus === 'ready') {
+    if (reviewed) {
         if (llmStatus === 'processing') c3State = 'blinking';
         else if (llmStatus === 'ready') c3State = 'solid';
-    } else if (reviewed && llmStatus === 'processing') {
-        c3State = 'blinking';
+        else if (llmStatus === 'failed' || llmStatus === 'partial') c3State = llmStatus;
     }
 
     return { c1: c1Active ? 'solid' : 'grey', c2: c2State, c3: c3State };
@@ -72,6 +74,9 @@ function renderStatusCirclesHTML(session) {
         if (state === 'blinking') {
             return 'bg-brand-500 text-white border-brand-400 animate-pulse shadow-[0_0_10px_rgba(168,85,247,0.8)]';
         }
+        if (state === 'failed' || state === 'partial') {
+            return 'bg-danger-500 text-white border-danger-400 shadow-[0_0_8px_rgba(239,68,68,0.6)]';
+        }
         return 'glass-panel text-muted opacity-40 border-gray-600';
     };
 
@@ -87,7 +92,11 @@ function renderStatusCirclesHTML(session) {
         ? '3: LM Studio Notes & MCQ Explanations Ready'
         : c3 === 'blinking'
             ? '3: LM Studio is Generating Notes & Explanations...'
-            : '3: LLM Notes Not Generated';
+            : c3 === 'failed'
+                ? '3: LLM Processing Completely Failed (Click card to view details & retry)'
+                : c3 === 'partial'
+                    ? '3: LLM Processing Partially Completed / Failed (Click card to view details & retry)'
+                    : '3: LLM Notes Not Generated';
 
     return `
         <div class="hub-status-circles flex items-center gap-1.5" data-session-id="${window.escapeHTML(session.id)}">
@@ -343,12 +352,17 @@ async function reopenTopicVerificationForSession(session) {
 // Contextual 3rd-Column Right Sidebar Inspector for Hub Cards
 // =========================================================
 
-async function openHubCardInspector(session) {
+async function openHubCardInspector(session, forceOpen = true) {
     const title = session.custom_title || session.subject_name || 'Session Analytics';
-    window.openInspector(
-        title,
-        `<div class="text-center py-10 text-muted text-xs animate-pulse">Loading session analytics &amp; queue status...</div>`
-    );
+
+    const inspectorContent = document.getElementById('inspector-content');
+    if (forceOpen || !inspectorContent || !inspectorContent.innerHTML.trim()) {
+        window.openInspector(
+            title,
+            `<div class="text-center py-10 text-muted text-xs animate-pulse">Loading session analytics &amp; queue status...</div>`,
+            forceOpen
+        );
+    }
 
     let inspectorData = null;
     try {
@@ -360,12 +374,21 @@ async function openHubCardInspector(session) {
         console.warn("Inspector endpoint fallback:", e);
     }
 
-    // Fallback computation from local AppState + session if needed
+    if (inspectorData) {
+        if (inspectorData.llm_status) session.llm_status = inspectorData.llm_status;
+        if (inspectorData.refs_status) session.refs_status = inspectorData.refs_status;
+        if (inspectorData.topics_reviewed !== undefined) session.topics_reviewed = inspectorData.topics_reviewed;
+    }
+
     const state = window.AppState ? window.AppState.get() : {};
     const expertiseMap = state.topicExpertise || {};
     const topics = Array.isArray(session.topics) ? session.topics : [];
 
-    const queueInfo = inspectorData?.queue_info || session.queue_info || { in_queue: false, position: 0, total_pending: 0 };
+    const queueInfo = inspectorData?.queue_info || session.queue_info || { in_queue: false, position: 0, total_pending: 0, failed_count: 0, completed_count: 0 };
+    const llmStatus = (inspectorData?.llm_status || session.llm_status || 'none').toLowerCase();
+    const failedCnt = queueInfo?.failed_count || 0;
+    const completedCnt = queueInfo?.completed_count || 0;
+
     const topicProficiency = inspectorData?.topic_proficiency || topics.map(tName => {
         const match = Object.values(expertiseMap).find(e => e.topic && e.topic.toLowerCase() === tName.toLowerCase());
         return {
@@ -408,14 +431,47 @@ async function openHubCardInspector(session) {
             <p class="text-muted text-[11px]">🕒 <strong>Last Attempted:</strong> ${window.escapeHTML(lastAttemptStr)}</p>
             <p class="text-muted text-[11px] mt-1">📊 <strong>Progress:</strong> ${completedQ} of ${totalQ} Questions Completed</p>
             ${!session.topics_reviewed ? `
-                <button type="button" id="insp-review-topics-btn" class="primary-btn w-full py-2 mt-3 text-xs font-bold rounded-lg">
+                <button type="button" id="insp-review-topics-btn" class="primary-btn w-full py-2 mt-3 text-xs font-bold rounded-lg cursor-pointer">
                     🩺 Review &amp; Confirm Topic List
                 </button>
             ` : ''}
         </div>
     `;
 
-    // 2. Processing Queue Position & Priority Boost
+    // 2. LLM Failure Alert Banner (with Retry Button)
+    if (llmStatus === 'failed' || (llmStatus === 'partial' && completedCnt === 0)) {
+        html += `
+            <div class="glass-card p-4 rounded-xl border border-danger-500/40 bg-danger-500/10 text-danger-300">
+                <div class="flex items-center gap-2 font-bold text-xs uppercase tracking-wider mb-1">
+                    <span class="w-2.5 h-2.5 rounded-full bg-danger-500 animate-pulse"></span>
+                    LLM Processing Completely Failed
+                </div>
+                <p class="text-[11px] opacity-80 mb-3 leading-relaxed">
+                    Generation of notes or explanations failed due to a model error or lost endpoint connection.
+                </p>
+                <button type="button" id="btn-retry-session-llm" class="px-3 py-2 bg-danger-600 hover:bg-danger-500 text-white rounded-lg font-bold text-xs transition-colors flex items-center justify-center gap-1.5 w-full cursor-pointer shadow">
+                    🔄 Retry LLM Processing
+                </button>
+            </div>
+        `;
+    } else if (llmStatus === 'partial' || failedCnt > 0) {
+        html += `
+            <div class="glass-card p-4 rounded-xl border border-warning-500/40 bg-warning-500/10 text-warning-300">
+                <div class="flex items-center gap-2 font-bold text-xs uppercase tracking-wider mb-1">
+                    <span class="w-2.5 h-2.5 rounded-full bg-warning-500 animate-pulse"></span>
+                    LLM Processing Partially Completed
+                </div>
+                <p class="text-[11px] opacity-80 mb-3 leading-relaxed">
+                    Some notes generated successfully, but ${failedCnt || 1} task(s) encountered processing errors.
+                </p>
+                <button type="button" id="btn-retry-session-llm" class="px-3 py-2 bg-warning-600 hover:bg-warning-500 text-white rounded-lg font-bold text-xs transition-colors flex items-center justify-center gap-1.5 w-full cursor-pointer shadow">
+                    🔄 Retry Failed LLM Tasks
+                </button>
+            </div>
+        `;
+    }
+
+    // 3. Processing Queue Position & Priority Boost
     if (queueInfo && queueInfo.in_queue) {
         html += `
             <div class="glass-card p-4 rounded-xl border border-brand-500/40 bg-brand-600/10">
@@ -426,7 +482,7 @@ async function openHubCardInspector(session) {
                 <p class="text-[11px] text-muted mb-3">
                     ${queueInfo.session_pending_count || 1} task(s) waiting for LM Studio synthesis.
                 </p>
-                <button type="button" id="insp-prioritize-btn" class="primary-btn w-full py-2 text-xs font-bold rounded-lg">
+                <button type="button" id="insp-prioritize-btn" class="primary-btn w-full py-2 text-xs font-bold rounded-lg cursor-pointer">
                     🚀 Raise Priority (Move to #1 in Queue)
                 </button>
             </div>
@@ -510,9 +566,30 @@ async function openHubCardInspector(session) {
     `;
 
     html += `</div>`;
-    window.openInspector(`Hub Card: ${title}`, html);
+    window.openInspector(`Hub Card: ${title}`, html, forceOpen);
 
     // Wire Inspector interactive buttons
+    document.getElementById('btn-retry-session-llm')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        btn.innerHTML = `<span class="animate-spin inline-block">⏳</span> Retrying...`;
+        try {
+            const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/retry`, { method: 'POST' });
+            if (res.ok) {
+                if (window.showToast) window.showToast("LLM processing restarted!");
+                session.llm_status = 'processing';
+                renderHub();
+                setTimeout(() => openHubCardInspector(session, false), 500);
+            } else {
+                if (window.showToast) window.showToast("Failed to trigger retry.");
+                btn.disabled = false;
+            }
+        } catch (err) {
+            console.error("Retry request failed:", err);
+            btn.disabled = false;
+        }
+    });
+
     document.getElementById('insp-review-topics-btn')?.addEventListener('click', () => {
         reopenTopicVerificationForSession(session);
     });
@@ -997,7 +1074,7 @@ function initHubWebSocket() {
                         target.llm_status = data.llm_status || target.llm_status;
                         renderHub();
                         if (activeInspectorSessionId === data.session_id) {
-                            openHubCardInspector(target);
+                            openHubCardInspector(target, false);
                         }
                     } else {
                         loadSessions(true);

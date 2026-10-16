@@ -102,6 +102,11 @@ window.openInspector = function(title, htmlContent, forceOpen = true) {
         sidebar.style.padding = '20px';
         sidebar.style.border = '';
         sidebar.style.overflowY = 'auto';
+    } else {
+        sidebar.classList.add('collapsed');
+        sidebar.style.width = '0px';
+        sidebar.style.padding = '0px';
+        sidebar.style.border = 'none';
     }
 
     const titleEl = sidebar.querySelector('h3');
@@ -263,7 +268,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Ensure Right Inspector starts collapsed cleanly
     window.closeInspector();
-    document.getElementById('close-inspector-btn')?.addEventListener('click', window.closeInspector);
+    document.getElementById('close-inspector-btn')?.addEventListener('click', () => {
+        window.closeInspector();
+        if (typeof window.clearActiveInspectorSession === 'function') {
+            window.clearActiveInspectorSession();
+        }
+    });
 
     // Sidebar Collapse
     const sidebarToggle = document.getElementById('sidebar-toggle');

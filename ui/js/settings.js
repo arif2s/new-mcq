@@ -62,17 +62,20 @@
     const panelSlider = $("setting-panel-alpha");
     const panelVal = $("setting-panel-alpha-val");
     if (panelSlider) {
-      const alpha = state.panelAlpha !== undefined ? state.panelAlpha : 0.78;
+      const alpha = state.panelOpacity !== undefined ? state.panelOpacity : (state.panelAlpha !== undefined ? state.panelAlpha : 0.78);
       panelSlider.value = alpha;
       if (panelVal) panelVal.textContent = Math.round(alpha * 100) + "%";
 
       panelSlider.addEventListener("input", (e) => {
         const val = parseFloat(e.target.value);
-        document.documentElement.style.setProperty("--panel-alpha", val);
         if (panelVal) panelVal.textContent = Math.round(val * 100) + "%";
+        if (window.AppState && window.AppState.applyAppearance) {
+          window.AppState.applyAppearance({ ...window.AppState.get(), panelOpacity: val, panelAlpha: val });
+        }
       });
       panelSlider.addEventListener("change", (e) => {
-        window.AppState.update({ panelAlpha: parseFloat(e.target.value) });
+        const val = parseFloat(e.target.value);
+        window.AppState.update({ panelOpacity: val, panelAlpha: val });
       });
     }
 
@@ -80,17 +83,20 @@
     const cardSlider = $("setting-card-alpha");
     const cardVal = $("setting-card-alpha-val");
     if (cardSlider) {
-      const alpha = state.cardAlpha !== undefined ? state.cardAlpha : 0.82;
+      const alpha = state.cardOpacity !== undefined ? state.cardOpacity : (state.cardAlpha !== undefined ? state.cardAlpha : 0.82);
       cardSlider.value = alpha;
       if (cardVal) cardVal.textContent = Math.round(alpha * 100) + "%";
 
       cardSlider.addEventListener("input", (e) => {
         const val = parseFloat(e.target.value);
-        document.documentElement.style.setProperty("--card-alpha", val);
         if (cardVal) cardVal.textContent = Math.round(val * 100) + "%";
+        if (window.AppState && window.AppState.applyAppearance) {
+          window.AppState.applyAppearance({ ...window.AppState.get(), cardOpacity: val, cardAlpha: val });
+        }
       });
       cardSlider.addEventListener("change", (e) => {
-        window.AppState.update({ cardAlpha: parseFloat(e.target.value) });
+        const val = parseFloat(e.target.value);
+        window.AppState.update({ cardOpacity: val, cardAlpha: val });
       });
     }
 
