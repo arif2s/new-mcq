@@ -16,7 +16,9 @@ aiofiles>=23.2.1
 python-multipart>=0.0.9
 
 # --- Document Parsers & Offline Archive Extraction ---
-docling>=1.0.0                  # ML layout-aware structural document parser
+docling>=2.0.0                  # ML layout-aware structural document parser
+deepsearch-glm>=1.0.0
+pandas>=2.1.4,<3.0.0
 pymupdf>=1.23.0,<2.0.0          # fitz page slicing & heuristic font-size heading extraction
 libzim>=3.2.0                   # Zero-copy >10 GB Wikipedia/medical ZIM B-tree resolution
 markdown>=3.5.0
@@ -26,7 +28,7 @@ markdown>=3.5.0
 spacy>=3.7.2,<3.8.0
 scispacy>=0.5.4
 medspacy>=1.0.0
-typer>=0.9.0,<0.10.0
+typer>=0.15.1
 en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.0/en_core_web_sm-3.7.0-py3-none-any.whl
 
 # --- Sparse Vector & Offline Ontology Linker Support ---
@@ -42,7 +44,7 @@ lancedb>=0.5.0
 pyarrow>=14.0.0,<17.0.0
 onnxruntime>=1.16.0,<2.0.0
 tokenizers>=0.15.0
-huggingface_hub>=0.20.0
+huggingface_hub>=1.31.0,<3.0
 flashrank>=0.2.0
 
 # --- LLM Context Budgeting ---

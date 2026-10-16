@@ -15,6 +15,7 @@ MODEL_DIMENSIONS = {
     "Xenova/all-MiniLM-L6-v2": 384,
     "Xenova/bge-small-en-v1.5": 384,
     "tavakolih/all-MiniLM-L6-v2-pubmed-full": 384,
+    "MaunikG/SapBERT-from-PubMedBERT-fulltext-ONNX": 768,
     "Xenova/SapBERT-from-PubMedBERT-fulltext": 768,
     "onnx-community/Bio_ClinicalBERT-ONNX": 768,
 }

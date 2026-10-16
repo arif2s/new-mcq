@@ -88,17 +88,21 @@ window.renderMarkdownAndMath = function(rawText, containerEl = null) {
 // =========================================================
 // Contextual 3rd-Column Right Inspector Controller
 // =========================================================
-window.openInspector = function(title, htmlContent) {
+window.openInspector = function(title, htmlContent, forceOpen = true) {
     const sidebar = document.getElementById('right-sidebar');
     const content = document.getElementById('inspector-content');
     if (!sidebar || !content) return;
 
-    // Remove inline width: 0 overrides so the 3rd column pops out cleanly
-    sidebar.classList.remove('collapsed');
-    sidebar.style.width = '380px';
-    sidebar.style.padding = '20px';
-    sidebar.style.border = '';
-    sidebar.style.overflowY = 'auto';
+    const isCollapsed = sidebar.classList.contains('collapsed');
+
+    // Only expand if explicitly requested or if it was already open
+    if (forceOpen || !isCollapsed) {
+        sidebar.classList.remove('collapsed');
+        sidebar.style.width = '380px';
+        sidebar.style.padding = '20px';
+        sidebar.style.border = '';
+        sidebar.style.overflowY = 'auto';
+    }
 
     const titleEl = sidebar.querySelector('h3');
     if (titleEl && title) {

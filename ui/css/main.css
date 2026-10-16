@@ -629,8 +629,10 @@ body.dark-theme .moon-icon { display: none; }
 .text-brand-300 { color: var(--c-brand-300) !important; }
 .text-brand-400 { color: var(--c-brand-400) !important; }
 .text-brand-500 { color: var(--c-brand-500) !important; }
+.text-success-300 { color: rgb(18, 199, 84) !important; }
 .text-success-400 { color: var(--c-success-400) !important; }
 .text-success-500 { color: var(--c-success-500) !important; }
+.text-danger-300 { color: rgb(245, 66, 66) !important; }
 .text-danger-400 { color: var(--c-danger-400) !important; }
 .text-danger-500 { color: var(--c-danger-500) !important; }
 .text-warning { color: var(--c-warning) !important; }

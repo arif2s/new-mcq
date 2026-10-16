@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import inspect
 import json
 import logging
 import os
@@ -22,9 +23,9 @@ import sys
 import tarfile
 import threading
 import time
-from typing import Any, Dict, List, Optional
-import urllib.request
+from typing import Any, Callable, Dict, List, Optional
 import urllib.error
+import urllib.request
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -75,7 +76,7 @@ SUPPORTED_EMBEDDING_MODELS: List[Dict[str, Any]] = [
         "default": False,
     },
     {
-        "id": "cambridgeltl/SapBERT-from-PubMedBERT-fulltext",
+        "id": "MaunikG/SapBERT-from-PubMedBERT-fulltext-ONNX",
         "name": "SapBERT Clinical Fulltext (768-d, UMLS Synonym Alignment)",
         "dimension": 768,
         "size_mb": 440,
@@ -193,7 +194,6 @@ def _is_embedding_downloaded(model_id: str) -> bool:
         from parsers.embedding_engine import is_embedding_model_downloaded
         return bool(is_embedding_model_downloaded(model_id))
     except Exception:
-        # Fallback inspection of huggingface hub directory
         hf_dir = Path(getattr(config, "HF_CACHE_DIR", DATA_DIR / "models" / "huggingface"))
         if not hf_dir.exists():
             return False
@@ -214,14 +214,11 @@ def _is_flashrank_downloaded(model_name: str) -> bool:
 
 def _is_scispacy_installed(model_name: str) -> bool:
     """Checks whether the SciSpaCy pipeline is accessible as a package or local directory."""
-    # 1. Python package spec check
     if importlib.util.find_spec(model_name) is not None:
         return True
-    # 2. Local extracted folder check
     extracted_path = SCISPACY_MODELS_DIR / model_name
     if extracted_path.exists() and (extracted_path / "config.cfg").exists():
         return True
-    # 3. Versioned nested folder check inside SCISPACY_MODELS_DIR
     for nested in SCISPACY_MODELS_DIR.glob(f"{model_name}*"):
         if nested.is_dir() and (nested / "config.cfg").exists():
             return True
@@ -252,7 +249,6 @@ def _inspect_ontology_sources() -> Dict[str, Any]:
     kbs_dir = LINKERS_DIR / "kbs"
 
     for kb in kbs:
-        # Check standard and date-stamped folder variants
         candidates = [
             LINKERS_DIR / kb,
             LINKERS_DIR / "2023-04-23" / kb,
@@ -279,7 +275,6 @@ def _inspect_ontology_sources() -> Dict[str, Any]:
             except Exception:
                 folder_size_bytes = 0
 
-        # Check for matching JSONL definition file
         jsonl_candidates = [
             kbs_dir / f"umls_{kb}_2022.jsonl",
             kbs_dir / f"{kb}.jsonl",
@@ -304,7 +299,6 @@ def _inspect_ontology_sources() -> Dict[str, Any]:
             "size_mb": round(folder_size_bytes / (1024 * 1024), 2),
         }
 
-    # Semantic type tree check
     tui_path = kbs_dir / "umls_semantic_type_tree.tsv"
     results["semantic_type_tree"] = {
         "detected": tui_path.exists(),
@@ -374,7 +368,6 @@ def _download_and_extract_scispacy_worker(model_meta: Dict[str, Any]) -> None:
 
         logger.info(f"Starting SciSpaCy model download from {url} to {tar_path}")
 
-        # Stream download with progress tracking
         req = urllib.request.Request(url, headers={"User-Agent": "MedisearchAI-Downloader/1.0"})
         with urllib.request.urlopen(req, timeout=300) as response, open(tar_path, "wb") as out_file:
             total_bytes = int(response.headers.get("Content-Length", 0))
@@ -407,13 +400,11 @@ def _download_and_extract_scispacy_worker(model_meta: Dict[str, Any]) -> None:
         logger.info(f"Extracting {tar_path} into {SCISPACY_MODELS_DIR}")
         extract_target.mkdir(parents=True, exist_ok=True)
         with tarfile.open(tar_path, "r:gz") as tar:
-            # Safe member extraction on Python 3.11+
             if hasattr(tarfile, "data_filter"):
                 tar.extractall(SCISPACY_MODELS_DIR, filter="data")
             else:
                 tar.extractall(SCISPACY_MODELS_DIR)
 
-        # Locate extracted config.cfg and ensure normalized folder path exists
         found_config: Optional[Path] = None
         for cfg in SCISPACY_MODELS_DIR.glob(f"{model_id}*/config.cfg"):
             found_config = cfg.parent
@@ -428,7 +419,6 @@ def _download_and_extract_scispacy_worker(model_meta: Dict[str, Any]) -> None:
                 shutil.rmtree(extract_target)
             shutil.copytree(found_config, extract_target)
 
-        # Clean archive to conserve Windows disk budget
         if tar_path.exists():
             try:
                 tar_path.unlink()
@@ -475,34 +465,97 @@ def _build_ontology_database_worker(target_kbs: Optional[List[str]], force_rebui
         }
 
     try:
-        # Delegate to specialized engine if available
+        # Delegate to specialized engine if available in parsers.scispacy_linker_engine
         try:
-            from parsers.scispacy_linker_engine import build_offline_ontology_index as engine_builder
-            logger.info("Delegating ontology indexing to parsers.scispacy_linker_engine.build_offline_ontology_index")
+            import parsers.scispacy_linker_engine as linker_module
 
-            def _progress_cb(pct: float, stage: str, msg: str):
+            engine_builder = (
+                getattr(linker_module, "build_offline_ontology_index", None)
+                or getattr(linker_module, "build_ontology_database", None)
+                or getattr(linker_module, "build_ontology_index", None)
+            )
+
+            if engine_builder is not None:
+                logger.info(f"Delegating ontology indexing to parsers.scispacy_linker_engine.{engine_builder.__name__}")
+
+                def _progress_cb(*args, **kwargs):
+                    pct = 0.0
+                    stage = "Indexing"
+                    msg = "Processing ontologies..."
+
+                    if len(args) == 1:
+                        if isinstance(args[0], (int, float)):
+                            pct = float(args[0])
+                        elif isinstance(args[0], str):
+                            msg = str(args[0])
+                    elif len(args) == 2:
+                        pct = float(args[0]) if isinstance(args[0], (int, float)) else 0.0
+                        msg = str(args[1])
+                    elif len(args) >= 3:
+                        pct = float(args[0]) if isinstance(args[0], (int, float)) else 0.0
+                        stage = str(args[1])
+                        msg = str(args[2])
+
+                    pct = kwargs.get("pct", kwargs.get("progress", pct))
+                    stage = kwargs.get("stage", stage)
+                    msg = kwargs.get("msg", kwargs.get("message", msg))
+
+                    with _index_lock:
+                        _indexing_state.update({
+                            "progress": round(min(100.0, max(0.0, pct)), 1),
+                            "current_stage": str(stage),
+                            "message": str(msg),
+                        })
+
+                # Dynamically inspect parameter names so any signature in scispacy_linker_engine is supported
+                sig = inspect.signature(engine_builder)
+                params = sig.parameters
+                accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+                call_kwargs = {}
+
+                # 1. Map ontology list
+                for kb_key in ["target_kbs", "kbs", "ontologies", "target_ontologies", "kb_list", "selected_kbs"]:
+                    if kb_key in params:
+                        call_kwargs[kb_key] = target_kbs
+                        break
+
+                # 2. Map force rebuild flag
+                for force_key in ["force_rebuild", "force", "rebuild"]:
+                    if force_key in params:
+                        call_kwargs[force_key] = force_rebuild
+                        break
+
+                # 3. Map progress callback
+                for cb_key in ["progress_callback", "progress_cb", "callback", "progress"]:
+                    if cb_key in params:
+                        call_kwargs[cb_key] = _progress_cb
+                        break
+
+                if accepts_kwargs:
+                    if not any(k in call_kwargs for k in ["target_kbs", "kbs", "ontologies"]):
+                        call_kwargs["target_kbs"] = target_kbs
+                    if not any(k in call_kwargs for k in ["force_rebuild", "force", "rebuild"]):
+                        call_kwargs["force_rebuild"] = force_rebuild
+                    if not any(k in call_kwargs for k in ["progress_callback", "progress_cb", "callback"]):
+                        call_kwargs["progress_callback"] = _progress_cb
+
+                res = engine_builder(**call_kwargs)
+
                 with _index_lock:
                     _indexing_state.update({
-                        "progress": round(pct, 1),
-                        "current_stage": stage,
-                        "message": msg,
+                        "status": "completed",
+                        "progress": 100.0,
+                        "current_stage": "Complete",
+                        "message": "Ontology database index built successfully.",
+                        "details": res if isinstance(res, dict) else ({"result": res} if res is not None else {}),
+                        "finished_at": time.time(),
                     })
-
-            res = engine_builder(target_kbs=target_kbs, force_rebuild=force_rebuild, progress_callback=_progress_cb)
-            with _index_lock:
-                _indexing_state.update({
-                    "status": "completed",
-                    "progress": 100.0,
-                    "current_stage": "Complete",
-                    "message": "Ontology database index built successfully.",
-                    "details": res if isinstance(res, dict) else {},
-                    "finished_at": time.time(),
-                })
-            return
+                return
         except (ImportError, AttributeError):
             logger.info("Using embedded streaming SQLite compiler for ontology linking")
 
-        # Native Streaming Implementation
+        # Native Streaming Implementation Fallback
         if force_rebuild and ONTOLOGY_DB_PATH.exists():
             try:
                 ONTOLOGY_DB_PATH.unlink()
@@ -560,9 +613,7 @@ def _build_ontology_database_worker(target_kbs: Optional[List[str]], force_rebui
                     "message": f"Reading knowledge base entries for {kb.upper()}...",
                 })
 
-            # Stage A: Load .jsonl definitions if available
             jsonl_file = kb_info.get("jsonl_path")
-            concept_defs: Dict[str, Dict[str, Any]] = {}
             if jsonl_file and Path(jsonl_file).exists():
                 batch_c = []
                 with open(jsonl_file, "r", encoding="utf-8", errors="replace") as jf:
@@ -596,7 +647,6 @@ def _build_ontology_database_worker(target_kbs: Optional[List[str]], force_rebui
                     conn.commit()
                     total_concepts_inserted += len(batch_c)
 
-            # Stage B: Stream concept_aliases.json
             folder = kb_info.get("folder_path")
             aliases_file = Path(folder) / "concept_aliases.json" if folder else None
 
@@ -608,13 +658,11 @@ def _build_ontology_database_worker(target_kbs: Optional[List[str]], force_rebui
                         "message": f"Streaming synonym aliases for {kb.upper()} into SQLite...",
                     })
 
-                # Stream-read JSON in memory-conscious blocks
                 with open(aliases_file, "r", encoding="utf-8", errors="replace") as af:
                     aliases_map = json.load(af)
 
                 batch_a = []
                 for cui, alias_list in aliases_map.items():
-                    # Resolve canonical name from DB or use first alias
                     canonical_name = cui
                     cursor.execute("SELECT canonical_name FROM kb_concepts WHERE cui = ? LIMIT 1", (cui,))
                     row = cursor.fetchone()
@@ -622,7 +670,6 @@ def _build_ontology_database_worker(target_kbs: Optional[List[str]], force_rebui
                         canonical_name = row[0]
                     elif alias_list:
                         canonical_name = alias_list[0]
-                        # Seed minimal concept row
                         cursor.execute("""
                             INSERT OR IGNORE INTO kb_concepts (cui, canonical_name, types, definition, kb_source)
                             VALUES (?, ?, '[]', '', ?)
@@ -649,7 +696,6 @@ def _build_ontology_database_worker(target_kbs: Optional[List[str]], force_rebui
                     conn.commit()
                     total_aliases_inserted += len(batch_a)
 
-        # Optimize SQLite B-Trees
         with _index_lock:
             _indexing_state.update({
                 "progress": 98.0,
@@ -702,7 +748,6 @@ def _build_ontology_database_worker(target_kbs: Optional[List[str]], force_rebui
 
 @router.get("/cpu_embedding_models")
 async def get_cpu_embedding_models() -> Dict[str, Any]:
-    """Returns available CPU ONNX embedding models and their offline download state."""
     active_model = getattr(config, "DEFAULT_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
     models = []
     for m in SUPPORTED_EMBEDDING_MODELS:
@@ -719,7 +764,6 @@ async def get_cpu_embedding_models() -> Dict[str, Any]:
 
 @router.get("/flashrank_models")
 async def get_flashrank_models() -> Dict[str, Any]:
-    """Returns available FlashRank cross-encoder reranker models and download states."""
     active_model = "ms-marco-TinyBERT-L-2-v2"
     models = []
     for m in SUPPORTED_FLASHRANK_MODELS:
@@ -735,7 +779,6 @@ async def get_flashrank_models() -> Dict[str, Any]:
 
 @router.get("/scispacy_models")
 async def get_scispacy_models() -> Dict[str, Any]:
-    """Returns available AllenAI SciSpaCy biomedical NER pipelines and local installation status."""
     active_pipeline = "en_core_sci_md"
     results = []
 
@@ -743,7 +786,6 @@ async def get_scispacy_models() -> Dict[str, Any]:
         model_id = m["id"]
         installed = _is_scispacy_installed(model_id)
 
-        # Check in-progress download status
         with _download_lock:
             dl_info = _active_downloads.get(model_id, {})
 
@@ -766,14 +808,12 @@ async def get_scispacy_models() -> Dict[str, Any]:
 
 @router.post("/download")
 async def download_model(request: ModelDownloadRequest, background_tasks: BackgroundTasks) -> Dict[str, Any]:
-    """Initiates an explicit offline download for an embedding, FlashRank, or SciSpaCy model."""
     m_type = request.model_type.strip().lower()
     m_name = request.model_name.strip()
 
     if m_type == "embedding":
         try:
             from parsers.embedding_engine import download_embedding_model
-            # Schedule in threadpool to avoid blocking FastAPI event loop
             res = await asyncio.to_thread(download_embedding_model, m_name)
             return {"status": "success", "message": f"Embedding model {m_name} downloaded successfully.", "result": res}
         except Exception as exc:
@@ -806,14 +846,12 @@ async def download_model(request: ModelDownloadRequest, background_tasks: Backgr
 
 @router.post("/scispacy/download")
 async def download_scispacy_model_direct(request: ModelDownloadRequest, background_tasks: BackgroundTasks) -> Dict[str, Any]:
-    """Dedicated convenience route to download and install a SciSpaCy pipeline."""
     request.model_type = "scispacy"
     return await download_model(request, background_tasks)
 
 
 @router.get("/scispacy/download_status")
 async def get_scispacy_download_status(model_name: str = Query(..., description="SciSpaCy model ID")) -> Dict[str, Any]:
-    """Polls real-time download and extraction progress for a SciSpaCy model."""
     with _download_lock:
         info = _active_downloads.get(model_name)
         if not info:
@@ -829,7 +867,6 @@ async def get_scispacy_download_status(model_name: str = Query(..., description=
 
 @router.get("/linkers/status")
 async def get_linkers_status() -> Dict[str, Any]:
-    """Inspects local S3 linker folders, KB definition files, and compiled SQLite index."""
     sources = _inspect_ontology_sources()
     db_info = _inspect_ontology_db()
 
@@ -848,7 +885,6 @@ async def get_linkers_status() -> Dict[str, Any]:
 
 @router.post("/linkers/build_index")
 async def build_linkers_index(request: BuildIndexRequest, background_tasks: BackgroundTasks) -> Dict[str, Any]:
-    """Triggers the low-RAM streaming SQLite compiler across detected ontology folders."""
     with _index_lock:
         if _indexing_state.get("status") == "running":
             return {
@@ -866,7 +902,6 @@ async def build_linkers_index(request: BuildIndexRequest, background_tasks: Back
 
 @router.get("/linkers/build_progress")
 async def get_linkers_build_progress() -> Dict[str, Any]:
-    """Returns current indexing progress, stage percentage, and compiled record statistics."""
     with _index_lock:
         return dict(_indexing_state)
 
@@ -876,7 +911,6 @@ async def get_linkers_build_progress() -> Dict[str, Any]:
 # -----------------------------------------------------------------------------
 @router.get("/diagnostics/lm_studio")
 async def diagnostic_lm_studio() -> Dict[str, Any]:
-    """Inspects connectivity and loaded models on local LM Studio instance."""
     lm_url = getattr(config, "LM_STUDIO_URL", "http://127.0.0.1:1234/v1")
     models_url = f"{lm_url.rstrip('/')}/models"
 
@@ -911,7 +945,6 @@ async def diagnostic_lm_studio() -> Dict[str, Any]:
 
 @router.get("/diagnostics/db")
 async def diagnostic_database() -> Dict[str, Any]:
-    """Validates the SQLite database connection, table row counts, and WAL status."""
     db_path = Path(getattr(config, "DB_PATH", DATA_DIR / "mcq_hub.db"))
     if not db_path.exists():
         return {
@@ -959,7 +992,6 @@ async def diagnostic_database() -> Dict[str, Any]:
 
 @router.get("/diagnostics/sumatrapdf")
 async def diagnostic_sumatrapdf() -> Dict[str, Any]:
-    """Verifies whether SumatraPDF is installed on Windows for fast native page navigation."""
     exe_path = _find_sumatra_executable()
     if exe_path and exe_path.exists():
         return {
@@ -979,7 +1011,6 @@ async def diagnostic_sumatrapdf() -> Dict[str, Any]:
 
 @router.get("/diagnostics/tantivy")
 async def diagnostic_tantivy() -> Dict[str, Any]:
-    """Inspects Tantivy inverted index directory and document count."""
     idx_path = Path(getattr(config, "INDEX_PATH", DATA_DIR / "tantivy_index"))
     if not idx_path.exists():
         return {
@@ -1014,7 +1045,6 @@ async def diagnostic_tantivy() -> Dict[str, Any]:
 
 @router.get("/diagnostics/all")
 async def diagnostic_all() -> Dict[str, Any]:
-    """Aggregates all system diagnostic indicators for the Settings Diagnostic Tab."""
     lm = await diagnostic_lm_studio()
     db = await diagnostic_database()
     sumatra = await diagnostic_sumatrapdf()

@@ -1358,7 +1358,8 @@ function updateInspectorForQuestion(questionObj) {
 
     window.openInspector(
         `Q${currentIndex + 1} References`,
-        `<div class="text-center py-10 text-muted text-sm animate-pulse">Looking up references for <strong>${window.escapeHTML(topic)}</strong>...</div>`
+        `<div class="text-center py-10 text-muted text-sm animate-pulse">Looking up references for <strong>${window.escapeHTML(topic)}</strong>...</div>`,
+        false
     );
 
     fetch(`/api/mcq/synthesis?topic=${encodeURIComponent(topic)}`)
@@ -1418,7 +1419,7 @@ function updateInspectorForQuestion(questionObj) {
             }
 
             html += `</div>`;
-            window.openInspector(`Q${currentIndex + 1}: ${topic}`, html);
+            window.openInspector(`Q${currentIndex + 1}: ${topic}`, html, false);
         })
         .catch(() => {
             window.openInspector(
@@ -1426,7 +1427,8 @@ function updateInspectorForQuestion(questionObj) {
                 `<div class="text-center py-8 px-3 text-muted text-xs">
                     <p class="font-semibold mb-1">No Cached Synthesis Yet</p>
                     <p>Use <strong>Confirm &amp; Launch</strong> or confirm topics in the Knowledge Hub to index references for <strong>${window.escapeHTML(topic)}</strong>.</p>
-                </div>`
+                </div>`,
+                false
             );
         });
 }
