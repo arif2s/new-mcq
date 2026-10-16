@@ -7,6 +7,7 @@ from server.routes_mcq import router as mcq_router
 from server.routes_sources import router as sources_router
 from server.routes_csv import router as csv_router
 from server.routes_queue import router as queue_router
+from server.routes_models import router as models_router
 from server.ws_manager import ws_manager
 from core.queue_manager import queue_worker
 from server.routes_csv_loader import load_csvs_background
@@ -17,6 +18,7 @@ app.include_router(mcq_router)
 app.include_router(sources_router)
 app.include_router(csv_router)
 app.include_router(queue_router)
+app.include_router(models_router)
 
 @app.websocket("/ws/indexing")
 async def websocket_indexing(websocket: WebSocket):

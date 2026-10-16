@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Clock, ChevronLeft, ChevronRight, Flag, CheckCircle, XCircle, AlertCircle, Coffee, PlayCircle } from 'lucide-react';
+import { Clock, ChevronLeft, ChevronRight, Flag, CheckCircle, XCircle, AlertCircle, Coffee, PlayCircle, PanelRightOpen, PanelRightClose } from 'lucide-react';
+import InspectorPanel from './InspectorPanel';
 import type { ActiveQuiz, AnswerRecord } from '../types';
 
 interface QuizViewProps {
@@ -30,6 +31,7 @@ export default function QuizView({
   const [showExplanation, setShowExplanation] = useState(false);
   const [autoAdvanceTimer, setAutoAdvanceTimer] = useState<number | null>(null);
   const [pendingAutoAdvance, setPendingAutoAdvance] = useState(false);
+  const [isInspectorOpen, setIsInspectorOpen] = useState(false);
 
   const currentIndexRef = useRef(quiz.currentIndex);
 
@@ -233,8 +235,23 @@ export default function QuizView({
   const currentQuestionTime = Math.floor((Date.now() - quiz.questionStartTime) / 1000);
   const showingFeedback = (isTestMode || isTargetMode) && isAnswered && pendingAutoAdvance;
 
+  const mcqContext = useMemo(() => {
+    if (!currentQuestion) return undefined;
+    return {
+      question: currentQuestion.question,
+      options: {
+        A: currentQuestion.option_a,
+        B: currentQuestion.option_b,
+        C: currentQuestion.option_c,
+        D: currentQuestion.option_d,
+      },
+      correct_opt: currentQuestion.correct_answer,
+    };
+  }, [currentQuestion]);
+
   return (
-    <div className="max-w-4xl mx-auto p-6 animate-fade-in">
+    <div className="flex w-full min-h-screen">
+      <div className="flex-1 max-w-4xl mx-auto p-6 animate-fade-in">
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div className="flex items-center gap-4">
           <div className="bg-gray-800 rounded-xl px-4 py-2 flex items-center gap-2">
@@ -260,6 +277,19 @@ export default function QuizView({
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setIsInspectorOpen(prev => !prev)}
+            title={isInspectorOpen ? 'Close Clinical Inspector' : 'Open Clinical Inspector'}
+            className={`p-2 rounded-xl border transition-colors flex items-center gap-1.5 text-xs font-medium ${
+              isInspectorOpen
+                ? 'bg-purple-600/20 border-purple-500/50 text-purple-300'
+                : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            {isInspectorOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+            <span className="hidden sm:inline">Clinical Inspector</span>
+          </button>
+
           <span className={`px-3 py-1 rounded-full text-xs font-medium ${
             isTestMode ? 'bg-brand-500/20 text-brand-400' :
             isTargetMode ? 'bg-purple-500/20 text-purple-400' :
@@ -445,6 +475,13 @@ export default function QuizView({
               <Flag size={16} /> Complete
             </button>
           )}
+        </div>
+      )}
+      </div>
+
+      {isInspectorOpen && (
+        <div className="hidden lg:block h-screen sticky top-0 flex-shrink-0">
+          <InspectorPanel topic={currentQuestion.topic_name} mcqContext={mcqContext} />
         </div>
       )}
     </div>

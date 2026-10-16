@@ -13,11 +13,13 @@
   --color-brand-900: #1e3a8a;
 
   --color-success-50: #f0fdf4;
+  --color-success-300: rgb(18, 199, 84);
   --color-success-500: #22c55e;
   --color-success-600: #16a34a;
   --color-success-700: #15803d;
 
   --color-danger-50: #fef2f2;
+  --color-danger-300: rgb(245, 66, 66);
   --color-danger-500: #ef4444;
   --color-danger-600: #dc2626;
   --color-danger-700: #b91c1c;
@@ -39,6 +41,14 @@ body {
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
   background: #0f172a;
   color: #e2e8f0;
+}
+
+.text-success-300 {
+  color: rgb(18, 199, 84) !important;
+}
+
+.text-danger-300 {
+  color: rgb(245, 66, 66) !important;
 }
 
 @keyframes fadeIn {
