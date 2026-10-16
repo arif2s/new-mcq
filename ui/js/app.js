@@ -155,7 +155,7 @@ window.openDocumentReader = function({ title, sourceType, htmlContent, markdownC
 
     if (filePath && sourceType === 'obsidian') {
         const footer = document.createElement('div');
-        footer.className = 'mt-6 pt-4 border-t border-white/10 flex justify-between items-center text-xs text-muted';
+        footer.className = 'mt-6 pt-4 border-t border-gray-700/50 flex justify-between items-center text-xs text-muted';
         footer.innerHTML = `
             <span class="font-mono truncate">${window.escapeHTML(filePath)}</span>
             <button id="open-in-obsidian-native-btn" class="secondary-btn px-3 py-1.5 text-xs">Open in Obsidian App ↗</button>

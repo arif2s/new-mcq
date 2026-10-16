@@ -211,7 +211,7 @@ function initDashboard() {
             ${subjectPerformance.length === 0 ? '<p class="text-muted text-sm">No subjects loaded yet.</p>' : `
             <div class="space-y-3 max-h-48 overflow-y-auto pr-2">
               ${subjectPerformance.map(sp => `
-                <div class="glass-panel rounded-lg p-3 border border-white/5">
+                <div class="glass-panel rounded-lg p-3 border border-gray-700/50">
                   <div class="flex justify-between items-center mb-1">
                     <span class="text-sm font-medium truncate flex-1">${window.escapeHTML(sp.name)}</span>
                     <span class="text-xs text-muted ml-2">${sp.tests} tests</span>
@@ -232,7 +232,7 @@ function initDashboard() {
             <!-- Hourly Activity -->
             <div class="glass-card">
                 <h3 class="text-lg font-semibold mb-4 opacity-90">🕒 Today's Activity by Hour</h3>
-                <div class="flex items-end gap-1 h-32 mb-2 border-b border-white/10 pb-1">
+                <div class="flex items-end gap-1 h-32 mb-2 border-b border-gray-700/50 pb-1">
                     ${hourlyData.map(h => `
                         <div class="flex-1 flex flex-col items-center group relative cursor-crosshair">
                             <div class="w-full rounded-t transition-all ${h.questions > 0 ? 'bg-brand-500 hover:bg-brand-400 shadow-[0_0_8px_rgba(139,92,246,0.6)]' : 'glass-panel'}"
@@ -257,7 +257,7 @@ function initDashboard() {
                 ${processedRankSims.length === 0 ? '<p class="text-muted text-sm mt-4">Take a test to see rank projections.</p>' : `
                 <div class="space-y-4 max-h-48 overflow-y-auto pr-2">
                     ${processedRankSims.map(simData => `
-                    <div class="border border-white/10 rounded-xl p-4 glass-panel">
+                    <div class="border border-gray-700/50 rounded-xl p-4 glass-panel">
                         <div class="flex justify-between items-center mb-3">
                             <p class="text-sm font-semibold opacity-90">${window.escapeHTML(simData.config.examName)}</p>
                             <span class="text-xs glass-panel px-2 py-1 rounded opacity-70">Max: ${simData.config.maxMarks}</span>
@@ -289,7 +289,7 @@ function initDashboard() {
           <div class="overflow-x-auto">
             <table class="w-full text-sm text-left">
               <thead>
-                <tr class="border-b border-white/10 text-muted">
+                <tr class="border-b border-gray-700/50 text-muted">
                   <th class="py-3 px-2 font-medium">Date</th>
                   <th class="py-3 px-2 font-medium">Subject</th>
                   <th class="py-3 px-2 font-medium">Mode</th>
@@ -300,11 +300,11 @@ function initDashboard() {
               </thead>
               <tbody>
                 ${recentResults.map((r, i) => `
-                  <tr class="border-b border-white/5 ${i % 2 === 0 ? '' : 'glass-panel'}">
+                  <tr class="border-b border-gray-700/50 ${i % 2 === 0 ? '' : 'glass-panel'}">
                     <td class="py-2.5 px-2 font-medium">${new Date(r.timestamp).toLocaleDateString()}</td>
                     <td class="py-2.5 px-2 truncate max-w-[150px]">${window.escapeHTML(r.subjectName)}</td>
                     <td class="py-2.5 px-2">
-                      <span class="px-2 py-0.5 rounded-full text-xs font-medium border border-white/10 glass-panel">${window.escapeHTML(r.mode)}</span>
+                      <span class="px-2 py-0.5 rounded-full text-xs font-medium border border-gray-700/50 glass-panel">${window.escapeHTML(r.mode)}</span>
                     </td>
                     <td class="py-2.5 px-2 text-center">${r.totalQuestions}</td>
                     <td class="py-2.5 px-2 text-center">${r.score || r.correctAnswers}</td>
@@ -386,13 +386,13 @@ function renderRankEditor() {
 
     modal.innerHTML = `
     <div class="glass-modal w-full max-w-2xl text-left flex flex-col max-h-[90vh]">
-        <div class="flex justify-between items-center border-b border-white/10 pb-4 mb-4">
+        <div class="flex justify-between items-center border-b border-gray-700/50 pb-4 mb-4">
             <h2 class="text-xl font-bold">Edit Rank Simulation Data</h2>
             <button id="close-rank-modal-x" class="text-muted hover:text-brand-400 bg-transparent border-none cursor-pointer">✕</button>
         </div>
 
         <div class="overflow-y-auto flex-1 pr-2">
-            <div class="glass-panel rounded-xl p-4 border border-white/10 mb-6">
+            <div class="glass-panel rounded-xl p-4 border border-gray-700/50 mb-6">
                 <h3 class="text-sm font-semibold mb-3">Exam Settings</h3>
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
@@ -414,7 +414,7 @@ function renderRankEditor() {
                 </div>
             </div>
 
-            <div class="glass-panel rounded-xl p-4 border border-white/10">
+            <div class="glass-panel rounded-xl p-4 border border-gray-700/50">
                 <div class="flex justify-between items-center mb-4">
                     <h3 class="text-sm font-semibold">Marks → Rank Cutoffs</h3>
                     <button id="re-add-row-btn" class="px-3 py-1 secondary-btn text-xs">
@@ -434,7 +434,7 @@ function renderRankEditor() {
             </div>
         </div>
 
-        <div class="border-t border-white/10 pt-4 mt-4 flex justify-end gap-3">
+        <div class="border-t border-gray-700/50 pt-4 mt-4 flex justify-end gap-3">
             <button id="close-rank-modal-btn" class="px-4 py-2 secondary-btn text-sm">Cancel</button>
             <button id="save-rank-modal-btn" class="px-6 py-2 primary-btn rounded-lg font-medium cursor-pointer text-sm shadow-lg">Save Configuration</button>
         </div>

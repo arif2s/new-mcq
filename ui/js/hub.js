@@ -399,7 +399,7 @@ async function openHubCardInspector(session) {
 
     // 1. Attempt Summary & Pipeline Status
     html += `
-        <div class="glass-card p-4 rounded-xl border border-white/10">
+        <div class="glass-card p-4 rounded-xl border border-gray-700/50">
             <div class="flex justify-between items-center mb-2">
                 <span class="text-[10px] uppercase tracking-wider text-muted font-bold">Session Overview</span>
                 ${renderStatusCirclesHTML(session)}
@@ -435,7 +435,7 @@ async function openHubCardInspector(session) {
 
     // 3. Frequently Wrong / Weak Topics + One-Click Question Set Creator
     html += `
-        <div class="glass-card p-4 rounded-xl border border-white/10">
+        <div class="glass-card p-4 rounded-xl border border-gray-700/50">
             <h4 class="font-bold text-danger-400 uppercase text-[11px] mb-2">🎯 Focus Areas (Frequently Wrong Topics)</h4>
             ${weakTopics.length === 0
                 ? '<p class="text-muted text-[11px]">No weak topics (<60% accuracy) detected in this set yet.</p>'
@@ -484,7 +484,7 @@ async function openHubCardInspector(session) {
 
     // 5. Topic Proficiency Breakdown
     html += `
-        <div class="glass-card p-4 rounded-xl border border-white/10">
+        <div class="glass-card p-4 rounded-xl border border-gray-700/50">
             <h4 class="font-bold uppercase text-[11px] text-muted mb-3">📈 Topic Proficiency in This Set</h4>
             ${topicProficiency.length === 0
                 ? '<p class="text-muted text-[11px]">Confirm topics on this card to track per-topic proficiency.</p>'
@@ -673,7 +673,7 @@ function renderSessionReview(questions) {
         const isCorrect = q.is_correct === 1;
 
         if (!userAns) {
-            card.classList.add('border-white/10');
+            card.classList.add('border-gray-700/50');
             card.querySelector('.review-icon').innerHTML = '<span class="text-muted font-bold text-lg">○</span>';
         } else if (isCorrect) {
             card.classList.add('border-success-500/30');
@@ -733,7 +733,7 @@ function renderSessionReview(questions) {
 
             if (hasLlmExp) {
                 combinedExpHtml += `
-                    <div class="${hasCsvExp ? 'pt-3 border-t border-white/10' : ''}">
+                    <div class="${hasCsvExp ? 'pt-3 border-t border-gray-700/50' : ''}">
                         <p class="text-xs font-bold text-brand-400 uppercase tracking-wider mb-1">🤖 LM Studio Detailed MCQ Breakdown</p>
                         <div>${window.renderMarkdownAndMath(q.llm_explanation)}</div>
                     </div>

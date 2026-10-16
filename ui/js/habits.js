@@ -121,7 +121,7 @@ function initHabits() {
 
     // 4. Heatmap Generator
     const getIntensity = (count) => {
-        if (count === 0) return 'glass-panel border border-white/5';
+        if (count === 0) return 'glass-panel border border-gray-700/50';
         if (count <= 5) return 'bg-success-700/60 shadow-[0_0_4px_rgba(21,128,61,0.4)]';
         if (count <= 15) return 'bg-success-600/80 shadow-[0_0_6px_rgba(22,163,74,0.6)]';
         if (count <= 30) return 'bg-success-500 shadow-[0_0_8px_rgba(34,197,94,0.8)]';
@@ -144,7 +144,7 @@ function initHabits() {
     const recentActivityHtml = recentActivity.length === 0
         ? '<p class="text-sm text-muted">No activity recorded yet.</p>'
         : recentActivity.map(h => `
-            <div class="flex items-center justify-between glass-panel border border-white/5 rounded-lg p-3">
+            <div class="flex items-center justify-between glass-panel border border-gray-700/50 rounded-lg p-3">
                 <div>
                     <span class="text-sm font-medium">${h.date}</span>
                     <span class="text-xs text-muted ml-2 truncate max-w-[120px] inline-block align-bottom">${(h.subjects || []).join(', ')}</span>
@@ -171,7 +171,7 @@ function initHabits() {
     const milestonesHtml = milestones.map(m => {
         const achieved = m.current >= m.target;
         return `
-        <div class="p-4 rounded-xl border transition-all ${achieved ? 'bg-success-500/10 border-success-500/30' : 'glass-panel border-white/5 opacity-60'} text-center flex flex-col justify-center items-center">
+        <div class="p-4 rounded-xl border transition-all ${achieved ? 'bg-success-500/10 border-success-500/30' : 'glass-panel border-gray-700/50 opacity-60'} text-center flex flex-col justify-center items-center">
             <span class="text-2xl mb-2">${achieved ? m.icon : '🔒'}</span>
             <p class="text-xs font-medium ${achieved ? 'text-success-400' : 'text-muted'}">${m.label}</p>
             ${!achieved ? `<p class="text-[10px] text-muted mt-1">${m.current}/${m.target}</p>` : ''}
@@ -196,7 +196,7 @@ function initHabits() {
 
         <!-- Motivation Banner -->
         <div class="glass-card card-shade-1 p-6 mb-8 flex items-center gap-5">
-            <div class="w-16 h-16 glass-panel rounded-full flex items-center justify-center text-4xl shadow-inner border border-white/5">
+            <div class="w-16 h-16 glass-panel rounded-full flex items-center justify-center text-4xl shadow-inner border border-gray-700/50">
                 ${motivation.emoji}
             </div>
             <div class="flex-1">
@@ -211,7 +211,7 @@ function initHabits() {
                         <span>Today's Goal: ${todayCount}/${dailyTargets.questionsTarget || 50} questions</span>
                         <span class="font-medium">${goalProgress.toFixed(0)}%</span>
                     </div>
-                    <div class="w-full glass-panel rounded-full h-2 shadow-inner border border-white/5">
+                    <div class="w-full glass-panel rounded-full h-2 shadow-inner border border-gray-700/50">
                         <div class="h-2 rounded-full transition-all duration-1000 ${goalProgress >= 100 ? 'bg-success-500 shadow-[0_0_10px_rgba(34,197,94,0.6)]' : 'bg-brand-500 shadow-[0_0_10px_rgba(139,92,246,0.6)]'}" style="width: ${goalProgress}%"></div>
                     </div>
                 </div>
@@ -277,7 +277,7 @@ function initHabits() {
 
             <div class="flex items-center gap-2 mt-4 text-xs text-muted">
                 <span>Less</span>
-                <div class="w-3 h-3 rounded-[2px] glass-panel border border-white/5"></div>
+                <div class="w-3 h-3 rounded-[2px] glass-panel border border-gray-700/50"></div>
                 <div class="w-3 h-3 rounded-[2px] bg-success-700/60"></div>
                 <div class="w-3 h-3 rounded-[2px] bg-success-600/80"></div>
                 <div class="w-3 h-3 rounded-[2px] bg-success-500"></div>

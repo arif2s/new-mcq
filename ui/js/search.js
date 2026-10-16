@@ -39,7 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
             : 'Click to open full reference document.';
 
         return `
-            <div class="glass-card p-4 rounded-xl border ${rankIdx === 0 ? 'border-brand-500/50 shadow-md' : 'border-white/10'} transition-all">
+            <div class="glass-card p-4 rounded-xl border ${rankIdx === 0 ? 'border-brand-500/50 shadow-md' : 'border-gray-700/50'} transition-all">
                 <div class="flex items-center justify-between gap-2 mb-1.5">
                     <span class="text-[10px] font-bold px-2 py-0.5 rounded glass-panel text-brand-300 uppercase">
                         ${badgeLabel}

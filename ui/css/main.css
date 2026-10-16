@@ -27,20 +27,21 @@
   /* Light Theme */
   --bg-color: #f0f2f5;
   --bg-image: url('../img/bg-light.jpg');
-  --panel-bg: rgba(255, 255, 255, 0.82);
+  --panel-bg: rgba(255, 255, 255, var(--panel-alpha, 0.82));
   --panel-border: rgba(0, 0, 0, 0.12);
+  --glass-subpanel-bg: rgba(255, 255, 255, 0.65);
   --text-primary: #0f172a;
   --text-secondary: #475569;
   --accent-color: #7c3aed;
   --accent-hover: #6d28d9;
-  --input-bg: rgba(255, 255, 255, 0.78);
+  --input-bg: rgba(255, 255, 255, 0.85);
   --input-border: rgba(0, 0, 0, 0.15);
   --input-focus: rgba(139, 92, 246, 0.5);
-  --chip-bg: rgba(255, 255, 255, 0.82);
+  --chip-bg: rgba(255, 255, 255, 0.85);
   --chip-hover: rgba(255, 255, 255, 0.95);
   --chip-border: rgba(0, 0, 0, 0.12);
   --nav-hover: rgba(0, 0, 0, 0.06);
-  --nav-active: rgba(255, 255, 255, 0.85);
+  --nav-active: rgba(255, 255, 255, 0.90);
   --badge-bg: #ffebee;
   --badge-text: #c62828;
   --badge-ok-bg: #e8f5e9;
@@ -50,6 +51,28 @@
   --glass-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.8), 0 8px 32px 0 rgba(31, 38, 135, 0.1);
   --panel-alpha: 0.78;
   --card-alpha: 0.82;
+
+  /* Theme-aware colored text tokens for Light Mode */
+  --c-brand-300: #6b21a8;
+  --c-brand-400: #7c3aed;
+  --c-brand-500: #6d28d9;
+  --c-success-400: #15803d;
+  --c-success-500: #16a34a;
+  --c-danger-400: #dc2626;
+  --c-danger-500: #b91c1c;
+  --c-warning: #b45309;
+  --c-emerald-300: #047857;
+  --c-emerald-400: #059669;
+  --c-amber-300: #b45309;
+  --c-amber-400: #d97706;
+  --c-cyan-400: #0e7490;
+  --c-blue-300: #1d4ed8;
+
+  /* Theme-aware Neutral Text Tokens for Light Mode */
+  --c-neutral-100: #0f172a;
+  --c-neutral-200: #1e293b;
+  --c-neutral-300: #334155;
+  --c-neutral-400: #475569;
 }
 
 body.dark-theme {
@@ -73,8 +96,9 @@ body.dark-theme {
   /* Dark Theme */
   --bg-color: #0f172a;
   --bg-image: url('../img/bg-dark.jpg');
-  --panel-bg: rgba(15, 23, 42, 0.82);
+  --panel-bg: rgba(15, 23, 42, var(--panel-alpha, 0.82));
   --panel-border: rgba(255, 255, 255, 0.125);
+  --glass-subpanel-bg: rgba(255, 255, 255, 0.05);
   --text-primary: #f8fafc;
   --text-secondary: #94a3b8;
   --accent-color: #a78bfa;
@@ -94,6 +118,28 @@ body.dark-theme {
   --shadow-sm: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
   --shadow-md: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
   --glass-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.1), 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+
+  /* Theme-aware colored text tokens for Dark Mode */
+  --c-brand-300: #d8b4fe;
+  --c-brand-400: #c084fc;
+  --c-brand-500: #a855f7;
+  --c-success-400: #4ade80;
+  --c-success-500: #22c55e;
+  --c-danger-400: #f87171;
+  --c-danger-500: #ef4444;
+  --c-warning: #f59e0b;
+  --c-emerald-300: #6ee7b7;
+  --c-emerald-400: #34d399;
+  --c-amber-300: #fcd34d;
+  --c-amber-400: #fbbf24;
+  --c-cyan-400: #22d3ee;
+  --c-blue-300: #93c5fd;
+
+  /* Theme-aware Neutral Text Tokens for Dark Mode */
+  --c-neutral-100: #f8fafc;
+  --c-neutral-200: #e2e8f0;
+  --c-neutral-300: #cbd5e1;
+  --c-neutral-400: #94a3b8;
 }
 
 body {
@@ -578,28 +624,50 @@ body.dark-theme .moon-icon { display: none; }
 .text-center { text-align: center; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Color Token Fallbacks */
-.text-muted { color: var(--text-secondary); }
-.text-brand-300 { color: #d8b4fe; }
-.text-brand-400 { color: #c084fc; }
-.text-brand-500 { color: #a855f7; }
-.text-success-400 { color: #4ade80; }
-.text-success-500 { color: #22c55e; }
-.text-danger-400 { color: #f87171; }
-.text-danger-500 { color: #ef4444; }
-.text-warning { color: #f59e0b; }
+/* Color Token Overrides & Theme-Aware Contrast Rules */
+.text-muted { color: var(--text-secondary) !important; }
+.text-brand-300 { color: var(--c-brand-300) !important; }
+.text-brand-400 { color: var(--c-brand-400) !important; }
+.text-brand-500 { color: var(--c-brand-500) !important; }
+.text-success-400 { color: var(--c-success-400) !important; }
+.text-success-500 { color: var(--c-success-500) !important; }
+.text-danger-400 { color: var(--c-danger-400) !important; }
+.text-danger-500 { color: var(--c-danger-500) !important; }
+.text-warning { color: var(--c-warning) !important; }
+.text-emerald-300 { color: var(--c-emerald-300) !important; }
+.text-emerald-400 { color: var(--c-emerald-400) !important; }
+.text-amber-300 { color: var(--c-amber-300) !important; }
+.text-amber-400 { color: var(--c-amber-400) !important; }
+.text-cyan-400 { color: var(--c-cyan-400) !important; }
+.text-blue-300 { color: var(--c-blue-300) !important; }
 
+/* Neutral Tailwind Text Overrides */
+.text-neutral-100 { color: var(--c-neutral-100) !important; }
+.text-neutral-200 { color: var(--c-neutral-200) !important; }
+.text-neutral-300 { color: var(--c-neutral-300) !important; }
+.text-neutral-400 { color: var(--c-neutral-400) !important; }
+
+/* Glass Panel & Subpanel Background & Border Utilities */
 .bg-brand-600\/10 { background-color: rgba(147, 51, 234, 0.1); }
 .bg-brand-600\/20 { background-color: rgba(147, 51, 234, 0.2); }
 .border-brand-500\/20 { border-color: rgba(168, 85, 247, 0.2); }
 .border-brand-500\/30 { border-color: rgba(168, 85, 247, 0.3); }
-.border-brand-500 { border-color: #a855f7; }
+.border-brand-500 { border-color: var(--accent-color); }
+
+.bg-white\/5 { background-color: var(--glass-subpanel-bg) !important; }
+.bg-white\/10 { background-color: var(--glass-subpanel-bg) !important; }
+.bg-black\/30, .bg-black\/40 { background-color: var(--input-bg) !important; }
+.bg-neutral-800 { background-color: var(--chip-bg) !important; color: var(--text-primary) !important; }
+
+.border-white\/5, .border-white\/10, .border-white\/15, .border-white\/20 {
+  border-color: var(--panel-border) !important;
+}
 
 .bg-danger-600 { background-color: #dc2626; }
 .bg-danger-600:hover { background-color: #b91c1c; }
-.border-gray-700 { border-color: var(--panel-border); }
-.border-gray-700\/50 { border-color: var(--panel-border); }
-.border-gray-800 { border-color: var(--panel-border); }
+.border-gray-700 { border-color: var(--panel-border) !important; }
+.border-gray-700\/50 { border-color: var(--panel-border) !important; }
+.border-gray-800 { border-color: var(--panel-border) !important; }
 
 /* --- Buttons --- */
 .primary-btn {

@@ -435,13 +435,13 @@
         <section id="settings-view" class="view-section fade-enter">
           <div class="w-full max-w-6xl mx-auto space-y-6">
             <header class="view-header mb-6">
-              <h2 class="text-2xl font-bold text-neutral-900 dark:text-neutral-100">System Settings &amp; Offline Management</h2>
-              <p class="subtitle text-sm text-neutral-600 dark:text-neutral-400">Manage offline ontologies, biomedical NER models, diagnostics, and glassmorphic appearance.</p>
+              <h2 class="text-2xl font-bold">System Settings &amp; Offline Management</h2>
+              <p class="subtitle text-sm text-muted">Manage offline ontologies, biomedical NER models, diagnostics, and glassmorphic appearance.</p>
             </header>
 
             <!-- 1. SYSTEM DIAGNOSTICS & OFFLINE HEALTH TELEMETRY -->
-            <div class="glass-card p-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md">
-              <div class="flex items-center justify-between pb-3 mb-4 border-b border-white/10">
+            <div class="glass-card p-5 rounded-2xl">
+              <div class="flex items-center justify-between pb-3 mb-4 border-b border-gray-700/50">
                 <div class="flex items-center gap-2.5">
                   <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-sm border border-amber-500/30">
                     🩺
@@ -451,37 +451,37 @@
                     <p class="text-xs text-neutral-400">Real-time status of local LLM, SQLite WAL storage, PDF viewer, and search indices</p>
                   </div>
                 </div>
-                <button id="btn-refresh-diagnostics" class="text-xs px-3 py-1.5 rounded-lg border border-white/15 hover:bg-white/10 text-neutral-300 transition-colors flex items-center gap-1.5 cursor-pointer">
+                <button id="btn-refresh-diagnostics" class="text-xs px-3 py-1.5 rounded-lg secondary-btn transition-colors flex items-center gap-1.5 cursor-pointer">
                   🔄 Refresh
                 </button>
               </div>
 
               <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <div class="p-3 rounded-xl bg-white/5 border border-white/5">
+                <div class="p-3 rounded-xl glass-panel border border-gray-700/50">
                   <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">LM Studio Server</div>
                   <div id="diag-lm-studio-status" class="text-xs text-neutral-300">Checking :1234...</div>
                 </div>
-                <div class="p-3 rounded-xl bg-white/5 border border-white/5">
+                <div class="p-3 rounded-xl glass-panel border border-gray-700/50">
                   <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">SQLite WAL Store</div>
                   <div id="diag-db-status" class="text-xs text-neutral-300">Inspecting database...</div>
                 </div>
-                <div class="p-3 rounded-xl bg-white/5 border border-white/5">
+                <div class="p-3 rounded-xl glass-panel border border-gray-700/50">
                   <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">SumatraPDF Viewer</div>
                   <div id="diag-sumatra-status" class="text-xs text-neutral-300">Locating SumatraPDF.exe...</div>
                 </div>
-                <div class="p-3 rounded-xl bg-white/5 border border-white/5">
+                <div class="p-3 rounded-xl glass-panel border border-gray-700/50">
                   <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">Tantivy BM25 Engine</div>
                   <div id="diag-tantivy-status" class="text-xs text-neutral-300">Checking index directory...</div>
                 </div>
-                <div class="p-3 rounded-xl bg-white/5 border border-white/5">
+                <div class="p-3 rounded-xl glass-panel border border-gray-700/50">
                   <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">Vendor Asset Cache</div>
                   <div id="diag-vendor-status" class="text-xs text-neutral-300">Checking ui/vendor/ assets...</div>
                 </div>
-                <div class="p-3 rounded-xl bg-white/5 border border-white/5 flex flex-col justify-between">
+                <div class="p-3 rounded-xl glass-panel border border-gray-700/50 flex flex-col justify-between">
                   <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">Question Bank (CSV)</div>
                   <div class="flex items-center justify-between">
                     <span class="text-xs text-neutral-300">Build / Refresh DB</span>
-                    <button id="build-db-btn" class="text-xs px-2.5 py-1 bg-brand-600 hover:bg-brand-500 text-white rounded font-medium transition-colors cursor-pointer">
+                    <button id="build-db-btn" class="text-xs px-2.5 py-1 primary-btn rounded font-medium transition-colors cursor-pointer">
                       Rebuild
                     </button>
                   </div>
@@ -490,7 +490,7 @@
 
               <!-- Database Build Progress (Collapsible) -->
               <div class="progress-container mt-3" style="display: none;" id="build-progress-container">
-                <div class="progress-bar-bg h-2 rounded-full bg-white/10 overflow-hidden">
+                <div class="progress-bar-bg h-2 rounded-full glass-panel overflow-hidden">
                   <div class="progress-bar-fill h-full bg-brand-500 transition-all duration-300" id="build-progress" style="width: 0%"></div>
                 </div>
                 <p id="build-status" class="text-xs text-brand-300 mt-1" style="display: none;"></p>
@@ -498,8 +498,8 @@
             </div>
 
             <!-- 2. SCISPACY BIOMEDICAL NER PIPELINE CARD -->
-            <div class="glass-card p-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md">
-              <div class="flex items-center justify-between pb-3 mb-4 border-b border-white/10">
+            <div class="glass-card p-5 rounded-2xl">
+              <div class="flex items-center justify-between pb-3 mb-4 border-b border-gray-700/50">
                 <div class="flex items-center gap-2.5">
                   <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-sm border border-emerald-500/30">
                     🔬
@@ -509,14 +509,14 @@
                     <p class="text-xs text-neutral-400">Extracts Anatomy, Microorganisms, Disease Subtypes, and Procedures on CPU</p>
                   </div>
                 </div>
-                <div id="scispacy-model-status-badge" class="px-2.5 py-1 rounded-md text-xs font-semibold bg-neutral-800 text-neutral-400 border border-white/5">
+                <div id="scispacy-model-status-badge" class="px-2.5 py-1 rounded-md text-xs font-semibold glass-panel text-neutral-400 border border-gray-700/50">
                   Checking...
                 </div>
               </div>
 
               <div class="space-y-4">
                 <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                  <select id="select-scispacy-model" class="flex-1 bg-black/40 border border-white/15 rounded-xl px-3.5 py-2 text-xs text-neutral-200 focus:outline-none focus:border-emerald-500/60 font-medium">
+                  <select id="select-scispacy-model" class="flex-1 glass-select rounded-xl px-3.5 py-2 text-xs text-neutral-200 focus:outline-none focus:border-emerald-500/60 font-medium">
                     <!-- Populated dynamically by settings.js -->
                   </select>
                   <button id="btn-download-scispacy" class="text-xs px-4 py-2 rounded-lg font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center justify-center gap-1.5 shadow-md cursor-pointer">
@@ -524,17 +524,17 @@
                   </button>
                 </div>
 
-                <div id="scispacy-model-details" class="p-3.5 rounded-xl bg-black/30 border border-white/5">
+                <div id="scispacy-model-details" class="p-3.5 rounded-xl glass-panel border border-gray-700/50">
                   <!-- Populated dynamically by settings.js -->
                 </div>
 
                 <!-- Download Progress Bar -->
-                <div id="scispacy-download-progress-container" class="hidden space-y-2 p-3 rounded-xl bg-black/40 border border-white/10">
+                <div id="scispacy-download-progress-container" class="hidden space-y-2 p-3 rounded-xl glass-panel border border-gray-700/50">
                   <div class="flex justify-between text-xs text-neutral-300">
                     <span id="scispacy-download-progress-msg" class="truncate pr-2">Downloading package...</span>
                     <span id="scispacy-download-progress-label" class="font-mono font-bold text-emerald-400">0%</span>
                   </div>
-                  <div class="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                  <div class="w-full h-2 glass-panel rounded-full overflow-hidden">
                     <div id="scispacy-download-progress-bar" class="h-full bg-emerald-500 transition-all duration-300" style="width: 0%"></div>
                   </div>
                 </div>
@@ -542,8 +542,8 @@
             </div>
 
             <!-- 3. OFFLINE BIOMEDICAL ONTOLOGIES & LINKERS CARD -->
-            <div class="glass-card p-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md">
-              <div class="flex items-center justify-between pb-3 mb-4 border-b border-white/10">
+            <div class="glass-card p-5 rounded-2xl">
+              <div class="flex items-center justify-between pb-3 mb-4 border-b border-gray-700/50">
                 <div class="flex items-center gap-2.5">
                   <div class="w-8 h-8 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-sm border border-blue-500/30">
                     🧬
@@ -562,14 +562,14 @@
               </div>
 
               <!-- Compiled Index Summary Banner -->
-              <div id="ontology-db-summary" class="p-3.5 rounded-xl bg-black/30 border border-white/5 mb-4">
+              <div id="ontology-db-summary" class="p-3.5 rounded-xl glass-panel border border-gray-700/50 mb-4">
                 <!-- Populated dynamically by settings.js -->
               </div>
 
               <!-- Indexer Action & Rebuild Toggle -->
               <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
                 <label class="inline-flex items-center gap-2 text-xs text-neutral-400 cursor-pointer">
-                  <input type="checkbox" id="checkbox-force-rebuild-ontology" class="rounded bg-neutral-800 border-white/20 text-emerald-500 focus:ring-0" />
+                  <input type="checkbox" id="checkbox-force-rebuild-ontology" class="rounded glass-input text-emerald-500 focus:ring-0" />
                   <span>Force rebuild from scratch</span>
                 </label>
                 <button id="btn-build-ontology-index" class="text-xs px-4 py-2 rounded-lg font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
@@ -578,12 +578,12 @@
               </div>
 
               <!-- Indexing Progress Bar -->
-              <div id="ontology-index-progress-container" class="hidden mt-4 space-y-2 p-3.5 rounded-xl bg-black/40 border border-white/10">
+              <div id="ontology-index-progress-container" class="hidden mt-4 space-y-2 p-3.5 rounded-xl glass-panel border border-gray-700/50">
                 <div class="flex justify-between text-xs text-neutral-300">
                   <span id="ontology-index-stage-label" class="font-semibold text-neutral-200">Initializing...</span>
                   <span id="ontology-index-progress-label" class="font-mono font-bold text-emerald-400">0%</span>
                 </div>
-                <div class="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                <div class="w-full h-2 glass-panel rounded-full overflow-hidden">
                   <div id="ontology-index-progress-bar" class="h-full bg-emerald-500 transition-all duration-300" style="width: 0%"></div>
                 </div>
                 <p id="ontology-index-progress-msg" class="text-[11px] text-neutral-400 truncate">Preparing streaming compiler...</p>
@@ -592,7 +592,7 @@
 
             <!-- 4. CPU EMBEDDINGS & CROSS-ENCODER RERANKERS -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div class="glass-card p-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md">
+              <div class="glass-card p-5 rounded-2xl">
                 <div class="flex items-center gap-2.5 mb-3">
                   <div class="w-7 h-7 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold text-xs border border-purple-500/30">
                     📐
@@ -607,7 +607,7 @@
                 </div>
               </div>
 
-              <div class="glass-card p-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md">
+              <div class="glass-card p-5 rounded-2xl">
                 <div class="flex items-center gap-2.5 mb-3">
                   <div class="w-7 h-7 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center font-bold text-xs border border-cyan-500/30">
                     ⚡
@@ -626,8 +626,8 @@
             <!-- 5. APP PREFERENCES, SYNTHESIS CONTROLS & APPEARANCE -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
               <!-- AI Synthesis & Note Behavior -->
-              <div class="glass-card p-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md space-y-4">
-                <h3 class="font-semibold text-sm text-neutral-100 flex items-center gap-2 border-b border-white/10 pb-3">
+              <div class="glass-card p-5 rounded-2xl space-y-4">
+                <h3 class="font-semibold text-sm text-neutral-100 flex items-center gap-2 border-b border-gray-700/50 pb-3">
                   <span>🤖</span> AI Synthesis &amp; Note Reader
                 </h3>
 
@@ -643,7 +643,7 @@
 
                 <div class="form-group pt-2">
                   <label for="setting-obsidian-mode" class="text-xs text-neutral-300 block mb-1">Obsidian Note Click Behavior:</label>
-                  <select id="setting-obsidian-mode" class="glass-select w-full rounded-lg px-3 py-2 text-xs bg-black/40 border border-white/15">
+                  <select id="setting-obsidian-mode" class="glass-select w-full rounded-lg px-3 py-2 text-xs">
                     <option value="browser">Render in Browser (LaTeX, Tables, HTML, Images)</option>
                     <option value="app">Open in Obsidian Desktop App (obsidian://)</option>
                   </select>
@@ -662,8 +662,8 @@
               </div>
 
               <!-- Appearance, Glassmorphic Opacities & Wallpaper Rotation -->
-              <div class="glass-card p-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md space-y-4">
-                <h3 class="font-semibold text-sm text-neutral-100 flex items-center gap-2 border-b border-white/10 pb-3">
+              <div class="glass-card p-5 rounded-2xl space-y-4">
+                <h3 class="font-semibold text-sm text-neutral-100 flex items-center gap-2 border-b border-gray-700/50 pb-3">
                   <span>🎨</span> Appearance &amp; Glassmorphic Opacities
                 </h3>
 
@@ -686,7 +686,7 @@
                 <div class="form-group pt-1">
                   <label for="setting-wallpaper-timer" class="text-xs text-neutral-300 block mb-1">Wallpaper Rotation Duration:</label>
                   <div class="flex gap-2.5 items-center">
-                    <select id="setting-wallpaper-timer" class="glass-select flex-1 rounded-lg px-3 py-2 text-xs bg-black/40 border border-white/15">
+                    <select id="setting-wallpaper-timer" class="glass-select flex-1 rounded-lg px-3 py-2 text-xs">
                       <option value="5">Every 5 Minutes</option>
                       <option value="15">Every 15 Minutes</option>
                       <option value="30" selected>Every 30 Minutes</option>
@@ -695,7 +695,7 @@
                       <option value="360">Every 6 Hours</option>
                       <option value="0">Never (Manual Only)</option>
                     </select>
-                    <button type="button" id="btn-rotate-wallpaper-now" class="text-xs px-3.5 py-2 rounded-lg font-medium border border-white/15 hover:bg-white/10 text-neutral-200 transition-colors whitespace-nowrap cursor-pointer">
+                    <button type="button" id="btn-rotate-wallpaper-now" class="text-xs px-3.5 py-2 rounded-lg font-medium secondary-btn transition-colors whitespace-nowrap cursor-pointer">
                       🖼️ Change Now
                     </button>
                   </div>
@@ -704,7 +704,7 @@
             </div>
 
             <!-- 6. BACKUP & RECOVERY DATA TRANSFER -->
-            <div class="glass-card p-5 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md">
+            <div class="glass-card p-5 rounded-2xl">
               <h3 class="font-semibold text-sm text-neutral-100 mb-3 flex items-center gap-2">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success-400"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
                 Backup &amp; AppState Transfer
@@ -737,7 +737,7 @@
 
       <!-- 3. CONTEXTUAL 3RD-COLUMN RIGHT INSPECTOR (Default Hidden via .collapsed) -->
       <aside class="right-inspector glass-panel collapsed" id="right-sidebar">
-        <div class="flex justify-between items-center mb-4 border-b border-white/10 pb-3">
+        <div class="flex justify-between items-center mb-4 border-b border-gray-700/50 pb-3">
           <h3 class="font-bold text-brand-400 flex items-center gap-2 text-sm truncate">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
             <span>Clinical Inspector</span>

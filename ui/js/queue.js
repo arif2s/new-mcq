@@ -72,7 +72,7 @@ function renderQueue(status) {
             else if (task.status === 'FAILED') statusColor = 'text-danger-500';
             else if (task.status === 'PROCESSING') statusColor = 'text-brand-400 animate-pulse';
 
-            div.className = 'glass-panel p-4 rounded-xl mb-3 flex flex-col sm:flex-row justify-between sm:items-center gap-3 transition-colors border border-white/5';
+            div.className = 'glass-panel p-4 rounded-xl mb-3 flex flex-col sm:flex-row justify-between sm:items-center gap-3 transition-colors border border-gray-700/50';
 
             const safeTitle = window.escapeHTML(formatTaskTitle(task));
             const updatedTime = task.updated_at

@@ -90,7 +90,7 @@ async function initQuizSetup() {
             <div class="grid lg:grid-cols-2 gap-6 mb-8">
                 <!-- 1. Source Filters -->
                 <div class="glass-card card-shade-1 p-6">
-                    <h3 class="text-lg font-semibold mb-4 border-b border-white/10 pb-2 flex items-center gap-2">📂 1. Curate Topics &amp; Filters</h3>
+                    <h3 class="text-lg font-semibold mb-4 border-b border-gray-700/50 pb-2 flex items-center gap-2">📂 1. Curate Topics &amp; Filters</h3>
 
                     <label class="block text-xs text-muted mb-1">CSV Subject</label>
                     <select id="cfg-subject" class="w-full glass-select rounded-lg px-3 py-2.5 text-sm mb-4">
@@ -110,13 +110,13 @@ async function initQuizSetup() {
 
                 <!-- 2. Session Rules -->
                 <div class="glass-card card-shade-2 p-6">
-                    <h3 class="text-lg font-semibold mb-4 border-b border-white/10 pb-2 flex items-center gap-2">🕹️ 2. Session Rules</h3>
+                    <h3 class="text-lg font-semibold mb-4 border-b border-gray-700/50 pb-2 flex items-center gap-2">🕹️ 2. Session Rules</h3>
 
                     <label class="block text-xs text-muted mb-1">Study Mode</label>
                     <div class="flex gap-2 mb-4">
-                        <button id="mode-test" class="flex-1 py-2 rounded-lg text-sm font-medium border border-white/10 transition-colors ${quizConfig.mode === 'test' ? 'primary-btn' : 'secondary-btn'}">📝 Test</button>
-                        <button id="mode-learn" class="flex-1 py-2 rounded-lg text-sm font-medium border border-white/10 transition-colors ${quizConfig.mode === 'learn' ? 'primary-btn' : 'secondary-btn'}">📖 Learn</button>
-                        <button id="mode-target" class="flex-1 py-2 rounded-lg text-sm font-medium border border-white/10 transition-colors ${quizConfig.mode === 'target' ? 'primary-btn' : 'secondary-btn'}">🎯 Target</button>
+                        <button id="mode-test" class="flex-1 py-2 rounded-lg text-sm font-medium border border-gray-700/50 transition-colors ${quizConfig.mode === 'test' ? 'primary-btn' : 'secondary-btn'}">📝 Test</button>
+                        <button id="mode-learn" class="flex-1 py-2 rounded-lg text-sm font-medium border border-gray-700/50 transition-colors ${quizConfig.mode === 'learn' ? 'primary-btn' : 'secondary-btn'}">📖 Learn</button>
+                        <button id="mode-target" class="flex-1 py-2 rounded-lg text-sm font-medium border border-gray-700/50 transition-colors ${quizConfig.mode === 'target' ? 'primary-btn' : 'secondary-btn'}">🎯 Target</button>
                     </div>
 
                     <div class="flex items-center justify-between mb-1">
@@ -486,7 +486,7 @@ function renderTopicVerificationModalDOM() {
 
         <div class="p-6 overflow-y-auto flex-1 space-y-5" id="topic-editor-content">
             <!-- Legend & Quick Bulk Controls -->
-            <div class="flex flex-wrap items-center justify-between gap-3 glass-panel p-3 rounded-xl border border-white/10 text-xs">
+            <div class="flex flex-wrap items-center justify-between gap-3 glass-panel p-3 rounded-xl border border-gray-700/50 text-xs">
                 <div class="flex flex-wrap items-center gap-4">
                     <span class="flex items-center gap-1.5">
                         <span class="w-3 h-3 rounded-full bg-success-500 inline-block"></span>
@@ -507,7 +507,7 @@ function renderTopicVerificationModalDOM() {
             </div>
 
             <!-- Topic Chips Container -->
-            <div id="topic-editor-questions" class="flex flex-wrap gap-2.5 min-h-[120px] p-4 glass-panel rounded-2xl border border-white/10">
+            <div id="topic-editor-questions" class="flex flex-wrap gap-2.5 min-h-[120px] p-4 glass-panel rounded-2xl border border-gray-700/50">
                 ${session.topicList.length === 0
                     ? '<p class="text-sm text-muted m-auto">No medical topics extracted. Add a custom topic below.</p>'
                     : session.topicList.map((t, idx) => {
@@ -883,10 +883,10 @@ function renderQuestion() {
         <div class="w-full p-6 animate-fade-in flex flex-col h-full">
             <div class="flex items-center justify-between mb-6 flex-wrap gap-4">
                 <div class="flex items-center gap-4">
-                    <div class="glass-panel border border-white/10 rounded-xl px-5 py-2.5 shadow-inner">
+                    <div class="glass-panel border border-gray-700/50 rounded-xl px-5 py-2.5 shadow-inner">
                         <span class="text-brand-400 font-black text-lg tracking-wide">${headerText}</span>
                     </div>
-                    <div class="flex items-center gap-4 text-sm font-bold glass-panel px-4 py-2.5 rounded-xl border border-white/5">
+                    <div class="flex items-center gap-4 text-sm font-bold glass-panel px-4 py-2.5 rounded-xl border border-gray-700/50">
                         <span class="text-success-500 flex items-center gap-1.5">✓ ${scores.correct}</span>
                         <span class="opacity-30">|</span>
                         <span class="text-danger-500 flex items-center gap-1.5">✗ ${scores.wrong}</span>
@@ -900,7 +900,7 @@ function renderQuestion() {
                 </div>
             </div>
 
-            <div class="w-full glass-panel rounded-full h-2 mb-6 shadow-inner border border-white/5 overflow-hidden">
+            <div class="w-full glass-panel rounded-full h-2 mb-6 shadow-inner border border-gray-700/50 overflow-hidden">
                 <div class="h-2 rounded-full transition-all duration-500 bg-gradient-to-r from-brand-500 to-purple-500" style="width: ${Math.min(progressPct, 100)}%"></div>
             </div>
 
@@ -909,7 +909,7 @@ function renderQuestion() {
                     <span class="px-3 py-1 bg-brand-500/20 text-brand-300 rounded-full text-xs font-bold uppercase tracking-wider border border-brand-500/30">
                         ${window.escapeHTML(q.topic_name || q.topic || currentQuiz.customTitle)}
                     </span>
-                    <span class="px-3 py-1 glass-panel text-muted rounded-full text-xs font-bold uppercase tracking-wider border border-white/10">
+                    <span class="px-3 py-1 glass-panel text-muted rounded-full text-xs font-bold uppercase tracking-wider border border-gray-700/50">
                         Mode: ${quizConfig.mode}
                     </span>
                 </div>
@@ -920,7 +920,7 @@ function renderQuestion() {
 
             <div id="feedback-container" class="flex-1 overflow-y-auto pr-2 mb-4 space-y-4"></div>
 
-            <div class="flex justify-between items-center mt-auto pt-4 border-t border-white/10">
+            <div class="flex justify-between items-center mt-auto pt-4 border-t border-gray-700/50">
                 <button id="btn-prev" class="secondary-btn px-6 py-3 rounded-xl disabled:opacity-30 font-medium" ${currentIndex === 0 ? 'disabled' : ''}>
                     ← Previous
                 </button>
@@ -941,7 +941,7 @@ function renderQuestion() {
         let classes = 'w-full text-left px-5 py-4 rounded-xl border transition-all flex items-center justify-between font-medium ';
 
         if (!isAnswered) {
-            classes += 'glass-card border-white/10 hover:border-brand-500 cursor-pointer';
+            classes += 'glass-card border-gray-700/50 hover:border-brand-500 cursor-pointer';
             btn.onclick = () => handleSelectOption(q, opt);
         } else {
             classes += 'cursor-default ';
@@ -949,10 +949,10 @@ function renderQuestion() {
             const isCorrectOpt = opt === (q.correct_answer || 'A').toUpperCase();
             const isSelected = ans.selected === opt;
 
-            if (ans.timedOut) classes += 'glass-panel border-white/5 opacity-50';
+            if (ans.timedOut) classes += 'glass-panel border-gray-700/50 opacity-50';
             else if (isCorrectOpt) classes += 'bg-success-500/20 border-success-500/50 text-success-300';
             else if (isSelected && !ans.isCorrect) classes += 'bg-danger-500/20 border-danger-500/50 text-danger-300';
-            else classes += 'glass-panel border-white/5 opacity-50';
+            else classes += 'glass-panel border-gray-700/50 opacity-50';
         }
 
         btn.className = classes;
@@ -977,7 +977,7 @@ function renderQuestion() {
 
         if (q.explanation && q.explanation !== 'No explanation provided.') {
             fbHtml += `
-                <div class="animate-fade-in glass-panel border border-white/10 rounded-2xl p-5">
+                <div class="animate-fade-in glass-panel border border-gray-700/50 rounded-2xl p-5">
                     <h4 class="font-bold text-brand-300 text-xs uppercase tracking-wider mb-2">📄 CSV Baseline Explanation</h4>
                     <div class="prose prose-sm max-w-none">${window.renderMarkdownAndMath(q.explanation)}</div>
                 </div>
@@ -993,7 +993,7 @@ function renderQuestion() {
             `;
         } else if (!fbHtml) {
             fbHtml = `
-                <div class="animate-fade-in glass-panel border border-white/10 rounded-2xl p-5 text-sm text-muted">
+                <div class="animate-fade-in glass-panel border border-gray-700/50 rounded-2xl p-5 text-sm text-muted">
                     Check the Right Sidebar Inspector for verified textbook, Obsidian, and ZIM references on this question.
                 </div>
             `;
@@ -1210,7 +1210,7 @@ function renderResults(result, answeredQs) {
                 </div>
             </div>
 
-            <div class="flex flex-wrap gap-4 justify-center mb-10 pb-10 border-b border-white/10">
+            <div class="flex flex-wrap gap-4 justify-center mb-10 pb-10 border-b border-gray-700/50">
                 <button id="res-hub" class="secondary-btn px-6 py-3 rounded-xl font-medium">📚 Open Knowledge Hub</button>
                 <button id="res-retake" class="secondary-btn px-6 py-3 rounded-xl font-medium">🔄 Retake Set</button>
                 ${wrongQs.length > 0 ? `<button id="res-wrong" class="primary-btn px-6 py-3 rounded-xl font-bold">🧠 Practice Wrong (${wrongQs.length})</button>` : ''}
@@ -1222,7 +1222,7 @@ function renderResults(result, answeredQs) {
                 ${answeredQs.map((q, i) => {
                     const a = quizAnswers[q.id];
                     const bgBorder = a.timedOut
-                        ? 'border-white/10 glass-panel'
+                        ? 'border-gray-700/50 glass-panel'
                         : a.isCorrect
                             ? 'border-success-500/30 glass-card'
                             : 'border-danger-500/30 glass-card';
@@ -1250,7 +1250,7 @@ function renderResults(result, answeredQs) {
                         </div>
 
                         ${q.explanation ? `
-                        <div class="glass-panel rounded-xl p-4 border border-white/5 mb-3">
+                        <div class="glass-panel rounded-xl p-4 border border-gray-700/50 mb-3">
                             <p class="text-xs font-bold text-brand-300 uppercase mb-2">📄 CSV Explanation</p>
                             <div class="prose prose-sm max-w-none">${window.renderMarkdownAndMath(q.explanation)}</div>
                         </div>` : ''}
@@ -1368,7 +1368,7 @@ function updateInspectorForQuestion(questionObj) {
         })
         .then(data => {
             let html = `<div class="space-y-4 text-xs pb-6">`;
-            html += `<div class="glass-panel p-3 rounded-xl border border-white/10">
+            html += `<div class="glass-panel p-3 rounded-xl border border-gray-700/50">
                         <span class="text-[10px] text-muted uppercase">Active Question Topic</span>
                         <p class="font-bold text-sm text-brand-400 mt-0.5">${window.escapeHTML(topic)}</p>
                      </div>`;

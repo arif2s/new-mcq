@@ -133,7 +133,7 @@
         .map((m) => {
           const isDownloaded = m.downloaded;
           return `
-          <div class="flex items-center justify-between p-3.5 rounded-xl border border-white/10 bg-white/5 backdrop-blur-md mb-2.5 transition-all">
+          <div class="flex items-center justify-between p-3.5 rounded-xl border border-gray-700/50 glass-panel mb-2.5 transition-all">
             <div class="flex-1 pr-4">
               <div class="flex items-center gap-2">
                 <span class="font-semibold text-sm text-neutral-100">${escapeHTML(m.name)}</span>
@@ -175,7 +175,7 @@
         .map((m) => {
           const isDownloaded = m.downloaded;
           return `
-          <div class="flex items-center justify-between p-3.5 rounded-xl border border-white/10 bg-white/5 backdrop-blur-md mb-2.5 transition-all">
+          <div class="flex items-center justify-between p-3.5 rounded-xl border border-gray-700/50 bg-white/5 backdrop-blur-md mb-2.5 transition-all">
             <div class="flex-1 pr-4">
               <div class="flex items-center gap-2">
                 <span class="font-semibold text-sm text-neutral-100">${escapeHTML(m.name)}</span>
@@ -430,14 +430,14 @@
           const hasSparse = Boolean(info.has_sparse_matrix);
 
           return `
-          <div class="p-3 rounded-xl border ${detected ? "border-white/10 bg-white/5" : "border-rose-500/20 bg-rose-500/5"} flex flex-col justify-between">
+          <div class="p-3 rounded-xl border ${detected ? "border-gray-700/50 glass-panel" : "border-rose-500/20 bg-rose-500/5"} flex flex-col justify-between">
             <div>
               <div class="flex items-center justify-between mb-2">
                 <label class="inline-flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" class="ontology-kb-checkbox rounded bg-neutral-800 border-white/20 text-emerald-500 focus:ring-0" value="${key}" ${detected ? "checked" : "disabled"}>
+                  <input type="checkbox" class="ontology-kb-checkbox rounded glass-input text-emerald-500 focus:ring-0" value="${key}" ${detected ? "checked" : "disabled"}>
                   <span class="font-bold text-sm text-neutral-100 uppercase tracking-wide">${key}</span>
                 </label>
-                <span class="text-[10px] font-semibold px-2 py-0.5 rounded ${detected ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" : "bg-neutral-800 text-neutral-500 border border-white/5"}">
+                <span class="text-[10px] font-semibold px-2 py-0.5 rounded ${detected ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" : "glass-panel text-neutral-500 border border-gray-700/50"}">
                   ${detected ? `${info.size_mb} MB` : "Missing"}
                 </span>
               </div>
