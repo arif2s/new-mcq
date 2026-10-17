@@ -110,7 +110,14 @@ def extract_pdf_structure(file_path: str) -> list:
         for item, level in conversion_result.document.iterate_items():
             item_page = current_page
             if hasattr(item, "prov") and item.prov:
-                item_page = item.prov[0].page_no
+                try:
+                    p = item.prov[0]
+                    if hasattr(p, "page_no"):
+                        item_page = int(p.page_no)
+                    elif isinstance(p, dict) and "page_no" in p:
+                        item_page = int(p["page_no"])
+                except Exception:
+                    pass
 
             if item_page != current_page and current_text:
                 save_section(current_page)

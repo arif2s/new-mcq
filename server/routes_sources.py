@@ -245,24 +245,29 @@ async def run_indexing():
 
                 # 2. PDF TEXTBOOK INDEXING (Supports PyMuPDF Fitz with Headings OR Docling ML Layout)
                 elif src["type"] == "pdf":
-                    pdf_files = (
-                        list(source_path.rglob("*.pdf"))
-                        if source_path.is_dir()
-                        else ([source_path] if source_path.suffix.lower() == ".pdf" else [])
-                    )
+                    if source_path.is_dir():
+                        pdf_files = [f for f in source_path.rglob("*") if f.is_file() and f.suffix.lower() == ".pdf"]
+                    else:
+                        pdf_files = [source_path] if source_path.suffix.lower() == ".pdf" else []
                     total_files = len(pdf_files)
                     pdf_engine = src.get("pdfEngine", "fitz") or "fitz"
 
                     for file_idx, file_path in enumerate(pdf_files):
                         await asyncio.sleep(0)
                         try:
+                            sections = []
                             if pdf_engine == "docling":
-                                from parsers.docling_parser import extract_pdf_structure
-                                await ws_manager.broadcast_indexing_progress(
-                                    progress,
-                                    f"Indexing {src['name']} ({file_idx + 1}/{total_files}): {file_path.name} [Docling]",
-                                )
-                                sections = await asyncio.to_thread(extract_pdf_structure, str(file_path))
+                                try:
+                                    from parsers.docling_parser import extract_pdf_structure
+                                    await ws_manager.broadcast_indexing_progress(
+                                        progress,
+                                        f"Indexing {src['name']} ({file_idx + 1}/{total_files}): {file_path.name} [Docling]",
+                                    )
+                                    sections = await asyncio.to_thread(extract_pdf_structure, str(file_path))
+                                except Exception as d_err:
+                                    logger.warning(f"Docling extraction failed for {file_path}: {d_err}")
+
+                            if pdf_engine == "docling" and sections:
                                 for section_idx, section in enumerate(sections):
                                     page_num = int(section["page"])
                                     heading = section["heading"]
@@ -311,6 +316,8 @@ async def run_indexing():
                                         await asyncio.to_thread(flush_lancedb)
                                     item_count += 1
                             else:
+                                if pdf_engine == "docling":
+                                    logger.warning(f"Docling extraction produced no sections for {file_path}. Falling back to Fitz.")
                                 import fitz
                                 with fitz.open(str(file_path)) as pdf_doc:
                                     total_pages = pdf_doc.page_count
