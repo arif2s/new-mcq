@@ -933,12 +933,28 @@ async function openTopicCarousel(sessionId) {
     }
 }
 
+window.selectTopicInCarousel = function(topicName) {
+    if (!currentSessionTopics || currentSessionTopics.length === 0) return false;
+    const lower = topicName.toLowerCase();
+    const idx = currentSessionTopics.findIndex(t =>
+        (t.topic_name && t.topic_name.toLowerCase() === lower) ||
+        (t.display_title && t.display_title.toLowerCase() === lower)
+    );
+    if (idx !== -1) {
+        currentTopicIndex = idx;
+        renderCurrentTopic();
+        return true;
+    }
+    return false;
+};
+
 async function fetchAndRenderTopics(sessionId, silent = false) {
     try {
         const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/topics`);
         if (res.ok) {
             currentSessionTopics = await res.json();
             if (currentSessionTopics.length > 0) {
+                window.currentStudyTopics = currentSessionTopics.map(t => t.display_title || t.topic_name);
                 renderCurrentTopic();
             } else if (!silent) {
                 document.getElementById('hub-carousel-content').textContent = 'No verified topics found for this session.';
@@ -1128,6 +1144,20 @@ document.addEventListener('DOMContentLoaded', () => {
         if (carouselInterval) {
             clearInterval(carouselInterval);
             carouselInterval = null;
+        }
+    });
+
+    document.getElementById('hub-carousel-toggle-sidebar-btn')?.addEventListener('click', () => {
+        const sidebar = document.getElementById('right-sidebar');
+        const isCollapsed = !sidebar || sidebar.classList.contains('collapsed');
+        if (isCollapsed) {
+            if (typeof window.renderStudyTopicsInspector === 'function') {
+                window.renderStudyTopicsInspector(window.currentStudyTopics, true);
+            }
+        } else {
+            if (typeof window.closeInspector === 'function') {
+                window.closeInspector();
+            }
         }
     });
 

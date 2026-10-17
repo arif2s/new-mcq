@@ -279,6 +279,13 @@ window.renderStudyTopicsInspector = async function(topicsList = null, forceOpen 
         item.addEventListener('click', async () => {
             const topic = item.dataset.topic;
             if (!topic) return;
+
+            const carouselContainer = document.getElementById('hub-carousel-container');
+            if (carouselContainer && carouselContainer.style.display === 'flex' && typeof window.selectTopicInCarousel === 'function') {
+                const selected = window.selectTopicInCarousel(topic);
+                if (selected) return;
+            }
+
             const expContainer = document.getElementById('explanation-container');
             if (expContainer) {
                 expContainer.classList.remove('content-placeholder');
