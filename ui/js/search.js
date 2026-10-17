@@ -6,11 +6,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const closeModalBtn = document.getElementById('close-modal-btn');
     const goToSettingsBtn = document.getElementById('go-to-settings-btn');
 
+    // Memory state for central search page
+    let currentSearchQuery = '';
+    let currentSearchAliases = [];
+    let rawSearchHits = []; // Unique single-file results
+    let activeResultLimit = 10; // Default limit: 10
+    let activeSourceFilter = 'all'; // Default source: 'all'
+
     // =========================================================
-    // 1. GLOBAL HYBRID SEARCH -> 3RD-COLUMN RIGHT INSPECTOR
+    // 1. CITATION CARD BUILDER FOR CENTRAL SEARCH PAGE
     // =========================================================
     function buildSearchCitationCard(item, rankIdx) {
-        const source = (item.source || 'lancedb').toLowerCase();
+        const source = (item.source || 'obsidian').toLowerCase();
         const title = item.title || item.main_topic || 'Untitled Document';
         const heading = item.heading || item.heading_path || item.subheading || '';
         const page = item.page_number || item.page || 1;
@@ -20,57 +27,261 @@ document.addEventListener('DOMContentLoaded', () => {
         const lenLabel = docLen > 1000 ? `${(docLen / 1000).toFixed(1)}k chars` : `${docLen} chars`;
 
         let actionClass = 'citation-obsidian';
-        let badgeLabel = '🟣 Obsidian';
+        let badgeLabel = '🟣 Obsidian Note';
         let dataAttrs = `data-filepath="${window.escapeHTML(filePath)}" data-file="${window.escapeHTML(title)}"`;
 
         if (source === 'pdf' || filePath.toLowerCase().endsWith('.pdf')) {
             actionClass = 'citation-pdf';
-            badgeLabel = `📕 PDF • Pg ${page}`;
+            badgeLabel = `📕 PDF Textbook • Pg ${page}`;
             dataAttrs = `data-filepath="${window.escapeHTML(filePath)}" data-page="${page}"`;
         } else if (source === 'zim' || String(item.doc_id || '').startsWith('zim_')) {
             actionClass = 'citation-zim';
-            badgeLabel = '🌐 ZIM Article';
+            badgeLabel = '🌐 ZIM Encyclopedia Article';
             const articleId = item.article_id || title;
             dataAttrs = `data-article-id="${window.escapeHTML(articleId)}"`;
         }
 
         const cleanSnippet = snippet
-            ? window.escapeHTML(snippet.substring(0, 260)) + (snippet.length > 260 ? '...' : '')
+            ? window.escapeHTML(snippet.substring(0, 320)) + (snippet.length > 320 ? '...' : '')
             : 'Click to open full reference document.';
 
         return `
-            <div class="glass-card p-4 rounded-xl border ${rankIdx === 0 ? 'border-brand-500/50 shadow-md' : 'border-gray-700/50'} transition-all">
-                <div class="flex items-center justify-between gap-2 mb-1.5">
-                    <span class="text-[10px] font-bold px-2 py-0.5 rounded glass-panel text-brand-300 uppercase">
-                        ${badgeLabel}
-                    </span>
-                    <span class="text-[10px] font-mono text-muted" title="Comprehensive article length">
+            <div class="glass-card p-5 rounded-2xl border ${rankIdx === 0 ? 'border-brand-500/60 shadow-lg' : 'border-gray-700/50'} transition-all hover:border-brand-400">
+                <div class="flex items-center justify-between gap-2 mb-2">
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs font-bold px-2.5 py-0.5 rounded-md glass-panel text-brand-300 uppercase tracking-wider">
+                            ${badgeLabel}
+                        </span>
+                        ${item.alias_hit_count > 1 ? `
+                            <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" title="Matched multiple aliases/synonyms">
+                                ⚡ ${item.alias_hit_count} alias matches
+                            </span>
+                        ` : ''}
+                    </div>
+                    <span class="text-xs font-mono text-muted" title="Document Article Length">
                         ${lenLabel}
                     </span>
                 </div>
 
-                <h5 class="font-bold text-sm mb-1 truncate" title="${window.escapeHTML(title)}">
+                <h4 class="font-bold text-base text-neutral-100 mb-1 truncate" title="${window.escapeHTML(title)}">
                     ${window.escapeHTML(title)}
-                </h5>
+                </h4>
 
                 ${heading && heading !== title ? `
-                    <p class="text-[11px] text-brand-400 font-medium mb-2 truncate" title="${window.escapeHTML(heading)}">
-                        📑 ${window.escapeHTML(heading)}
+                    <p class="text-xs text-brand-300 font-semibold mb-2 truncate" title="${window.escapeHTML(heading)}">
+                        📑 Heading: ${window.escapeHTML(heading)}
                     </p>
                 ` : ''}
 
-                <p class="text-xs text-muted leading-relaxed mb-3">
+                <p class="text-xs text-muted leading-relaxed mb-4">
                     ${cleanSnippet}
                 </p>
 
-                <a href="#" class="${actionClass} w-full py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 no-underline"
-                   ${dataAttrs}>
-                    Open Reference Document ↗
-                </a>
+                <div class="flex items-center justify-between gap-3 pt-2 border-t border-gray-700/40">
+                    <span class="text-[11px] font-mono text-neutral-400 truncate max-w-[60%]" title="${window.escapeHTML(filePath)}">
+                        ${window.escapeHTML(filePath)}
+                    </span>
+                    <a href="#" class="${actionClass} primary-btn py-2 px-4 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 no-underline shrink-0"
+                       ${dataAttrs}>
+                        Open Reference Document ↗
+                    </a>
+                </div>
             </div>
         `;
     }
 
+    // =========================================================
+    // 2. CENTRAL SEARCH RESULTS PAGE RENDERER
+    // =========================================================
+    function renderCentralSearchResults() {
+        const container = document.getElementById('search-results-container');
+        const queryDisplay = document.getElementById('search-query-display');
+        const countBadge = document.getElementById('search-results-count-badge');
+        const aliasesDisplay = document.getElementById('search-aliases-display');
+
+        if (queryDisplay) {
+            queryDisplay.textContent = currentSearchQuery ? `Search: "${currentSearchQuery}"` : 'Search Results';
+        }
+
+        if (aliasesDisplay) {
+            if (currentSearchAliases && currentSearchAliases.length > 1) {
+                aliasesDisplay.innerHTML = `<span class="font-semibold text-brand-300">Aliases &amp; Synonyms Included:</span> ${currentSearchAliases.map(a => `<span class="glass-panel px-1.5 py-0.5 rounded text-[11px] font-mono mr-1">${window.escapeHTML(a)}</span>`).join('')}`;
+            } else {
+                aliasesDisplay.textContent = 'Searched exact match and clinical variants.';
+            }
+        }
+
+        // Filter hits by activeSourceFilter
+        let filtered = rawSearchHits;
+        if (activeSourceFilter !== 'all') {
+            filtered = rawSearchHits.filter(h => {
+                const src = (h.source || '').toLowerCase();
+                if (activeSourceFilter === 'pdf') return src === 'pdf' || (h.file_path || '').toLowerCase().endsWith('.pdf');
+                if (activeSourceFilter === 'obsidian') return src === 'obsidian' || (h.file_path || '').toLowerCase().endsWith('.md');
+                if (activeSourceFilter === 'zim') return src === 'zim' || (h.doc_id || '').startsWith('zim_');
+                return true;
+            });
+        }
+
+        // Limit results
+        const limitNum = activeResultLimit === 'all' ? filtered.length : parseInt(activeResultLimit) || 10;
+        const sliced = filtered.slice(0, limitNum);
+
+        if (countBadge) {
+            countBadge.textContent = `${sliced.length} of ${filtered.length} unique matching files shown`;
+        }
+
+        if (!container) return;
+
+        if (rawSearchHits.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-16 glass-panel rounded-2xl p-8 text-muted">
+                    <p class="font-bold text-base text-neutral-200 mb-1">No Matching Files Found</p>
+                    <p class="text-xs text-muted mb-4">No indexed PDF textbooks, Obsidian notes, or ZIM articles matched "${window.escapeHTML(currentSearchQuery)}".</p>
+                    <button type="button" onclick="if(window.refreshDiagnostics) window.refreshDiagnostics();" class="secondary-btn text-xs px-3.5 py-2 rounded-xl">
+                        Check Diagnostics / Build Index
+                    </button>
+                </div>
+            `;
+            return;
+        }
+
+        if (sliced.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-12 glass-panel rounded-2xl p-6 text-muted">
+                    <p class="font-semibold text-sm mb-1">No results for source filter "${window.escapeHTML(activeSourceFilter.toUpperCase())}"</p>
+                    <p class="text-xs mb-3">Try changing the source filter in the Right Sidebar to "All Sources".</p>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = `
+            <div class="space-y-4">
+                ${sliced.map((hit, idx) => buildSearchCitationCard(hit, idx)).join('')}
+            </div>
+        `;
+    }
+
+    // =========================================================
+    // 3. RIGHT SIDEBAR INSPECTOR FOR SEARCH FILTERS
+    // =========================================================
+    function renderSearchFilterInspector() {
+        if (!window.openInspector) return;
+
+        const totalUnique = rawSearchHits.length;
+        const pdfCount = rawSearchHits.filter(h => h.source === 'pdf' || (h.file_path || '').toLowerCase().endsWith('.pdf')).length;
+        const obsCount = rawSearchHits.filter(h => h.source === 'obsidian' || (h.file_path || '').toLowerCase().endsWith('.md')).length;
+        const zimCount = rawSearchHits.filter(h => h.source === 'zim' || (h.doc_id || '').startsWith('zim_')).length;
+
+        const limitOptions = [5, 10, 20, 30, 'all'];
+
+        let html = `
+            <div class="space-y-5 text-xs">
+                <div class="glass-panel p-3.5 rounded-xl border border-brand-500/30">
+                    <span class="text-[10px] text-muted uppercase font-bold tracking-wider block mb-0.5">Active Query</span>
+                    <p class="font-bold text-sm text-brand-300 truncate">${window.escapeHTML(currentSearchQuery || 'None')}</p>
+                    <p class="text-[11px] text-neutral-400 mt-1">
+                        Found <strong>${totalUnique}</strong> unique matching file(s) across PDF, Obsidian, and ZIM.
+                    </p>
+                </div>
+
+                <!-- 1. Results Limit Filter -->
+                <div class="glass-card p-4 rounded-xl space-y-2.5">
+                    <div class="flex items-center justify-between">
+                        <label class="font-bold text-neutral-200 text-xs flex items-center gap-1.5">
+                            🎯 Results Display Limit
+                        </label>
+                        <span class="text-[10px] font-mono text-brand-400 font-bold">Top ${activeResultLimit}</span>
+                    </div>
+                    <p class="text-[11px] text-muted leading-relaxed">
+                        Control how many top depth-ranked unique file matches to show on the central results page.
+                    </p>
+                    <div class="grid grid-cols-5 gap-1.5 pt-1">
+                        ${limitOptions.map(lim => {
+                            const isSel = String(activeResultLimit) === String(lim);
+                            return `
+                                <button type="button" class="btn-search-limit ${isSel ? 'primary-btn font-bold' : 'secondary-btn'} text-xs py-1.5 rounded-lg text-center cursor-pointer" data-limit="${lim}">
+                                    ${lim === 'all' ? 'All' : lim}
+                                </button>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+
+                <!-- 2. Knowledge Source Filter -->
+                <div class="glass-card p-4 rounded-xl space-y-2.5">
+                    <label class="font-bold text-neutral-200 text-xs block mb-1">
+                        📚 Knowledge Source Filter
+                    </label>
+                    <div class="space-y-1.5">
+                        <button type="button" class="btn-search-source w-full text-left p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${activeSourceFilter === 'all' ? 'border-brand-500 bg-brand-500/20 text-neutral-100 font-bold' : 'border-gray-700/50 glass-panel text-muted hover:border-brand-500/50'}" data-source="all">
+                            <span>🔍 All Sources</span>
+                            <span class="badge bg-ok font-mono text-[10px]">${totalUnique}</span>
+                        </button>
+                        <button type="button" class="btn-search-source w-full text-left p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${activeSourceFilter === 'pdf' ? 'border-brand-500 bg-brand-500/20 text-neutral-100 font-bold' : 'border-gray-700/50 glass-panel text-muted hover:border-brand-500/50'}" data-source="pdf">
+                            <span>📕 PDF Textbooks</span>
+                            <span class="badge bg-ok font-mono text-[10px]">${pdfCount}</span>
+                        </button>
+                        <button type="button" class="btn-search-source w-full text-left p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${activeSourceFilter === 'obsidian' ? 'border-brand-500 bg-brand-500/20 text-neutral-100 font-bold' : 'border-gray-700/50 glass-panel text-muted hover:border-brand-500/50'}" data-source="obsidian">
+                            <span>🟣 Obsidian Notes</span>
+                            <span class="badge bg-ok font-mono text-[10px]">${obsCount}</span>
+                        </button>
+                        <button type="button" class="btn-search-source w-full text-left p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${activeSourceFilter === 'zim' ? 'border-brand-500 bg-brand-500/20 text-neutral-100 font-bold' : 'border-gray-700/50 glass-panel text-muted hover:border-brand-500/50'}" data-source="zim">
+                            <span>🌐 ZIM Encyclopedia</span>
+                            <span class="badge bg-ok font-mono text-[10px]">${zimCount}</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 3. Alias Expansion Summary -->
+                <div class="glass-card p-4 rounded-xl space-y-2">
+                    <label class="font-bold text-neutral-200 text-xs block">
+                        🧬 Included Aliases &amp; Synonyms
+                    </label>
+                    <p class="text-[11px] text-muted">
+                        Search automatically includes clinical variants and layperson synonyms (e.g. <em>heart attack</em> &rarr; <em>myocardial infarction, myocardial ischemia</em>), collapsing duplicate file matches.
+                    </p>
+                    <div class="flex flex-wrap gap-1 pt-1">
+                        ${(currentSearchAliases || []).map(a => `
+                            <span class="text-[10px] px-2 py-0.5 rounded-md glass-panel text-brand-300 font-mono border border-brand-500/20">
+                                ${window.escapeHTML(a)}
+                            </span>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+        `;
+
+        window.openInspector("Search Filters", html, true);
+
+        // Attach event listeners inside Right Sidebar
+        const inspectorEl = document.getElementById('inspector-content');
+        if (!inspectorEl) return;
+
+        inspectorEl.querySelectorAll('.btn-search-limit').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const lim = btn.dataset.limit;
+                activeResultLimit = lim === 'all' ? 'all' : parseInt(lim) || 10;
+                renderCentralSearchResults();
+                renderSearchFilterInspector();
+            });
+        });
+
+        inspectorEl.querySelectorAll('.btn-search-source').forEach(btn => {
+            btn.addEventListener('click', () => {
+                activeSourceFilter = btn.dataset.source || 'all';
+                renderCentralSearchResults();
+                renderSearchFilterInspector();
+            });
+        });
+    }
+
+    window.renderSearchFilterInspector = renderSearchFilterInspector;
+
+    // =========================================================
+    // 4. PERFORM GLOBAL HYBRID SEARCH
+    // =========================================================
     async function performGlobalSearch(query) {
         if (!query) return;
 
@@ -88,93 +299,61 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (_) {}
 
-        if (window.openInspector) {
-            window.openInspector(
-                `Search: ${query}`,
-                `<div class="text-center py-12 text-muted text-xs animate-pulse">
-                    Searching hybrid LanceDB vectors, Tantivy BM25 &amp; ZIM encyclopedia for <strong>${window.escapeHTML(query)}</strong>...
-                </div>`
-            );
+        currentSearchQuery = query;
+
+        // Switch active tab to central search-results-view
+        if (typeof window.switchTab === 'function') {
+            window.switchTab('search-results-view');
+        } else {
+            const searchView = document.getElementById('search-results-view');
+            if (searchView) {
+                document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
+                searchView.classList.add('active');
+            }
+        }
+
+        const container = document.getElementById('search-results-container');
+        if (container) {
+            container.innerHTML = `
+                <div class="text-center py-16 text-muted glass-panel rounded-2xl p-8 border border-brand-500/30">
+                    <svg class="animate-spin h-8 w-8 mx-auto text-brand-400 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <p class="font-bold text-sm text-neutral-100 mb-1">Searching Knowledge Vaults...</p>
+                    <p class="text-xs text-muted">Resolving LanceDB vectors, Tantivy BM25, and ZIM archives for <strong>${window.escapeHTML(query)}</strong> (including aliases &amp; synonyms)...</p>
+                </div>
+            `;
         }
 
         try {
             const searchResp = await fetch('/api/search', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query })
+                body: JSON.stringify({ query, limit: 50 })
             });
             const searchData = await searchResp.json();
 
-            // Flatten candidates and grouped all_results while avoiding duplicates
-            const seenIds = new Set();
-            const mergedHits = [];
+            rawSearchHits = searchData.candidates || [];
+            currentSearchAliases = searchData.aliases || [query];
 
-            const pushHit = (item, fallbackSource) => {
-                if (!item) return;
-                const key = `${item.doc_id || ''}_${item.file_path || ''}_${item.title || ''}_${item.page_number || item.page || 1}`;
-                if (seenIds.has(key)) return;
-                seenIds.add(key);
-                mergedHits.push({ ...item, source: item.source || fallbackSource || 'lancedb' });
-            };
+            renderCentralSearchResults();
+            renderSearchFilterInspector();
 
-            (searchData.candidates || []).forEach(c => pushHit(c, c.source));
-            if (searchData.all_results && typeof searchData.all_results === 'object') {
-                Object.entries(searchData.all_results).forEach(([srcType, list]) => {
-                    if (Array.isArray(list)) {
-                        list.forEach(item => pushHit(item, srcType));
-                    }
-                });
-            }
-
-            let html = `
-                <div class="space-y-4 text-xs pb-8">
-                    <div class="glass-panel p-3.5 rounded-xl border border-brand-500/30 flex items-center justify-between gap-2">
-                        <div class="min-w-0 flex-1">
-                            <span class="text-[10px] text-muted uppercase block">Query Topic</span>
-                            <p class="font-bold text-sm text-brand-300 truncate">${window.escapeHTML(query)}</p>
-                        </div>
-                        <button type="button" id="search-create-quiz-btn" class="primary-btn px-3 py-2 text-xs font-bold rounded-lg shrink-0">
-                            🎯 Create Quiz Set
-                        </button>
-                    </div>
-            `;
-
-            if (mergedHits.length === 0) {
-                html += `
-                    <div class="text-center py-10 glass-panel rounded-xl p-6 text-muted">
-                        <p class="font-semibold text-sm mb-1">No Reference Matches Found</p>
-                        <p class="text-xs">No indexed PDF, Obsidian, or ZIM articles matched "${window.escapeHTML(query)}".</p>
-                    </div>
-                `;
-            } else {
-                html += `
-                    <div class="flex items-center justify-between px-1">
-                        <span class="text-[11px] font-bold uppercase tracking-wider text-muted">
-                            Top Depth-Ranked References (${mergedHits.length})
-                        </span>
-                    </div>
-                    <div class="space-y-3">
-                        ${mergedHits.map((hit, idx) => buildSearchCitationCard(hit, idx)).join('')}
-                    </div>
-                `;
-            }
-
-            html += `</div>`;
-            if (window.openInspector) {
-                window.openInspector(`Search: ${query}`, html);
-                document.getElementById('search-create-quiz-btn')?.addEventListener('click', () => {
-                    if (typeof window.startCustomTopicQuiz === 'function') {
-                        window.startCustomTopicQuiz(query);
-                    }
-                });
-            }
+            document.getElementById('search-create-quiz-btn')?.addEventListener('click', () => {
+                if (typeof window.startCustomTopicQuiz === 'function') {
+                    window.startCustomTopicQuiz(currentSearchQuery);
+                }
+            });
         } catch (err) {
             console.error("Hybrid search error:", err);
-            if (window.openInspector) {
-                window.openInspector(
-                    `Search Error`,
-                    `<div class="text-center py-8 text-danger-400 text-xs">Failed to execute search: ${window.escapeHTML(err.message)}</div>`
-                );
+            if (container) {
+                container.innerHTML = `
+                    <div class="text-center py-12 glass-panel rounded-2xl p-6 text-danger-400">
+                        <p class="font-bold text-sm mb-1">Search Execution Failed</p>
+                        <p class="text-xs">${window.escapeHTML(err.message)}</p>
+                    </div>
+                `;
             }
         }
     }
@@ -204,7 +383,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // =========================================================
-    // 2. SETTINGS "BUILD DATABASE" BUTTON (CSV + HYBRID INDEX)
+    // 5. SETTINGS "BUILD DATABASE" BUTTON (CSV + HYBRID INDEX)
     // =========================================================
     const buildDbBtn = document.getElementById('build-db-btn');
     const buildProgressContainer = document.getElementById('build-progress-container');
@@ -279,7 +458,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // =========================================================
-    // 3. SYSTEM DIAGNOSTICS (LM STUDIO, DB ROWS, SUMATRA, VENDOR CACHE)
+    // 6. SYSTEM DIAGNOSTICS (LM STUDIO, DB ROWS, SUMATRA, VENDOR CACHE)
     // =========================================================
     const refreshDiagBtn = document.getElementById('btn-refresh-diagnostics') || document.getElementById('refresh-diag-btn');
 

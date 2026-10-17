@@ -510,7 +510,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         navButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.target === targetId));
 
         // 3. Manage contextual Right Sidebar Inspector content per active tab
-        if (targetId === 'home-view' || targetId === 'dashboard-view') {
+        if (targetId === 'search-results-view') {
+            if (typeof window.renderSearchFilterInspector === 'function') {
+                window.renderSearchFilterInspector();
+            }
+        } else if (targetId === 'home-view' || targetId === 'dashboard-view') {
             if (typeof window.renderStudyTopicsInspector === 'function') {
                 window.renderStudyTopicsInspector(null, false);
             }
@@ -537,6 +541,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
     };
+
+    window.switchTab = switchTab;
 
     navButtons.forEach(btn => {
         btn.addEventListener('click', (e) => {

@@ -517,6 +517,28 @@ CLINICAL_HEAD_NOUNS: Set[str] = {
     "hernia", "diverticulitis", "diverticulosis", "colitis", "gastritis", "esophagitis"
 }
 
+LAYPERSON_MEDICAL_SYNONYMS: Dict[str, List[str]] = {
+    "heart attack": ["myocardial infarction", "myocardial ischemia", "cardiac arrest", "acute coronary syndrome"],
+    "stroke": ["cerebrovascular accident", "brain ischemia", "ischemic stroke"],
+    "kidney failure": ["renal failure", "renal insufficiency", "acute kidney injury", "chronic kidney disease"],
+    "liver disease": ["hepatic disease", "cirrhosis", "hepatitis"],
+    "lung disease": ["pulmonary disease", "copd", "pneumonia"],
+    "high blood pressure": ["hypertension", "essential hypertension"],
+    "low blood pressure": ["hypotension"],
+    "heart failure": ["congestive heart failure", "cardiac failure"],
+    "blood clot": ["thrombosis", "embolism", "deep vein thrombosis", "pulmonary embolism"],
+    "chest pain": ["angina", "angina pectoris"],
+    "shortness of breath": ["dyspnea"],
+    "fever": ["pyrexia", "febrile illness"],
+    "fainting": ["syncope"],
+    "kidney stone": ["nephrolithiasis", "renal calculus"],
+    "gallstone": ["cholelithiasis"],
+    "blood cancer": ["leukemia", "lymphoma", "multiple myeloma"],
+    "skin cancer": ["melanoma", "basal cell carcinoma", "squamous cell carcinoma"],
+    "joint pain": ["arthralgia", "arthritis"],
+    "heart infection": ["endocarditis", "pericarditis", "myocarditis"],
+}
+
 CLINICAL_ACRONYMS: Dict[str, str] = {
     "MI": "Myocardial infarction",
     "AMI": "Acute myocardial infarction",
@@ -693,6 +715,23 @@ def generate_candidate_variants(term: str) -> List[str]:
             inverted = " ".join(reversed(parts))
             if inverted not in variants:
                 variants.append(inverted)
+
+    # Layperson and medical synonym mappings
+    raw_low = raw.lower()
+    clean_low = re.sub(r"^(the|a|an)\s+", "", raw_low).strip()
+    for lp, med_list in LAYPERSON_MEDICAL_SYNONYMS.items():
+        if lp in raw_low or lp in clean_low or raw_low in lp:
+            for med in med_list:
+                if med not in variants:
+                    variants.append(med)
+        else:
+            for med in med_list:
+                if med in raw_low or med in clean_low or raw_low in med:
+                    if lp not in variants:
+                        variants.append(lp)
+                    for other_med in med_list:
+                        if other_med not in variants:
+                            variants.append(other_med)
 
     # Reverse acronym expansion & contraction
     upper = raw.upper()

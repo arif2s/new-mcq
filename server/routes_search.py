@@ -11,7 +11,7 @@ from core.database import get_db_connection
 from parsers.tantivy_engine import search_index
 from parsers.lancedb_engine import LanceDBEngine
 from parsers.embedding_engine import CPUEmbeddingEngine, is_embedding_model_downloaded
-from agents.tema_q.topic_extractor import filter_sibling_topics
+from agents.tema_q.topic_extractor import filter_sibling_topics, get_topic_aliases
 from parsers.reranker import rerank_chunks
 
 router = APIRouter(prefix="/api/search", tags=["search"])
@@ -19,20 +19,34 @@ router = APIRouter(prefix="/api/search", tags=["search"])
 
 class SearchRequest(BaseModel):
     query: str
-    limit: int = 10
+    limit: int = 50
 
 
 embedder = CPUEmbeddingEngine()
 lancedb_engine = LanceDBEngine(vector_dim=embedder.get_dimension())
 
 
+def _get_file_key(doc: Dict[str, Any]) -> str:
+    """Normalizes document file path or ZIM article ID to deduplicate by single file."""
+    fp = (doc.get("file_path") or doc.get("source_article") or "").strip()
+    if fp:
+        return fp.replace("\\", "/").lower()
+    art_id = (doc.get("article_id") or "").strip()
+    if art_id:
+        return f"zim_{art_id.lower()}"
+    title = (doc.get("title") or doc.get("main_topic") or "").strip()
+    if title:
+        return title.lower()
+    return str(doc.get("doc_id") or doc.get("id") or "").lower()
+
+
 @router.post("")
 def perform_search(req: SearchRequest) -> Dict[str, Any]:
     """
-    Multi-Stage Depth-Weighted Hybrid Search:
-    1. Tantivy BM25 + Section Heading Match + Topic Mention Density + log10(article_length)
-    2. LanceDB Semantic Vector + FTS Search (if embedding model is downloaded locally)
-    3. Reciprocal Rank Fusion (RRF) + Comprehensiveness/Depth Bonus
+    Multi-Stage Depth-Weighted Hybrid Search with Alias Expansion & Single-File Deduplication:
+    1. Alias Resolution (includes layperson & clinical synonyms e.g. 'heart attack' -> 'myocardial infarction', 'myocardial ischemia')
+    2. Tantivy BM25 + LanceDB Vector/FTS across query & aliases
+    3. Single-File Deduplication: collapses all hits/aliases pointing to the same document into 1 top file entry.
     4. Sibling Condition Gating -> Zero-VRAM FlashRank Cross-Encoder Reranking
     """
     query = (req.query or "").strip()
@@ -42,10 +56,11 @@ def perform_search(req: SearchRequest) -> Dict[str, Any]:
             "top_hit": None,
             "all_results": {"lancedb": [], "obsidian": [], "pdf": [], "zim": []},
             "candidates": [],
+            "query": query,
+            "aliases": [],
         }
 
     try:
-        from agents.topic_extractor import get_topic_aliases
         topic_aliases = get_topic_aliases(query)
     except Exception:
         topic_aliases = [query]
@@ -54,31 +69,34 @@ def perform_search(req: SearchRequest) -> Dict[str, Any]:
             if len(parts) == 2:
                 topic_aliases.append(f"{parts[1]} {parts[0]}")
 
-    # 1. Query LanceDB (Semantic + FTS across topic aliases) if offline model is available
+    if not topic_aliases:
+        topic_aliases = [query]
+
+    # 1. Query LanceDB (Vector + FTS) across query and aliases
     vec_results: List[Dict[str, Any]] = []
     fts_results: List[Dict[str, Any]] = []
-    primary_query = topic_aliases[0] if topic_aliases else query
+
     if is_embedding_model_downloaded(embedder.model_id):
-        query_vector = embedder.embed_single(primary_query)
-        if query_vector:
-            vec_results = lancedb_engine.vector_search(query_vector, limit=25)
+        for alias_q in topic_aliases[:3]:
+            q_vec = embedder.embed_single(alias_q)
+            if q_vec:
+                vec_hits = lancedb_engine.vector_search(q_vec, limit=20)
+                vec_results.extend(vec_hits)
 
-    fts_results = lancedb_engine.fts_search(query, limit=25)
+    for alias_q in topic_aliases[:3]:
+        fts_hits = lancedb_engine.fts_search(alias_q, limit=20)
+        fts_results.extend(fts_hits)
+
+    # 2. Query Tantivy + ZIM Direct B-Tree across query and top aliases
+    tantivy_results = search_index(query, limit_per_source=10)
     for alias_q in topic_aliases[1:3]:
-        if len(fts_results) >= 25:
-            break
-        extra_fts = lancedb_engine.fts_search(alias_q, limit=15)
-        seen_ids = {r.get("id") for r in fts_results if r.get("id")}
-        for r in extra_fts:
-            if r.get("id") not in seen_ids:
-                fts_results.append(r)
-                seen_ids.add(r.get("id"))
+        alias_tantivy = search_index(alias_q, limit_per_source=8)
+        for src, docs in alias_tantivy.items():
+            if src not in tantivy_results:
+                tantivy_results[src] = []
+            tantivy_results[src].extend(docs)
 
-    # 2. Query Tantivy + >10GB ZIM Direct B-Tree
-    tantivy_results = search_index(query, limit_per_source=8)
-
-    combined: Dict[str, Dict[str, Any]] = {}
-    q_lowers = [a.lower() for a in topic_aliases[:3]]
+    q_lowers = [a.lower() for a in topic_aliases[:5]]
     q_terms = {t for a in q_lowers for t in a.split() if len(t) >= 2}
 
     def _calc_depth_bonus(text: str, heading: str, art_len: int) -> float:
@@ -91,107 +109,110 @@ def perform_search(req: SearchRequest) -> Dict[str, Any]:
         density_bonus = min(mentions * 1.5 + term_hits * 0.3, 8.0)
         return h_match + len_bonus + density_bonus
 
-    # Merge LanceDB Vector hits
-    for i, r in enumerate(vec_results):
-        cid = r.get("id") or f"vec_{i}"
-        dist = float(r.get("_distance", 0.5))
-        art_len = int(r.get("article_length", len(r.get("parent_content", "") or "")))
-        heading = r.get("heading_path") or r.get("subheading") or r.get("main_topic") or ""
-        d_bonus = _calc_depth_bonus(r.get("parent_content", ""), heading, art_len)
+    # 3. Collect and Deduplicate candidates by single File Key
+    file_clusters: Dict[str, Dict[str, Any]] = {}
 
-        combined[cid] = {
-            **r,
-            "id": cid,
-            "file_path": r.get("file_path") or r.get("source_article", ""),
-            "title": r.get("source_article") or r.get("main_topic", "Document"),
+    def _add_or_merge_doc(raw_doc: Dict[str, Any], base_score: float, default_src: str):
+        file_key = _get_file_key(raw_doc)
+        if not file_key:
+            return
+
+        art_len = int(raw_doc.get("article_length") or raw_doc.get("doc_length") or len(raw_doc.get("parent_content") or raw_doc.get("snippet") or ""))
+        heading = raw_doc.get("heading_path") or raw_doc.get("heading") or raw_doc.get("subheading") or raw_doc.get("main_topic") or ""
+        snippet = raw_doc.get("child_content") or raw_doc.get("snippet") or raw_doc.get("parent_content") or ""
+        d_bonus = _calc_depth_bonus(snippet, heading, art_len)
+        total_score = base_score + d_bonus
+
+        file_path = raw_doc.get("file_path") or raw_doc.get("source_article") or ""
+        src = raw_doc.get("source") or default_src
+        if not src or src == "lancedb":
+            src = "pdf" if str(file_path).lower().endswith(".pdf") else "obsidian"
+
+        candidate_obj = {
+            "id": raw_doc.get("id") or raw_doc.get("doc_id") or file_key,
+            "doc_id": raw_doc.get("doc_id") or raw_doc.get("id") or file_key,
+            "source_article": file_path,
+            "file_path": file_path,
+            "article_id": raw_doc.get("article_id") or raw_doc.get("title", ""),
+            "page_number": int(raw_doc.get("page_number") or raw_doc.get("page") or 1),
+            "page": int(raw_doc.get("page_number") or raw_doc.get("page") or 1),
+            "title": raw_doc.get("title") or raw_doc.get("main_topic") or "Document",
+            "main_topic": raw_doc.get("main_topic") or raw_doc.get("title") or "Document",
             "heading_path": heading,
+            "heading": heading,
             "article_length": art_len,
+            "parent_content": snippet,
+            "child_content": snippet,
+            "snippet": snippet,
             "depth_bonus": d_bonus,
-            "hybrid_score": (1.0 / (1.0 + max(0.0, dist))) * 10.0 + (1.0 / (i + 1.0)) * 5.0 + d_bonus,
-            "source": "pdf" if str(r.get("source_article", "")).lower().endswith(".pdf") else "obsidian",
+            "hybrid_score": total_score,
+            "source": src,
+            "alias_hit_count": 1,
         }
 
-    # Merge LanceDB FTS hits
-    for i, r in enumerate(fts_results):
-        cid = r.get("id") or f"fts_{i}"
-        rrf = (1.0 / (i + 1.0)) * 5.0
-        if cid in combined:
-            combined[cid]["hybrid_score"] += rrf
+        if file_key not in file_clusters:
+            file_clusters[file_key] = candidate_obj
         else:
-            art_len = int(r.get("article_length", len(r.get("parent_content", "") or "")))
-            heading = r.get("heading_path") or r.get("subheading") or r.get("main_topic") or ""
-            d_bonus = _calc_depth_bonus(r.get("parent_content", ""), heading, art_len)
-            combined[cid] = {
-                **r,
-                "id": cid,
-                "file_path": r.get("file_path") or r.get("source_article", ""),
-                "title": r.get("source_article") or r.get("main_topic", "Document"),
-                "heading_path": heading,
-                "article_length": art_len,
-                "depth_bonus": d_bonus,
-                "hybrid_score": rrf + d_bonus,
-                "source": "pdf" if str(r.get("source_article", "")).lower().endswith(".pdf") else "obsidian",
-            }
+            existing = file_clusters[file_key]
+            existing["hybrid_score"] = max(existing["hybrid_score"], total_score) + 2.0
+            existing["alias_hit_count"] += 1
+            if len(snippet) > len(existing["snippet"]):
+                existing["snippet"] = snippet
+                existing["child_content"] = snippet
+                existing["parent_content"] = snippet
+            if heading and not existing["heading_path"]:
+                existing["heading_path"] = heading
+                existing["heading"] = heading
 
-    # Merge Tantivy BM25 & ZIM hits
+    for i, r in enumerate(vec_results):
+        dist = float(r.get("_distance", 0.5))
+        score = (1.0 / (1.0 + max(0.0, dist))) * 10.0 + (1.0 / (i + 1.0)) * 5.0
+        _add_or_merge_doc(r, score, "obsidian")
+
+    for i, r in enumerate(fts_results):
+        score = (1.0 / (i + 1.0)) * 5.0
+        _add_or_merge_doc(r, score, "obsidian")
+
     for source_type, docs in tantivy_results.items():
         for i, doc in enumerate(docs):
-            doc_id = doc.get("doc_id") or f"{source_type}_{i}"
-            rrf = (1.0 / (i + 1.0)) * 6.0
-            snippet = doc.get("snippet", "")
-            heading = doc.get("heading") or doc.get("title", "")
-            art_len = int(doc.get("doc_length", len(snippet)))
-            d_bonus = _calc_depth_bonus(snippet, heading, art_len)
+            score = (1.0 / (i + 1.0)) * 6.0 + (float(doc.get("score", 0.0)) * 0.05)
+            _add_or_merge_doc(doc, score, source_type)
 
-            if doc_id in combined:
-                combined[doc_id]["hybrid_score"] += rrf + d_bonus
-            else:
-                combined[doc_id] = {
-                    "id": doc_id,
-                    "source_article": doc.get("file_path", ""),
-                    "file_path": doc.get("file_path", ""),
-                    "article_id": doc.get("article_id", doc.get("title", "")),
-                    "page_number": doc.get("page", 1),
-                    "title": doc.get("title", "Untitled"),
-                    "main_topic": doc.get("title", "Untitled"),
-                    "heading_path": heading,
-                    "article_length": art_len,
-                    "parent_content": snippet,
-                    "child_content": snippet,
-                    "snippet": snippet,
-                    "depth_bonus": d_bonus,
-                    "hybrid_score": rrf + d_bonus + (float(doc.get("score", 0.0)) * 0.05),
-                    "source": source_type,
-                }
-
-    candidates = list(combined.values())
+    candidates = list(file_clusters.values())
     candidates.sort(key=lambda x: x["hybrid_score"], reverse=True)
-    top_30 = candidates[:30]
 
-    gated_candidates = filter_sibling_topics(query, top_30)
-    top_20 = gated_candidates[:20]
+    gated_candidates = filter_sibling_topics(query, candidates[:30])
+    top_candidates = gated_candidates[:25]
 
-    reranked = rerank_chunks(query, top_20, top_k=max(6, req.limit))
+    limit_val = max(1, req.limit) if req.limit else 50
+    reranked = rerank_chunks(query, top_candidates, top_k=limit_val)
 
     final_results = []
     grouped_results: Dict[str, List[Dict[str, Any]]] = {"lancedb": [], "obsidian": [], "pdf": [], "zim": []}
+    seen_file_keys = set()
 
     for chunk in reranked:
+        f_key = _get_file_key(chunk)
+        if f_key in seen_file_keys:
+            continue
+        seen_file_keys.add(f_key)
+
         src = chunk.get("source", "obsidian")
         snippet = chunk.get("child_content") or chunk.get("snippet") or chunk.get("parent_content") or ""
         formatted_chunk = {
-            "doc_id": chunk.get("id", ""),
+            "doc_id": chunk.get("id") or chunk.get("doc_id") or f_key,
             "source": src,
             "file_path": chunk.get("file_path") or chunk.get("source_article", ""),
             "article_id": chunk.get("article_id") or chunk.get("title", ""),
             "page_number": int(chunk.get("page_number", 1) or 1),
             "page": int(chunk.get("page_number", 1) or 1),
-            "title": chunk.get("title") or chunk.get("main_topic", "Untitled"),
-            "heading": chunk.get("heading_path") or chunk.get("title", ""),
+            "title": chunk.get("title") or chunk.get("main_topic", "Untitled Document"),
+            "heading": chunk.get("heading_path") or chunk.get("heading") or chunk.get("title", ""),
             "article_length": int(chunk.get("article_length", len(snippet))),
             "parent_content": (chunk.get("parent_content") or snippet)[:1200],
             "snippet": snippet[:450],
             "score": round(float(chunk.get("rerank_score", chunk.get("hybrid_score", 0.0))), 4),
+            "alias_hit_count": chunk.get("alias_hit_count", 1),
         }
         final_results.append(formatted_chunk)
         if src not in grouped_results:
@@ -203,6 +224,8 @@ def perform_search(req: SearchRequest) -> Dict[str, Any]:
         "top_hit": final_results[0] if final_results else None,
         "all_results": grouped_results,
         "candidates": final_results,
+        "query": query,
+        "aliases": topic_aliases,
     }
 
 
@@ -250,7 +273,6 @@ def check_tantivy():
     index_path = BASE_DIR / "data" / "index"
     if index_path.exists() and index_path.is_dir() and (index_path / "meta.json").exists():
         return {"exists": True}
-    # Also return True if an enabled ZIM archive is configured so search works directly on ZIM
     with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT 1 FROM knowledge_sources WHERE enabled = 1 LIMIT 1")

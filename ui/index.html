@@ -157,6 +157,35 @@
           <!-- Populated dynamically by dashboard.js -->
         </section>
 
+        <!-- CENTRAL SEARCH RESULTS VIEW -->
+        <section id="search-results-view" class="view-section fade-enter">
+          <div class="w-full max-w-5xl mx-auto space-y-6">
+            <header class="view-header flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-700/50 pb-4">
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-bold uppercase tracking-wider text-brand-400 glass-panel px-2.5 py-1 rounded-md">Search Results</span>
+                  <span id="search-results-count-badge" class="text-xs text-muted font-mono">0 files matched</span>
+                </div>
+                <h2 id="search-query-display" class="text-2xl font-bold text-neutral-100 mt-1">Search Results</h2>
+                <p id="search-aliases-display" class="text-xs text-muted mt-1 truncate max-w-2xl">Including aliases and semantically similar terms...</p>
+              </div>
+              <div class="flex items-center gap-3">
+                <button type="button" id="search-create-quiz-btn" class="primary-btn px-4 py-2 text-xs font-bold rounded-xl flex items-center gap-2 cursor-pointer shadow-md">
+                  🎯 Create Quiz Set
+                </button>
+              </div>
+            </header>
+
+            <!-- Central Search Results List -->
+            <div id="search-results-container" class="space-y-4">
+              <div class="text-center py-16 text-muted glass-panel rounded-2xl border border-gray-700/50">
+                <p class="text-sm font-semibold mb-1">Enter a search query in the left sidebar search bar</p>
+                <p class="text-xs">Search hybrid LanceDB vectors, Tantivy BM25, and ZIM encyclopedia.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <!-- MCQ EXTRACTOR VIEW -->
         <section id="home-view" class="view-section fade-enter">
           <div class="w-full">
