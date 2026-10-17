@@ -1354,85 +1354,244 @@ function renderReferenceBadgesHTML(refs) {
     `;
 }
 
-function updateInspectorForQuestion(questionObj) {
-    const topic = questionObj.topic_name || questionObj.topic || currentQuiz?.customTitle || 'General';
-    const llmEnabled = window.AppState ? window.AppState.get().llmEnabled !== false : true;
+async function updateInspectorForQuestion(questionObj) {
+    // Collect all topics associated with this MCQ / active set
+    const topicsSet = new Set();
 
+    const mainTopic = questionObj?.topic_name || questionObj?.topic;
+    if (mainTopic && mainTopic !== 'General Medical Concept') {
+        topicsSet.add(mainTopic);
+    }
+
+    if (Array.isArray(currentQuiz?.topicList)) {
+        currentQuiz.topicList.forEach(t => {
+            const name = typeof t === 'string' ? t : t?.name;
+            if (name && name !== 'General Medical Concept') {
+                topicsSet.add(name);
+            }
+        });
+    }
+
+    if (topicsSet.size === 0) {
+        const fallback = currentQuiz?.customTitle || 'General';
+        topicsSet.add(fallback);
+    }
+
+    const topicsArray = Array.from(topicsSet);
+
+    // Initial loading state in Right Inspector
     window.openInspector(
-        `Q${currentIndex + 1} References`,
-        `<div class="text-center py-10 text-muted text-sm animate-pulse">Looking up references for <strong>${window.escapeHTML(topic)}</strong>...</div>`,
+        `Q${currentIndex + 1} Topics & References`,
+        `<div class="text-center py-10 text-muted text-sm animate-pulse">Loading topics for Q${currentIndex + 1}...</div>`,
         false
     );
 
-    fetch(`/api/mcq/synthesis?topic=${encodeURIComponent(topic)}`)
-        .then(res => {
-            if (!res.ok) throw new Error("No cached synthesis");
-            return res.json();
-        })
-        .then(data => {
-            let html = `<div class="space-y-4 text-xs pb-6">`;
-            html += `<div class="glass-panel p-3 rounded-xl border border-gray-700/50">
-                        <span class="text-[10px] text-muted uppercase">Active Question Topic</span>
-                        <p class="font-bold text-sm text-brand-400 mt-0.5">${window.escapeHTML(topic)}</p>
-                     </div>`;
+    // Fetch reference & note availability statuses for collected topics
+    let statuses = {};
+    try {
+        const statusRes = await fetch('/api/mcq/topics/status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ topics: topicsArray })
+        });
+        if (statusRes.ok) {
+            const data = await statusRes.json();
+            statuses = data.topics || {};
+        }
+    } catch (e) {
+        console.warn("Failed to fetch topic statuses for inspector:", e);
+    }
 
-            // 1. Always show clickable Reference Links (PDF, Obsidian, ZIM)
-            const refsHtml = renderReferenceBadgesHTML(data.references);
-            if (refsHtml) {
-                html += refsHtml;
-            } else {
-                html += `<p class="text-muted italic">No local PDF, Obsidian, or ZIM references matched "${window.escapeHTML(topic)}".</p>`;
-            }
+    // Build sidebar topic list HTML
+    let html = `<div class="flex flex-col text-xs space-y-4 pb-6">`;
+    html += `<div class="glass-panel p-3 rounded-xl border border-gray-700/50 mb-1">
+                <span class="text-[10px] text-muted uppercase tracking-wider font-bold">MCQ ${currentIndex + 1} Topic List</span>
+                <p class="text-[11px] text-muted mt-1">Click any topic below to view clinical notes in center view &amp; references here.</p>
+             </div>`;
 
-            // 2. Only show LLM Synthesis Note when LLM Processing is ON in Settings
-            if (llmEnabled && data.unified_article) {
-                try {
-                    const art = JSON.parse(data.unified_article);
-                    if (art && Array.isArray(art.clinical_points) && art.clinical_points.length > 0) {
-                        html += `
-                            <div class="glass-card p-4 rounded-xl border border-brand-500/30">
-                                <h4 class="font-bold text-brand-300 text-xs uppercase mb-2">🤖 Tema_Q Synthesis: ${window.escapeHTML(art.subtopic || topic)}</h4>
-                                ${art.conditional_context ? `<p class="text-[11px] text-muted mb-2"><strong>Context:</strong> ${window.escapeHTML(art.conditional_context)}</p>` : ''}
-                                <ul class="list-disc pl-4 space-y-1.5 text-xs">
-                                    ${art.clinical_points.map(pt => `
-                                        <li>
-                                            ${window.escapeHTML(pt.point)}${pt.source ? `<span class="text-[10px] text-brand-400 font-mono ml-1">[${window.escapeHTML(pt.source)}${pt.page ? ` p.${pt.page}` : ''}]</span>` : ''}
-                                        </li>
-                                    `).join('')}
-                                </ul>
-                                ${art.discrepancies ? `
-                                    <div class="mt-3 p-2.5 rounded-lg bg-danger-500/15 border border-danger-500/30 text-danger-300 text-[11px]">
-                                        <strong>⚠️ Clinical Variance:</strong><br/>${window.escapeHTML(art.discrepancies)}
-                                    </div>
-                                ` : ''}
-                            </div>
-                        `;
-                    }
-                } catch (_) {
-                    html += `
-                        <div class="glass-card p-4 rounded-xl">
-                            <h4 class="font-bold text-brand-300 text-xs uppercase mb-2">🤖 High-Yield Synopsis</h4>
-                            <div class="prose prose-sm max-w-none">${window.renderMarkdownAndMath(data.unified_article)}</div>
+    html += `<div class="space-y-2" id="inspector-topic-list">`;
+    topicsArray.forEach((topic, idx) => {
+        const st = statuses[topic] || { has_refs: false, has_note: false };
+        const isPrimary = idx === 0;
+
+        html += `
+            <div class="quiz-topic-item glass-panel p-3 rounded-xl border ${isPrimary ? 'border-brand-500/60 bg-brand-500/10' : 'border-gray-700/50'} hover:border-brand-500 cursor-pointer transition-all flex items-center justify-between gap-2"
+                 data-topic="${window.escapeHTML(topic)}">
+                <div class="min-w-0 flex-1">
+                    <p class="font-bold text-xs truncate text-neutral-100 flex items-center gap-1.5">
+                        <span>${idx + 1}. ${window.escapeHTML(topic)}</span>
+                        ${isPrimary ? '<span class="text-[9px] px-1.5 py-0.2 bg-brand-500/30 text-brand-300 rounded uppercase">Main</span>' : ''}
+                    </p>
+                </div>
+                <div class="flex items-center gap-1 shrink-0">
+                    <span class="px-1.5 py-0.5 rounded text-[9px] font-mono ${st.has_refs ? 'bg-brand-600/20 text-brand-300 border border-brand-500/30' : 'opacity-40 glass-panel'}" title="${st.has_refs ? 'Reference links available' : 'No references'}">
+                        🔗 ${st.has_refs ? 'Refs' : 'No Refs'}
+                    </span>
+                    <span class="px-1.5 py-0.5 rounded text-[9px] font-mono ${st.has_note ? 'bg-success-500/20 text-success-300 border border-success-500/30' : 'opacity-40 glass-panel'}" title="${st.has_note ? 'LLM note available' : 'No note'}">
+                        🤖 ${st.has_note ? 'Note' : 'No Note'}
+                    </span>
+                </div>
+            </div>
+        `;
+    });
+    html += `</div>`;
+
+    // Container for selected topic's reference links inside right inspector
+    html += `<div id="inspector-topic-details" class="pt-3 border-t border-gray-700/50 space-y-3"></div>`;
+    html += `</div>`;
+
+    window.openInspector(`Q${currentIndex + 1} Topics`, html, false);
+
+    // Bind click handlers to topic items
+    const inspectorContent = document.getElementById('inspector-content');
+    if (inspectorContent) {
+        const topicItems = inspectorContent.querySelectorAll('.quiz-topic-item');
+        topicItems.forEach(item => {
+            item.addEventListener('click', () => {
+                const topic = item.dataset.topic;
+                if (!topic) return;
+
+                // Highlight active topic item in inspector
+                topicItems.forEach(el => el.classList.remove('border-brand-500', 'bg-brand-500/20'));
+                item.classList.add('border-brand-500', 'bg-brand-500/20');
+
+                // Load clinical notes into center view
+                loadTopicNotesToCenterView(topic);
+
+                // Load reference links for this topic into lower inspector section
+                renderTopicSubDetailsInInspector(topic);
+            });
+        });
+
+        // Automatically load details for the primary (first) topic
+        if (topicsArray.length > 0) {
+            renderTopicSubDetailsInInspector(topicsArray[0]);
+        }
+    }
+}
+
+async function loadTopicNotesToCenterView(topic) {
+    const feedbackContainer = document.getElementById('feedback-container');
+    if (!feedbackContainer) return;
+
+    feedbackContainer.innerHTML = `
+        <div class="animate-fade-in glass-panel border border-brand-500/40 rounded-2xl p-5 text-center py-8 text-muted text-sm">
+            <p class="animate-pulse">Loading topic notes for <strong>${window.escapeHTML(topic)}</strong>...</p>
+        </div>
+    `;
+
+    try {
+        const res = await fetch(`/api/mcq/synthesis?topic=${encodeURIComponent(topic)}`);
+        if (!res.ok) throw new Error("No synthesis available");
+        const data = await res.json();
+
+        const llmEnabled = window.AppState ? window.AppState.get().llmEnabled !== false : true;
+        let fbHtml = `<div class="animate-fade-in space-y-4">`;
+
+        fbHtml += `
+            <div class="glass-panel border border-brand-500/40 rounded-2xl p-4 flex justify-between items-center">
+                <div>
+                    <span class="text-[10px] text-muted uppercase font-bold tracking-wider">Active Topic Note (Center View)</span>
+                    <h3 class="text-base font-bold text-brand-300 mt-0.5">${window.escapeHTML(topic)}</h3>
+                </div>
+                <span class="text-xs px-2.5 py-1 rounded-full bg-brand-500/20 text-brand-300 border border-brand-500/30 font-medium">
+                    📖 Center Inspector
+                </span>
+            </div>
+        `;
+
+        if (llmEnabled && data.unified_article) {
+            try {
+                const art = JSON.parse(data.unified_article);
+                if (art && Array.isArray(art.clinical_points) && art.clinical_points.length > 0) {
+                    fbHtml += `
+                        <div class="glass-card p-5 rounded-2xl border border-brand-500/30">
+                            <h4 class="font-bold text-brand-400 text-xs uppercase tracking-wider mb-3">🤖 High-Yield Synthesis: ${window.escapeHTML(art.subtopic || topic)}</h4>
+                            ${art.conditional_context ? `<p class="text-xs text-muted mb-3 leading-relaxed"><strong>Context:</strong> ${window.escapeHTML(art.conditional_context)}</p>` : ''}
+                            <ul class="list-disc pl-5 space-y-2 text-xs leading-relaxed">
+                                ${art.clinical_points.map(pt => `
+                                    <li>
+                                        ${window.escapeHTML(pt.point)}${pt.source ? `<span class="text-[10px] text-brand-400 font-mono ml-1">[${window.escapeHTML(pt.source)}${pt.page ? ` p.${pt.page}` : ''}]</span>` : ''}
+                                    </li>
+                                `).join('')}
+                            </ul>
+                            ${art.discrepancies ? `
+                                <div class="mt-4 p-3 rounded-xl bg-danger-500/15 border border-danger-500/30 text-danger-300 text-xs">
+                                    <strong>⚠️ Clinical Variance:</strong><br/>${window.escapeHTML(art.discrepancies)}
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                } else {
+                    fbHtml += `
+                        <div class="glass-card p-5 rounded-2xl border border-brand-500/30">
+                            <h4 class="font-bold text-brand-400 text-xs uppercase tracking-wider mb-3">🤖 High-Yield Synopsis</h4>
+                            <div class="prose prose-sm max-w-none text-xs leading-relaxed">${window.renderMarkdownAndMath(data.unified_article)}</div>
                         </div>
                     `;
                 }
-            } else if (!llmEnabled) {
-                html += `<p class="text-[11px] text-muted italic">LM Studio synthesis is turned OFF in Settings (Reference-Only Mode).</p>`;
+            } catch (_) {
+                fbHtml += `
+                    <div class="glass-card p-5 rounded-2xl border border-brand-500/30">
+                        <h4 class="font-bold text-brand-400 text-xs uppercase tracking-wider mb-3">🤖 High-Yield Synopsis</h4>
+                        <div class="prose prose-sm max-w-none text-xs leading-relaxed">${window.renderMarkdownAndMath(data.unified_article)}</div>
+                    </div>
+                `;
             }
+        } else if (data.enhanced_explanation) {
+            fbHtml += `
+                <div class="glass-panel border border-gray-700/50 rounded-2xl p-5">
+                    <h4 class="font-bold text-brand-300 text-xs uppercase tracking-wider mb-2">📄 Baseline Clinical Note</h4>
+                    <div class="prose prose-sm max-w-none text-xs leading-relaxed">${window.renderMarkdownAndMath(data.enhanced_explanation)}</div>
+                </div>
+            `;
+        } else {
+            fbHtml += `
+                <div class="glass-panel border border-gray-700/50 rounded-2xl p-5 text-sm text-muted">
+                    No synthesized LLM notes found for "${window.escapeHTML(topic)}". See references in right sidebar.
+                </div>
+            `;
+        }
 
-            html += `</div>`;
-            window.openInspector(`Q${currentIndex + 1}: ${topic}`, html, false);
-        })
-        .catch(() => {
-            window.openInspector(
-                `Q${currentIndex + 1}: ${topic}`,
-                `<div class="text-center py-8 px-3 text-muted text-xs">
-                    <p class="font-semibold mb-1">No Cached Synthesis Yet</p>
-                    <p>Use <strong>Confirm &amp; Launch</strong> or confirm topics in the Knowledge Hub to index references for <strong>${window.escapeHTML(topic)}</strong>.</p>
-                </div>`,
-                false
-            );
-        });
+        fbHtml += `</div>`;
+        feedbackContainer.innerHTML = fbHtml;
+
+    } catch (e) {
+        feedbackContainer.innerHTML = `
+            <div class="animate-fade-in glass-panel border border-gray-700/50 rounded-2xl p-5 text-center text-muted text-xs">
+                <p class="font-semibold mb-1">No Notes Cached</p>
+                <p>No synthesized notes exist for <strong>${window.escapeHTML(topic)}</strong> yet.</p>
+            </div>
+        `;
+    }
+}
+
+async function renderTopicSubDetailsInInspector(topic) {
+    const detailsContainer = document.getElementById('inspector-topic-details');
+    if (!detailsContainer) return;
+
+    detailsContainer.innerHTML = `<div class="text-center py-4 text-muted text-xs animate-pulse">Loading references for ${window.escapeHTML(topic)}...</div>`;
+
+    try {
+        const res = await fetch(`/api/mcq/synthesis?topic=${encodeURIComponent(topic)}`);
+        if (!res.ok) throw new Error("No synthesis");
+        const data = await res.json();
+
+        let subHtml = `<div class="space-y-3">`;
+        subHtml += `<span class="text-[10px] text-brand-400 uppercase font-bold tracking-wider">References for: ${window.escapeHTML(topic)}</span>`;
+
+        const refsHtml = renderReferenceBadgesHTML(data.references);
+        if (refsHtml) {
+            subHtml += refsHtml;
+        } else {
+            subHtml += `<p class="text-muted italic text-[11px]">No local PDF, Obsidian, or ZIM references matched "${window.escapeHTML(topic)}".</p>`;
+        }
+        subHtml += `</div>`;
+
+        detailsContainer.innerHTML = subHtml;
+    } catch (_) {
+        detailsContainer.innerHTML = `<p class="text-muted italic text-[11px] text-center py-2">No references indexed for ${window.escapeHTML(topic)}.</p>`;
+    }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
