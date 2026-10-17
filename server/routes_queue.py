@@ -150,6 +150,7 @@ def extract_topics(req: PrepareRequest):
         results.append({
             "id": q_id,
             "question": q.question,
+            "csv_topic_name": q.topic_name,
             "topic_name": q.topic_name,
             "option_a": q.option_a,
             "option_b": q.option_b,

@@ -148,6 +148,7 @@ def generate_set(req: GenerateSetRequest):
             questions.append({
                 "id": row["id"],
                 "subject_name": file_stem,
+                "csv_topic_name": row["topic_name"] or file_stem,
                 "topic_name": row["topic_name"] or file_stem,
                 "question": row["question"],
                 "option_a": row["opt_a"],

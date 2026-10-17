@@ -896,6 +896,22 @@ def extract_regex_medical_entities(text: str) -> List[str]:
         if eponym not in {"this", "that", "the", "which", "what", "each", "every", "another", "same", "current", "present"}:
             candidates.append(m.group(0).strip())
 
+    # 7. Clinical Head Nouns and Medical Suffixes (1-3 preceding modifier words)
+    medical_suffix_pattern = r"\b(?:[A-Za-z-]{3,}\s+){0,2}[A-Za-z-]{3,}(?:emia|osis|itis|oma|pathy|trophy|plasia|uria|penia|cytosis|ectasis|sclerosis|megaly)\b"
+    for m in re.finditer(medical_suffix_pattern, text, re.IGNORECASE):
+        span = m.group(0).strip()
+        span_lower = span.lower()
+        if not any(sw in span_lower for sw in ["which of", "history of", "evidence of", "diagnosis of", "years of", "most likely"]):
+            candidates.append(span)
+
+    head_nouns_joined = "|".join(re.escape(h) for h in CLINICAL_HEAD_NOUNS)
+    head_noun_pattern = rf"\b(?:[A-Za-z-]{3,}\s+){{0,2}}(?:{head_nouns_joined})\b"
+    for m in re.finditer(head_noun_pattern, text, re.IGNORECASE):
+        span = m.group(0).strip()
+        span_lower = span.lower()
+        if not any(sw in span_lower for sw in ["which of", "history of", "evidence of", "diagnosis of", "years of", "most likely"]):
+            candidates.append(span)
+
     return candidates
 
 

@@ -917,7 +917,7 @@ function renderQuestion() {
             <div class="glass-card card-shade-1 p-8 mb-6 relative overflow-hidden flex-shrink-0">
                 <div class="mb-4 flex items-center justify-between gap-2">
                     <span class="px-3 py-1 bg-brand-500/20 text-brand-300 rounded-full text-xs font-bold uppercase tracking-wider border border-brand-500/30">
-                        ${window.escapeHTML(q.topic_name || q.topic || currentQuiz.customTitle)}
+                        ${window.escapeHTML(q.csv_topic_name || q.subject_name || currentQuiz.subjectName || currentQuiz.customTitle || 'General')}
                     </span>
                     <span class="px-3 py-1 glass-panel text-muted rounded-full text-xs font-bold uppercase tracking-wider border border-gray-700/50">
                         Mode: ${quizConfig.mode}
@@ -1363,21 +1363,18 @@ function renderReferenceBadgesHTML(refs) {
 }
 
 async function updateInspectorForQuestion(questionObj) {
+    if (!questionObj) return;
+
     // Collect topics specific ONLY to this active MCQ
     const topicsSet = new Set();
 
-    const mainTopic = questionObj?.topic_name || questionObj?.topic;
-    if (mainTopic && mainTopic !== 'General Medical Concept' && mainTopic.toLowerCase() !== 'general') {
-        topicsSet.add(mainTopic);
-    }
-
-    if (Array.isArray(questionObj?.topic_details)) {
+    if (Array.isArray(questionObj.topic_details) && questionObj.topic_details.length > 0) {
         questionObj.topic_details.forEach(td => {
             if (td?.name && td.name !== 'General Medical Concept') {
                 topicsSet.add(td.name);
             }
         });
-    } else if (Array.isArray(questionObj?.topics)) {
+    } else if (Array.isArray(questionObj.topics) && questionObj.topics.length > 0) {
         questionObj.topics.forEach(t => {
             const name = typeof t === 'string' ? t : t?.name;
             if (name && name !== 'General Medical Concept') {
@@ -1386,8 +1383,8 @@ async function updateInspectorForQuestion(questionObj) {
         });
     }
 
-    // Extract topics on the fly for this question if not already available
-    if (topicsSet.size === 0 && questionObj) {
+    // Extract topics on the fly for this question if not already extracted or if only 1 topic
+    if (topicsSet.size <= 1) {
         try {
             const extRes = await fetch('/api/queue/extract_topics', {
                 method: 'POST',
@@ -1396,7 +1393,7 @@ async function updateInspectorForQuestion(questionObj) {
                     questions: [{
                         id: String(questionObj.id || ''),
                         question: questionObj.question || questionObj.question_text || '',
-                        topic_name: questionObj.topic_name || questionObj.topic || 'General',
+                        topic_name: questionObj.csv_topic_name || questionObj.topic_name || questionObj.topic || 'General',
                         option_a: questionObj.option_a || questionObj.opt_a || '',
                         option_b: questionObj.option_b || questionObj.opt_b || '',
                         option_c: questionObj.option_c || questionObj.opt_c || '',
@@ -1420,8 +1417,13 @@ async function updateInspectorForQuestion(questionObj) {
         } catch (_) {}
     }
 
+    const mainTopic = questionObj?.csv_topic_name || questionObj?.topic_name || questionObj?.topic;
+    if (topicsSet.size === 0 && mainTopic && mainTopic !== 'General Medical Concept' && mainTopic.toLowerCase() !== 'general') {
+        topicsSet.add(mainTopic);
+    }
+
     if (topicsSet.size === 0) {
-        const fallback = mainTopic || currentQuiz?.customTitle || 'General';
+        const fallback = currentQuiz?.customTitle || 'General';
         topicsSet.add(fallback);
     }
 
