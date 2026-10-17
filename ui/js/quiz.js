@@ -366,6 +366,14 @@ async function extractSessionTopicsFromBackend(questions) {
         });
         if (res.ok) {
             const data = await res.json();
+            if (Array.isArray(data.questions)) {
+                data.questions.forEach((qRes, idx) => {
+                    if (questions[idx]) {
+                        questions[idx].topics = qRes.topics || [];
+                        questions[idx].topic_details = qRes.topic_details || [];
+                    }
+                });
+            }
             if (Array.isArray(data.session_topics) && data.session_topics.length > 0) {
                 return data.session_topics;
             }
@@ -867,8 +875,8 @@ function renderQuestion() {
     if (!isAnswered) {
         times.questionStart = Date.now();
         resetQuestionTimeout();
-        updateInspectorForQuestion(q);
     }
+    updateInspectorForQuestion(q);
 
     const isTarget = quizConfig.mode === 'target';
     const isLearn = quizConfig.mode === 'learn';
@@ -1355,16 +1363,22 @@ function renderReferenceBadgesHTML(refs) {
 }
 
 async function updateInspectorForQuestion(questionObj) {
-    // Collect all topics associated with this MCQ / active set
+    // Collect topics specific ONLY to this active MCQ
     const topicsSet = new Set();
 
     const mainTopic = questionObj?.topic_name || questionObj?.topic;
-    if (mainTopic && mainTopic !== 'General Medical Concept') {
+    if (mainTopic && mainTopic !== 'General Medical Concept' && mainTopic.toLowerCase() !== 'general') {
         topicsSet.add(mainTopic);
     }
 
-    if (Array.isArray(currentQuiz?.topicList)) {
-        currentQuiz.topicList.forEach(t => {
+    if (Array.isArray(questionObj?.topic_details)) {
+        questionObj.topic_details.forEach(td => {
+            if (td?.name && td.name !== 'General Medical Concept') {
+                topicsSet.add(td.name);
+            }
+        });
+    } else if (Array.isArray(questionObj?.topics)) {
+        questionObj.topics.forEach(t => {
             const name = typeof t === 'string' ? t : t?.name;
             if (name && name !== 'General Medical Concept') {
                 topicsSet.add(name);
@@ -1372,8 +1386,42 @@ async function updateInspectorForQuestion(questionObj) {
         });
     }
 
+    // Extract topics on the fly for this question if not already available
+    if (topicsSet.size === 0 && questionObj) {
+        try {
+            const extRes = await fetch('/api/queue/extract_topics', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    questions: [{
+                        id: String(questionObj.id || ''),
+                        question: questionObj.question || questionObj.question_text || '',
+                        topic_name: questionObj.topic_name || questionObj.topic || 'General',
+                        option_a: questionObj.option_a || questionObj.opt_a || '',
+                        option_b: questionObj.option_b || questionObj.opt_b || '',
+                        option_c: questionObj.option_c || questionObj.opt_c || '',
+                        option_d: questionObj.option_d || questionObj.opt_d || '',
+                        correct_answer: questionObj.correct_answer || 'A',
+                        explanation: questionObj.explanation || ''
+                    }]
+                })
+            });
+            if (extRes.ok) {
+                const extData = await extRes.json();
+                if (Array.isArray(extData.questions) && extData.questions[0]) {
+                    const qRes = extData.questions[0];
+                    questionObj.topics = qRes.topics || [];
+                    questionObj.topic_details = qRes.topic_details || [];
+                    (qRes.topics || []).forEach(t => {
+                        if (t && t !== 'General Medical Concept') topicsSet.add(t);
+                    });
+                }
+            }
+        } catch (_) {}
+    }
+
     if (topicsSet.size === 0) {
-        const fallback = currentQuiz?.customTitle || 'General';
+        const fallback = mainTopic || currentQuiz?.customTitle || 'General';
         topicsSet.add(fallback);
     }
 
@@ -1455,8 +1503,12 @@ async function updateInspectorForQuestion(questionObj) {
                 topicItems.forEach(el => el.classList.remove('border-brand-500', 'bg-brand-500/20'));
                 item.classList.add('border-brand-500', 'bg-brand-500/20');
 
-                // Load clinical notes into center view
-                loadTopicNotesToCenterView(topic);
+                // Open Topic Carousel Subview in center stage for this question's topics
+                if (typeof window.openTopicCarouselForQuiz === 'function') {
+                    window.openTopicCarouselForQuiz(topicsArray, topic);
+                } else if (typeof loadTopicNotesToCenterView === 'function') {
+                    loadTopicNotesToCenterView(topic);
+                }
 
                 // Load reference links for this topic into lower inspector section
                 renderTopicSubDetailsInInspector(topic);

@@ -905,10 +905,19 @@ function appendReferences(container, refsStr, highlightTopic) {
 // Topic Carousel Sub-View (Study Topics Covered)
 // =========================================================
 
+let carouselOriginMode = 'hub';
+
 async function openTopicCarousel(sessionId) {
+    carouselOriginMode = 'hub';
+    const hubHeader = document.querySelector('#knowledge-hub-view .view-header');
+    if (hubHeader) hubHeader.style.display = 'none';
+
     document.getElementById('hub-main-container').style.display = 'none';
     document.getElementById('hub-review-container').style.display = 'none';
     document.getElementById('hub-carousel-container').style.display = 'flex';
+
+    const backLabel = document.getElementById('hub-carousel-back-label');
+    if (backLabel) backLabel.textContent = 'Back to Hub';
 
     currentTopicIndex = 0;
     currentSessionTopics = [];
@@ -932,6 +941,69 @@ async function openTopicCarousel(sessionId) {
         }, 3000);
     }
 }
+
+window.openTopicCarouselForQuiz = async function(topicsArray, initialTopic) {
+    carouselOriginMode = 'quiz';
+    const hubHeader = document.querySelector('#knowledge-hub-view .view-header');
+    if (hubHeader) hubHeader.style.display = 'none';
+
+    document.getElementById('hub-carousel-container').style.display = 'flex';
+
+    const backLabel = document.getElementById('hub-carousel-back-label');
+    if (backLabel) backLabel.textContent = 'Back to Quiz';
+
+    currentTopicIndex = 0;
+    currentSessionTopics = [];
+
+    const contentEl = document.getElementById('hub-carousel-content');
+    contentEl.innerHTML = '<div class="text-center py-12 animate-pulse text-muted">Loading synthesized topic notes...</div>';
+
+    if (carouselInterval) {
+        clearInterval(carouselInterval);
+        carouselInterval = null;
+    }
+
+    const topicsDataList = await Promise.all((topicsArray || []).map(async (topicName) => {
+        try {
+            const res = await fetch(`/api/mcq/synthesis?topic=${encodeURIComponent(topicName)}`);
+            if (res.ok) {
+                const data = await res.json();
+                return {
+                    topic_name: topicName,
+                    display_title: data.display_title || topicName,
+                    unified_article: data.unified_article || null,
+                    enhanced_explanation: data.enhanced_explanation || null,
+                    top_references: data.references ? JSON.stringify(data.references) : null,
+                    llm_status: data.unified_article ? 'completed' : 'none'
+                };
+            }
+        } catch (e) {
+            console.warn("Failed to fetch topic synthesis for quiz carousel:", e);
+        }
+        return {
+            topic_name: topicName,
+            display_title: topicName,
+            unified_article: null,
+            enhanced_explanation: null,
+            top_references: null,
+            llm_status: 'none'
+        };
+    }));
+
+    currentSessionTopics = topicsDataList;
+    window.currentStudyTopics = topicsDataList.map(t => t.display_title || t.topic_name);
+
+    if (initialTopic) {
+        const lower = initialTopic.toLowerCase();
+        const idx = topicsDataList.findIndex(t =>
+            (t.topic_name && t.topic_name.toLowerCase() === lower) ||
+            (t.display_title && t.display_title.toLowerCase() === lower)
+        );
+        if (idx !== -1) currentTopicIndex = idx;
+    }
+
+    renderCurrentTopic();
+};
 
 window.selectTopicInCarousel = function(topicName) {
     if (!currentSessionTopics || currentSessionTopics.length === 0) return false;
@@ -1043,6 +1115,8 @@ function renderCurrentTopic() {
         } else {
             window.renderMarkdownAndMath(topic.unified_article, contentEl);
         }
+    } else if (topic.enhanced_explanation) {
+        window.renderMarkdownAndMath(topic.enhanced_explanation, contentEl);
     } else if (topic.llm_status === 'pending' && llmEnabled) {
         contentEl.innerHTML = `
             <div class="text-muted italic animate-pulse flex items-center gap-2 py-6">
@@ -1140,10 +1214,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('hub-carousel-back-btn')?.addEventListener('click', () => {
         document.getElementById('hub-carousel-container').style.display = 'none';
-        document.getElementById('hub-main-container').style.display = 'block';
         if (carouselInterval) {
             clearInterval(carouselInterval);
             carouselInterval = null;
+        }
+        if (carouselOriginMode === 'quiz') {
+            const quizView = document.getElementById('quiz-view');
+            if (quizView) quizView.style.display = 'block';
+        } else {
+            const hubHeader = document.querySelector('#knowledge-hub-view .view-header');
+            if (hubHeader) hubHeader.style.display = 'flex';
+            const mainContainer = document.getElementById('hub-main-container');
+            if (mainContainer) mainContainer.style.display = 'block';
         }
     });
 
