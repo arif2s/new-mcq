@@ -3,7 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Medisearch AI — Offline-First Clinical MCQ Hub, Knowledge Synthesizer, and RAG Vault for Medical Education." />
+    <meta name="theme-color" content="#0f172a" />
     <title>Medisearch AI — Clinical MCQ Hub</title>
+
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>" />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+
     <link rel="stylesheet" href="/css/main.css" />
     <link rel="stylesheet" href="/css/animations.css" />
 
@@ -15,39 +21,46 @@
     />
     <script
       src="/vendor/marked.min.js"
+      defer
       onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/marked/marked.min.js';"
     ></script>
     <script
       src="/vendor/purify.min.js"
+      defer
       onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js';"
     ></script>
     <script
       src="/vendor/katex.min.js"
+      defer
       onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js';"
     ></script>
     <script
       src="/vendor/auto-render.min.js"
+      defer
       onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js';"
     ></script>
     <script
       src="/vendor/tailwind.js"
+      defer
       onerror="this.onerror=null;this.src='https://cdn.tailwindcss.com';"
     ></script>
     <script>
-      if (window.tailwind) {
-        tailwind.config = {
-          theme: {
-            extend: {
-              colors: {
-                brand: { 300: "#8b5cf6", 400: "#7c3aed", 500: "#6d28d9", 600: "#5b21b6" },
-                success: { 300: "#86efac", 400: "#4ade80", 500: "#22c55e" },
-                warning: { 200: "#fef08a", 400: "#facc15", 500: "#eab308" },
-                danger: { 300: "#fca5a5", 400: "#f87171", 500: "#ef4444", 600: "#dc2626" }
+      window.addEventListener('DOMContentLoaded', function() {
+        if (window.tailwind) {
+          tailwind.config = {
+            theme: {
+              extend: {
+                colors: {
+                  brand: { 300: "#8b5cf6", 400: "#7c3aed", 500: "#6d28d9", 600: "#5b21b6" },
+                  success: { 300: "#86efac", 400: "#4ade80", 500: "#22c55e" },
+                  warning: { 200: "#fef08a", 400: "#facc15", 500: "#eab308" },
+                  danger: { 300: "#fca5a5", 400: "#f87171", 500: "#ef4444", 600: "#dc2626" }
+                }
               }
             }
-          }
-        };
-      }
+          };
+        }
+      });
     </script>
   </head>
 
@@ -55,82 +68,82 @@
     <div class="background-animation"></div>
     <div class="app-container glass-panel">
       <!-- 1. COLLAPSIBLE LEFT NAVIGATION RAIL -->
-      <nav class="left-rail glass-panel">
+      <nav class="left-rail glass-panel" aria-label="Main Navigation">
         <div class="app-header flex items-center justify-between">
           <div class="flex items-center gap-3">
-            <button id="sidebar-toggle" class="icon-btn" aria-label="Toggle Sidebar">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+            <button id="sidebar-toggle" type="button" class="icon-btn" aria-label="Toggle Navigation Sidebar">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
             </button>
             <div class="app-logo sidebar-text font-bold tracking-tight">Medisearch</div>
           </div>
           <div class="flex gap-1 sidebar-text">
-            <button id="open-help-btn" class="icon-btn" aria-label="Help">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            <button id="open-help-btn" type="button" class="icon-btn" aria-label="Help & Guide">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
             </button>
-            <button id="theme-toggle" class="icon-btn" aria-label="Toggle Theme">
-              <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line></svg>
-              <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+            <button id="theme-toggle" type="button" class="icon-btn" aria-label="Toggle Color Theme">
+              <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line></svg>
+              <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
             </button>
           </div>
         </div>
 
         <div class="search-container sidebar-text">
-          <input type="text" id="global-search" class="glass-input" placeholder="Search knowledge (Enter)..." />
+          <input type="search" id="global-search" class="glass-input" placeholder="Search knowledge (Enter)..." aria-label="Search knowledge base" autocomplete="off" />
         </div>
 
         <h3 class="nav-heading sidebar-text">Navigation</h3>
         <ul class="nav-list">
           <li>
-            <button class="nav-btn active" data-target="dashboard-view" title="Dashboard">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+            <button type="button" class="nav-btn active" data-target="dashboard-view" title="Dashboard">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
               <span class="sidebar-text">Dashboard</span>
             </button>
           </li>
           <li>
-            <button class="nav-btn" data-target="home-view" title="MCQ Extractor">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"></polyline><line x1="9" y1="20" x2="15" y2="20"></line><line x1="12" y1="4" x2="12" y2="20"></line></svg>
+            <button type="button" class="nav-btn" data-target="home-view" title="MCQ Extractor">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 7 4 4 20 4 20 7"></polyline><line x1="9" y1="20" x2="15" y2="20"></line><line x1="12" y1="4" x2="12" y2="20"></line></svg>
               <span class="sidebar-text">MCQ Extractor</span>
             </button>
           </li>
           <li>
-            <button class="nav-btn" data-target="quiz-view" title="Quiz Engine">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            <button type="button" class="nav-btn" data-target="quiz-view" title="Quiz Engine">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
               <span class="sidebar-text">Quiz Engine</span>
             </button>
           </li>
           <li>
-            <button class="nav-btn" data-target="knowledge-hub-view" title="Knowledge Hub">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+            <button type="button" class="nav-btn" data-target="knowledge-hub-view" title="Knowledge Hub">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
               <span class="sidebar-text">Knowledge Hub</span>
             </button>
           </li>
           <li>
-            <button class="nav-btn" data-target="rag-vault-view" title="RAG Vault">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+            <button type="button" class="nav-btn" data-target="rag-vault-view" title="RAG Vault">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
               <span class="sidebar-text">RAG Vault</span>
             </button>
           </li>
           <li>
-            <button class="nav-btn" data-target="habit-tracker-view" title="Habit Tracker">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+            <button type="button" class="nav-btn" data-target="habit-tracker-view" title="Habit Tracker">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
               <span class="sidebar-text">Habit Tracker</span>
             </button>
           </li>
           <li>
-            <button class="nav-btn" data-target="expertise-view" title="Expertise Map">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10H12V2z"></path><path d="M12 12 2.1 12A10 10 0 0 1 12 2.1z"></path></svg>
+            <button type="button" class="nav-btn" data-target="expertise-view" title="Expertise Map">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10H12V2z"></path><path d="M12 12 2.1 12A10 10 0 0 1 12 2.1z"></path></svg>
               <span class="sidebar-text">Expertise Map</span>
             </button>
           </li>
           <li>
-            <button class="nav-btn" data-target="queue-view" title="Processing Queue">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+            <button type="button" class="nav-btn" data-target="queue-view" title="Processing Queue">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
               <span class="sidebar-text">Processing Queue</span>
             </button>
           </li>
           <li>
-            <button class="nav-btn" data-target="settings-view" title="Settings">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-1.82-.33l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            <button type="button" class="nav-btn" data-target="settings-view" title="Settings">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-1.82-.33l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
               <span class="sidebar-text">Settings</span>
             </button>
           </li>
@@ -153,9 +166,10 @@
             </header>
 
             <div class="card glass-card">
-              <textarea id="mcq-text" class="glass-input large-textarea" placeholder="Enter MCQ stem and options here...">A 68-year-old patient presents with dyspnea and amyloidosis of the heart, but no asthma. They were prescribed amoxicillin after a heart attack.</textarea>
+              <label for="mcq-text" class="sr-only">MCQ Input Text</label>
+              <textarea id="mcq-text" class="glass-input large-textarea" aria-label="MCQ stem and options text" placeholder="Enter MCQ stem and options here...">A 68-year-old patient presents with dyspnea and amyloidosis of the heart, but no asthma. They were prescribed amoxicillin after a heart attack.</textarea>
               <div class="action-bar">
-                <button id="extract-btn" class="primary-btn pulse-on-hover">Extract Entities</button>
+                <button type="button" id="extract-btn" class="primary-btn pulse-on-hover">Extract Entities</button>
               </div>
             </div>
 
@@ -187,31 +201,31 @@
               <p class="subtitle">Your curated question sets, 1-2-3 synthesis status, and topic dossiers. Click any card to inspect analytics in the Right Sidebar.</p>
             </div>
             <div class="flex items-center gap-3 relative">
-              <button id="hub-delete-btn" class="flex items-center gap-2 px-3 py-1.5 bg-danger-600 hover:bg-danger-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors" style="display: none;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+              <button type="button" id="hub-delete-btn" class="flex items-center gap-2 px-3 py-1.5 bg-danger-600 hover:bg-danger-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors hidden">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
                 Delete Selected (<span id="hub-delete-count">0</span>)
               </button>
-              <button id="hub-edit-btn" class="p-2 rounded-lg transition-colors secondary-btn" title="Select Cards to Delete">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+              <button type="button" id="hub-edit-btn" class="p-2 rounded-lg transition-colors secondary-btn" aria-label="Select Cards to Delete" title="Select Cards to Delete">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
               </button>
             </div>
           </header>
 
           <div id="hub-main-container">
             <div id="hub-loading" class="text-center py-12 text-muted">Loading your study sets...</div>
-            <div id="hub-empty" class="text-center py-16 glass-panel rounded-2xl border border-gray-700" style="display: none;">
-              <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-brand-500 mb-4 opacity-50"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+            <div id="hub-empty" class="text-center py-16 glass-panel rounded-2xl border border-gray-700 hidden">
+              <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-brand-500 mb-4 opacity-50" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
               <h2 class="text-xl font-semibold mb-2">No Study Sets in Hub Yet</h2>
               <p class="text-muted">Curate a question set in the Quiz Engine and click "Start Quiz Now" or "Confirm &amp; Launch".</p>
             </div>
-            <div id="hub-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" style="display: none;"></div>
+            <div id="hub-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 hidden"></div>
           </div>
 
           <!-- Session Review Sub-View -->
-          <div id="hub-review-container" style="display: none;" class="w-full flex flex-col">
+          <div id="hub-review-container" class="w-full flex flex-col hidden">
             <div class="flex justify-between items-center mb-6">
-              <button id="hub-review-back-btn" class="flex items-center gap-2 text-muted hover:text-brand-400 transition-colors cursor-pointer border-none bg-transparent">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+              <button type="button" id="hub-review-back-btn" class="flex items-center gap-2 text-muted hover:text-brand-400 transition-colors cursor-pointer border-none bg-transparent">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
                 Back to Hub
               </button>
               <h2 class="text-xl font-bold">Session Review &amp; Dual Explanations</h2>
@@ -221,16 +235,16 @@
         </section>
 
         <!-- Topic Carousel Sub-View (Global Overlay for Hub & Quiz) -->
-        <div id="hub-carousel-container" style="display: none;" class="flex-1 flex flex-col h-full overflow-hidden absolute inset-0 glass-panel z-40">
+        <div id="hub-carousel-container" class="flex-1 flex flex-col h-full overflow-hidden absolute inset-0 glass-panel z-40 hidden">
           <div class="h-16 flex items-center justify-between px-4 md:px-8 border-b border-gray-800 glass-panel">
-            <button id="hub-carousel-back-btn" class="flex items-center gap-2 text-muted hover:text-brand-400 transition-colors cursor-pointer border-none bg-transparent">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+            <button type="button" id="hub-carousel-back-btn" class="flex items-center gap-2 text-muted hover:text-brand-400 transition-colors cursor-pointer border-none bg-transparent">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
               <span id="hub-carousel-back-label">Back to Hub</span>
             </button>
             <div class="flex items-center gap-4">
               <div class="text-sm font-medium text-muted" id="hub-carousel-counter">Topic 1 of 1</div>
-              <button id="hub-carousel-toggle-sidebar-btn" class="secondary-btn text-xs px-3 py-1.5 flex items-center gap-1.5 rounded-lg cursor-pointer" title="Toggle Topics List Sidebar">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+              <button type="button" id="hub-carousel-toggle-sidebar-btn" class="secondary-btn text-xs px-3 py-1.5 flex items-center gap-1.5 rounded-lg cursor-pointer" title="Toggle Topics List Sidebar">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
                 <span>Study Topics</span>
               </button>
             </div>
@@ -250,21 +264,21 @@
 
               <div id="hub-carousel-references" class="mt-4 border-t border-gray-700/50 pt-4">
                 <h4 class="text-sm font-semibold mb-3 flex items-center gap-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
                   Verified Reference Links (Click to Open)
                 </h4>
                 <div id="hub-carousel-ref-list" class="flex flex-wrap gap-2"></div>
               </div>
 
               <div class="mt-8 pt-6 border-t border-gray-800 flex justify-between items-center mb-8">
-                <button id="hub-carousel-prev" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                <button type="button" id="hub-carousel-prev" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"></polyline></svg>
                   Previous
                 </button>
                 <div class="text-xs text-muted hidden md:block">Use Left/Right arrow keys to navigate</div>
-                <button id="hub-carousel-next" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg">
+                <button type="button" id="hub-carousel-next" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg">
                   Next
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
                 </button>
               </div>
             </div>
@@ -277,7 +291,7 @@
             <div class="flex items-center justify-between mb-6">
               <div>
                 <h1 class="text-3xl font-bold flex items-center gap-3">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
                   Offline Knowledge Sources &amp; RAG Vault
                 </h1>
                 <p class="subtitle mt-1">
@@ -285,9 +299,9 @@
                 </p>
               </div>
 
-              <button id="start-indexing-btn" class="primary-btn flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all disabled:opacity-40 shadow-lg">
-                <svg id="indexing-icon-play" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                <svg id="indexing-icon-spin" class="animate-spin hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              <button type="button" id="start-indexing-btn" class="primary-btn flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all disabled:opacity-40 shadow-lg">
+                <svg id="indexing-icon-play" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                <svg id="indexing-icon-spin" class="animate-spin hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                 <span id="indexing-btn-text">Build/Update Tantivy Index</span>
               </button>
             </div>
@@ -306,22 +320,22 @@
               <h3 class="text-lg font-semibold mb-4">➕ Add New Offline Knowledge Directory / File</h3>
               <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                 <div>
-                  <label class="text-xs text-muted block mb-1">Source Type</label>
-                  <select id="new-source-type" class="w-full glass-select rounded-lg px-3 py-2 text-sm">
+                  <label for="new-source-type" class="text-xs text-muted block mb-1">Source Type</label>
+                  <select id="new-source-type" class="w-full glass-select rounded-lg px-3 py-2 text-sm" aria-label="Source Type">
                     <option value="obsidian">Obsidian Vault (Folder)</option>
                     <option value="pdf">PDF Textbooks (File / Folder)</option>
                     <option value="zim">ZIM Archive (.zim File)</option>
                   </select>
                 </div>
                 <div>
-                  <label class="text-xs text-muted block mb-1">Display Label</label>
+                  <label for="new-source-name" class="text-xs text-muted block mb-1">Display Label</label>
                   <input type="text" id="new-source-name" placeholder="e.g. Surgical Anatomy Vault" class="w-full glass-input rounded-lg px-3 py-2 text-sm" />
                 </div>
                 <div class="md:col-span-2">
-                  <label class="text-xs text-muted block mb-1">Local Path</label>
+                  <label for="new-source-path" class="text-xs text-muted block mb-1">Local Path</label>
                   <div class="flex gap-2">
                     <input type="text" id="new-source-path" placeholder="C:\Users\Doctor\Vaults\Surgery or ./data/pdfs/sabiston.pdf" class="flex-1 glass-input rounded-lg px-3 py-2 text-sm font-mono" />
-                    <button id="add-source-btn" disabled class="primary-btn px-4 py-2 rounded-lg text-sm disabled:opacity-40 transition-colors font-medium cursor-pointer disabled:cursor-default">
+                    <button type="button" id="add-source-btn" disabled class="primary-btn px-4 py-2 rounded-lg text-sm disabled:opacity-40 transition-colors font-medium cursor-pointer disabled:cursor-default">
                       Add Source
                     </button>
                   </div>
@@ -331,16 +345,16 @@
               <div id="pdf-engine-container" class="mt-4 pt-4 border-t border-gray-700/50 hidden">
                 <label class="text-sm font-medium block mb-2">PDF Extraction Engine</label>
                 <div class="flex flex-col sm:flex-row gap-4">
-                  <label id="pdf-engine-fitz-label" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors bg-brand-600/10 border-brand-500">
-                    <input type="radio" name="pdfEngine" value="fitz" checked class="mt-1 text-brand-500 focus:ring-brand-500" />
+                  <label id="pdf-engine-fitz-label" for="pdf-engine-fitz" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors bg-brand-600/10 border-brand-500">
+                    <input type="radio" id="pdf-engine-fitz" name="pdfEngine" value="fitz" checked class="mt-1 text-brand-500 focus:ring-brand-500" />
                     <div>
                       <div class="font-medium text-sm">PyMuPDF (Fitz)</div>
                       <div class="text-xs text-muted mt-1 leading-relaxed">Fast text + font-size heading extraction. Best for standard textbooks.</div>
                     </div>
                   </label>
 
-                  <label id="pdf-engine-docling-label" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors glass-panel border-gray-700">
-                    <input type="radio" name="pdfEngine" value="docling" class="mt-1 text-brand-500 focus:ring-brand-500" />
+                  <label id="pdf-engine-docling-label" for="pdf-engine-docling" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors glass-panel border-gray-700">
+                    <input type="radio" id="pdf-engine-docling" name="pdfEngine" value="docling" class="mt-1 text-brand-500 focus:ring-brand-500" />
                     <div>
                       <div class="font-medium text-sm">Docling (ML Layout)</div>
                       <div class="text-xs text-muted mt-1 leading-relaxed">Preserves complex multi-column tables and staging hierarchies.</div>
@@ -428,8 +442,8 @@
               <div class="flex justify-between items-center mb-10">
                 <h3 id="queue-total">Recent Tasks</h3>
                 <div class="flex gap-2">
-                  <button id="queue-retry-btn" class="secondary-btn text-xs">Retry Failed</button>
-                  <button id="queue-clear-btn" class="secondary-btn text-xs" style="color: #ef4444; border-color: #ef4444;">Clear Failed</button>
+                  <button type="button" id="queue-retry-btn" class="secondary-btn text-xs">Retry Failed</button>
+                  <button type="button" id="queue-clear-btn" class="secondary-btn text-xs" style="color: #ef4444; border-color: #ef4444;">Clear Failed</button>
                 </div>
               </div>
               <div id="queue-tasks-list" class="max-h-[450px] overflow-y-auto"></div>
@@ -457,7 +471,7 @@
                     <p class="text-xs text-neutral-400">Real-time status of local LLM, SQLite WAL storage, PDF viewer, and search indices</p>
                   </div>
                 </div>
-                <button id="btn-refresh-diagnostics" class="text-xs px-3 py-1.5 rounded-lg secondary-btn transition-colors flex items-center gap-1.5 cursor-pointer">
+                <button type="button" id="btn-refresh-diagnostics" class="text-xs px-3 py-1.5 rounded-lg secondary-btn transition-colors flex items-center gap-1.5 cursor-pointer">
                   🔄 Refresh
                 </button>
               </div>
@@ -487,7 +501,7 @@
                   <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">Question Bank (CSV)</div>
                   <div class="flex items-center justify-between">
                     <span class="text-xs text-neutral-300">Build / Refresh DB</span>
-                    <button id="build-db-btn" class="text-xs px-2.5 py-1 primary-btn rounded font-medium transition-colors cursor-pointer">
+                    <button type="button" id="build-db-btn" class="text-xs px-2.5 py-1 primary-btn rounded font-medium transition-colors cursor-pointer">
                       Rebuild
                     </button>
                   </div>
@@ -495,11 +509,11 @@
               </div>
 
               <!-- Database Build Progress (Collapsible) -->
-              <div class="progress-container mt-3" style="display: none;" id="build-progress-container">
+              <div class="progress-container mt-3 hidden" id="build-progress-container">
                 <div class="progress-bar-bg h-2 rounded-full glass-panel overflow-hidden">
                   <div class="progress-bar-fill h-full bg-brand-500 transition-all duration-300" id="build-progress" style="width: 0%"></div>
                 </div>
-                <p id="build-status" class="text-xs text-brand-300 mt-1" style="display: none;"></p>
+                <p id="build-status" class="text-xs text-brand-300 mt-1 hidden"></p>
               </div>
             </div>
 
@@ -522,10 +536,10 @@
 
               <div class="space-y-4">
                 <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                  <select id="select-scispacy-model" class="flex-1 glass-select rounded-xl px-3.5 py-2 text-xs text-neutral-200 focus:outline-none focus:border-emerald-500/60 font-medium">
+                  <select id="select-scispacy-model" class="flex-1 glass-select rounded-xl px-3.5 py-2 text-xs text-neutral-200 focus:outline-none focus:border-emerald-500/60 font-medium" aria-label="Select SciSpaCy NER model">
                     <!-- Populated dynamically by settings.js -->
                   </select>
-                  <button id="btn-download-scispacy" class="text-xs px-4 py-2 rounded-lg font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center justify-center gap-1.5 shadow-md cursor-pointer">
+                  <button type="button" id="btn-download-scispacy" class="text-xs px-4 py-2 rounded-lg font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center justify-center gap-1.5 shadow-md cursor-pointer">
                     Download &amp; Install Offline
                   </button>
                 </div>
@@ -574,11 +588,11 @@
 
               <!-- Indexer Action & Rebuild Toggle -->
               <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
-                <label class="inline-flex items-center gap-2 text-xs text-neutral-400 cursor-pointer">
+                <label for="checkbox-force-rebuild-ontology" class="inline-flex items-center gap-2 text-xs text-neutral-400 cursor-pointer">
                   <input type="checkbox" id="checkbox-force-rebuild-ontology" class="rounded glass-input text-emerald-500 focus:ring-0" />
                   <span>Force rebuild from scratch</span>
                 </label>
-                <button id="btn-build-ontology-index" class="text-xs px-4 py-2 rounded-lg font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+                <button type="button" id="btn-build-ontology-index" class="text-xs px-4 py-2 rounded-lg font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
                   ⚡ Build / Update Offline Ontology Index
                 </button>
               </div>
@@ -638,7 +652,7 @@
                 </h3>
 
                 <div class="form-group">
-                  <label class="flex items-center justify-between cursor-pointer">
+                  <label for="setting-llm-enabled" class="flex items-center justify-between cursor-pointer">
                     <span class="text-xs text-neutral-200 font-medium">Enable LM Studio Processing</span>
                     <input type="checkbox" id="setting-llm-enabled" class="w-4 h-4 accent-brand-500 cursor-pointer" checked />
                   </label>
@@ -712,16 +726,17 @@
             <!-- 6. BACKUP & RECOVERY DATA TRANSFER -->
             <div class="glass-card p-5 rounded-2xl">
               <h3 class="font-semibold text-sm text-neutral-100 mb-3 flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success-400"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success-400" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
                 Backup &amp; AppState Transfer
               </h3>
               <p class="text-xs text-neutral-400 mb-4">Export or import your user settings, streaks, and quiz session progress as JSON.</p>
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <button id="export-data-btn" class="w-full py-2.5 secondary-btn text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer">
+                <button type="button" id="export-data-btn" class="w-full py-2.5 secondary-btn text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer">
                   Export Backup (JSON)
                 </button>
-                <input type="file" id="import-data-file" accept=".json" class="hidden" />
-                <button id="import-data-btn" class="w-full py-2.5 secondary-btn text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer">
+                <label for="import-data-file" class="hidden">Import Backup File</label>
+                <input type="file" id="import-data-file" accept=".json" class="hidden" aria-label="Import Backup File" />
+                <button type="button" id="import-data-btn" class="w-full py-2.5 secondary-btn text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer">
                   Import Backup (JSON)
                 </button>
               </div>
@@ -730,11 +745,11 @@
         </section>
 
         <!-- IN-BROWSER DOCUMENT READER OVERLAY (OBSIDIAN & ZIM) -->
-        <div id="zim-viewer-container" class="overlay-panel fade-enter" style="display: none;">
+        <div id="zim-viewer-container" class="overlay-panel fade-enter hidden">
           <div class="overlay-header">
             <h2>Document Viewer</h2>
-            <button id="close-zim-viewer-btn" class="icon-btn cursor-pointer" title="Close Reader">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            <button type="button" id="close-zim-viewer-btn" class="icon-btn cursor-pointer" aria-label="Close Reader" title="Close Reader">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
             </button>
           </div>
           <div id="zim-content-area" class="overlay-content"></div>
@@ -742,14 +757,14 @@
       </main>
 
       <!-- 3. CONTEXTUAL 3RD-COLUMN RIGHT INSPECTOR (Default Hidden via .collapsed) -->
-      <aside class="right-inspector glass-panel collapsed" id="right-sidebar">
+      <aside class="right-inspector glass-panel collapsed" id="right-sidebar" aria-label="Clinical Inspector">
         <div class="flex justify-between items-center mb-4 border-b border-gray-700/50 pb-3">
           <h3 class="font-bold text-brand-400 flex items-center gap-2 text-sm truncate">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
             <span>Clinical Inspector</span>
           </h3>
-          <button id="close-inspector-btn" class="text-muted hover:text-brand-400 transition-colors bg-transparent border-none cursor-pointer p-1" title="Hide Inspector">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          <button type="button" id="close-inspector-btn" class="text-muted hover:text-brand-400 transition-colors bg-transparent border-none cursor-pointer p-1" aria-label="Hide Inspector" title="Hide Inspector">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
           </button>
         </div>
         <div id="inspector-content" class="overflow-y-auto flex-1 pr-1">
@@ -761,7 +776,7 @@
     </div>
 
     <!-- TOPIC VERIFICATION POPUP MODAL -->
-    <div id="topic-editor-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 150;">
+    <div id="topic-editor-modal" class="modal-backdrop fade-enter hidden" style="z-index: 150;">
       <div class="glass-modal w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl relative text-left p-0">
         <!-- Populated dynamically by window.openTopicVerificationModal in quiz.js -->
         <div id="topic-editor-questions" class="p-6"></div>
@@ -769,30 +784,30 @@
     </div>
 
     <!-- MISSING DATABASE MODAL -->
-    <div id="missing-db-modal" class="modal-backdrop fade-enter" style="display: none;">
+    <div id="missing-db-modal" class="modal-backdrop fade-enter hidden">
       <div class="modal glass-modal">
         <h3>Database Index Not Built</h3>
         <p>Please configure your knowledge sources in the RAG Vault or Settings panel and build the index before searching.</p>
         <div class="modal-actions mt-24 flex gap-4 justify-end">
-          <button id="close-modal-btn" class="secondary-btn">Close</button>
-          <button id="go-to-settings-btn" class="primary-btn">Go to Settings</button>
+          <button type="button" id="close-modal-btn" class="secondary-btn">Close</button>
+          <button type="button" id="go-to-settings-btn" class="primary-btn">Go to Settings</button>
         </div>
       </div>
     </div>
 
     <!-- REGENERATE CHOICE MODAL -->
-    <div id="regenerate-confirm-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 200;">
+    <div id="regenerate-confirm-modal" class="modal-backdrop fade-enter hidden" style="z-index: 200;">
       <div class="modal glass-modal text-left">
         <h3 id="regen-modal-title" class="text-lg font-bold mb-2">Generate Topic Data</h3>
         <p id="regen-modal-desc" class="text-sm text-muted mb-6">Choose whether to process all topics or only topics without generated data.</p>
         <div class="flex flex-col gap-3">
-          <button id="regen-opt-missing" class="primary-btn w-full py-2.5 text-xs font-bold rounded-xl cursor-pointer">
+          <button type="button" id="regen-opt-missing" class="primary-btn w-full py-2.5 text-xs font-bold rounded-xl cursor-pointer">
             Only for Topics Without One
           </button>
-          <button id="regen-opt-all" class="secondary-btn w-full py-2.5 text-xs font-bold rounded-xl cursor-pointer">
+          <button type="button" id="regen-opt-all" class="secondary-btn w-full py-2.5 text-xs font-bold rounded-xl cursor-pointer">
             Regenerate for All Topics
           </button>
-          <button id="regen-opt-cancel" class="text-xs text-muted hover:text-brand-400 py-1 cursor-pointer bg-transparent border-none mt-1 text-center">
+          <button type="button" id="regen-opt-cancel" class="text-xs text-muted hover:text-brand-400 py-1 cursor-pointer bg-transparent border-none mt-1 text-center">
             Cancel
           </button>
         </div>
@@ -800,11 +815,11 @@
     </div>
 
     <!-- HELP MODAL -->
-    <div id="help-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 200;">
+    <div id="help-modal" class="modal-backdrop fade-enter hidden" style="z-index: 200;">
       <div class="modal glass-modal w-full max-w-3xl max-h-[85vh] flex flex-col text-left p-0">
         <div class="flex items-center justify-between p-4 border-b border-gray-700 glass-panel rounded-t-24">
           <h2 class="text-xl font-bold flex items-center gap-2">📚 Help &amp; Platform Guide</h2>
-          <button id="close-help-btn" class="p-2 text-muted hover:text-brand-400 bg-transparent border-none cursor-pointer">✕</button>
+          <button type="button" id="close-help-btn" class="p-2 text-muted hover:text-brand-400 bg-transparent border-none cursor-pointer" aria-label="Close Help">✕</button>
         </div>
         <div class="flex-1 overflow-y-auto p-6 space-y-6 text-sm">
           <section>
@@ -861,16 +876,17 @@
     </template>
 
     <!-- APPLICATION SCRIPTS (STRICT LOADING ORDER) -->
-    <script src="/js/state.js"></script>
-    <script src="/js/app.js"></script>
-    <script src="/js/dashboard.js"></script>
-    <script src="/js/quiz.js"></script>
-    <script src="/js/hub.js"></script>
-    <script src="/js/habits.js"></script>
-    <script src="/js/expertise.js"></script>
-    <script src="/js/queue.js"></script>
-    <script src="/js/settings.js"></script>
-    <script src="/js/vault.js"></script>
-    <script src="/js/search.js"></script>
+    <script src="/js/state.js" defer></script>
+    <script src="/js/app.js" defer></script>
+    <script src="/js/dashboard.js" defer></script>
+    <script src="/js/quiz.js" defer></script>
+    <script src="/js/hub.js" defer></script>
+    <script src="/js/habits.js" defer></script>
+    <script src="/js/expertise.js" defer></script>
+    <script src="/js/queue.js" defer></script>
+    <script src="/js/settings.js" defer></script>
+    <script src="/js/vault.js" defer></script>
+    <script src="/js/search.js" defer></script>
+    <script src="/js/reader.js" defer></script>
   </body>
 </html>

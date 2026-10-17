@@ -281,13 +281,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // =========================================================
     // 3. SYSTEM DIAGNOSTICS (LM STUDIO, DB ROWS, SUMATRA, VENDOR CACHE)
     // =========================================================
-    const refreshDiagBtn = document.getElementById('refresh-diag-btn');
+    const refreshDiagBtn = document.getElementById('btn-refresh-diagnostics') || document.getElementById('refresh-diag-btn');
 
     async function refreshDiagnostics() {
-        const diagLmStudio = document.getElementById('diag-lm-studio');
-        const diagDbRows = document.getElementById('diag-db-rows');
-        const diagSumatra = document.getElementById('diag-sumatra');
-        const diagVendor = document.getElementById('diag-vendor-assets');
+        const diagLmStudio = document.getElementById('diag-lm-studio-status') || document.getElementById('diag-lm-studio');
+        const diagDbRows = document.getElementById('diag-db-status') || document.getElementById('diag-db-rows');
+        const diagSumatra = document.getElementById('diag-sumatra-status') || document.getElementById('diag-sumatra');
+        const diagVendor = document.getElementById('diag-vendor-status') || document.getElementById('diag-vendor-assets');
 
         [diagLmStudio, diagDbRows, diagSumatra, diagVendor].forEach(el => {
             if (el) {

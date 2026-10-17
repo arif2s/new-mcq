@@ -3,10 +3,890 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Quiz Master Pro</title>
+    <meta name="description" content="Medisearch AI — Offline-First Clinical MCQ Hub, Knowledge Synthesizer, and RAG Vault for Medical Education." />
+    <meta name="theme-color" content="#0f172a" />
+    <title>Medisearch AI — Clinical MCQ Hub</title>
+
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>" />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+
+    <link rel="stylesheet" href="/css/main.css" />
+    <link rel="stylesheet" href="/css/animations.css" />
+
+    <!-- Offline-First Vendor CSS & JS (Cached locally in ui/vendor/ by run.py) -->
+    <link
+      rel="stylesheet"
+      href="/vendor/katex.min.css"
+      onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css';"
+    />
+    <script
+      src="/vendor/marked.min.js"
+      defer
+      onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/marked/marked.min.js';"
+    ></script>
+    <script
+      src="/vendor/purify.min.js"
+      defer
+      onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js';"
+    ></script>
+    <script
+      src="/vendor/katex.min.js"
+      defer
+      onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js';"
+    ></script>
+    <script
+      src="/vendor/auto-render.min.js"
+      defer
+      onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js';"
+    ></script>
+    <script
+      src="/vendor/tailwind.js"
+      defer
+      onerror="this.onerror=null;this.src='https://cdn.tailwindcss.com';"
+    ></script>
+    <script>
+      window.addEventListener('DOMContentLoaded', function() {
+        if (window.tailwind) {
+          tailwind.config = {
+            theme: {
+              extend: {
+                colors: {
+                  brand: { 300: "#8b5cf6", 400: "#7c3aed", 500: "#6d28d9", 600: "#5b21b6" },
+                  success: { 300: "#86efac", 400: "#4ade80", 500: "#22c55e" },
+                  warning: { 200: "#fef08a", 400: "#facc15", 500: "#eab308" },
+                  danger: { 300: "#fca5a5", 400: "#f87171", 500: "#ef4444", 600: "#dc2626" }
+                }
+              }
+            }
+          };
+        }
+      });
+    </script>
   </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+
+  <body class="light-theme">
+    <div class="background-animation"></div>
+    <div class="app-container glass-panel">
+      <!-- 1. COLLAPSIBLE LEFT NAVIGATION RAIL -->
+      <nav class="left-rail glass-panel" aria-label="Main Navigation">
+        <div class="app-header flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <button id="sidebar-toggle" type="button" class="icon-btn" aria-label="Toggle Navigation Sidebar">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+            </button>
+            <div class="app-logo sidebar-text font-bold tracking-tight">Medisearch</div>
+          </div>
+          <div class="flex gap-1 sidebar-text">
+            <button id="open-help-btn" type="button" class="icon-btn" aria-label="Help & Guide">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            </button>
+            <button id="theme-toggle" type="button" class="icon-btn" aria-label="Toggle Color Theme">
+              <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line></svg>
+              <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="search-container sidebar-text">
+          <input type="search" id="global-search" class="glass-input" placeholder="Search knowledge (Enter)..." aria-label="Search knowledge base" autocomplete="off" />
+        </div>
+
+        <h3 class="nav-heading sidebar-text">Navigation</h3>
+        <ul class="nav-list">
+          <li>
+            <button type="button" class="nav-btn active" data-target="dashboard-view" title="Dashboard">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+              <span class="sidebar-text">Dashboard</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="nav-btn" data-target="home-view" title="MCQ Extractor">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 7 4 4 20 4 20 7"></polyline><line x1="9" y1="20" x2="15" y2="20"></line><line x1="12" y1="4" x2="12" y2="20"></line></svg>
+              <span class="sidebar-text">MCQ Extractor</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="nav-btn" data-target="quiz-view" title="Quiz Engine">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+              <span class="sidebar-text">Quiz Engine</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="nav-btn" data-target="knowledge-hub-view" title="Knowledge Hub">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+              <span class="sidebar-text">Knowledge Hub</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="nav-btn" data-target="rag-vault-view" title="RAG Vault">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+              <span class="sidebar-text">RAG Vault</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="nav-btn" data-target="habit-tracker-view" title="Habit Tracker">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+              <span class="sidebar-text">Habit Tracker</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="nav-btn" data-target="expertise-view" title="Expertise Map">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10H12V2z"></path><path d="M12 12 2.1 12A10 10 0 0 1 12 2.1z"></path></svg>
+              <span class="sidebar-text">Expertise Map</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="nav-btn" data-target="queue-view" title="Processing Queue">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+              <span class="sidebar-text">Processing Queue</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="nav-btn" data-target="settings-view" title="Settings">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-1.82-.33l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+              <span class="sidebar-text">Settings</span>
+            </button>
+          </li>
+        </ul>
+      </nav>
+
+      <!-- 2. CENTER STAGE -->
+      <main class="main-content relative-container">
+        <!-- DASHBOARD VIEW -->
+        <section id="dashboard-view" class="view-section active fade-enter-active">
+          <!-- Populated dynamically by dashboard.js -->
+        </section>
+
+        <!-- MCQ EXTRACTOR VIEW -->
+        <section id="home-view" class="view-section fade-enter">
+          <div class="w-full">
+            <header class="view-header">
+              <h2>Medical Entity Extractor &amp; MCQ Analyzer</h2>
+              <p class="subtitle">Extract canonical medical topics (medSpaCy + ZIM synonyms) and inspect synthesized notes.</p>
+            </header>
+
+            <div class="card glass-card">
+              <label for="mcq-text" class="sr-only">MCQ Input Text</label>
+              <textarea id="mcq-text" class="glass-input large-textarea" aria-label="MCQ stem and options text" placeholder="Enter MCQ stem and options here...">A 68-year-old patient presents with dyspnea and amyloidosis of the heart, but no asthma. They were prescribed amoxicillin after a heart attack.</textarea>
+              <div class="action-bar">
+                <button type="button" id="extract-btn" class="primary-btn pulse-on-hover">Extract Entities</button>
+              </div>
+            </div>
+
+            <div class="card glass-card topics-section">
+              <h3>Extracted Medical Topics</h3>
+              <p class="text-xs text-muted mb-2">Green underlined chips are verified clinical entities. Click any chip to load its synthesis and reference links.</p>
+              <div id="topics-container" class="chip-container"></div>
+            </div>
+
+            <div class="card glass-card explanation-section mt-20">
+              <h3>Topic Synthesis &amp; Reference Preview</h3>
+              <div id="explanation-container" class="content-placeholder prose max-w-none">
+                <p>Extract entities above and click a topic chip to view its clinical synthesis.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- QUIZ ENGINE VIEW -->
+        <section id="quiz-view" class="view-section fade-enter">
+          <!-- Populated dynamically by quiz.js -->
+        </section>
+
+        <!-- KNOWLEDGE HUB VIEW -->
+        <section id="knowledge-hub-view" class="view-section fade-enter">
+          <header class="view-header flex justify-between items-center mb-8">
+            <div>
+              <h2>Knowledge Hub</h2>
+              <p class="subtitle">Your curated question sets, 1-2-3 synthesis status, and topic dossiers. Click any card to inspect analytics in the Right Sidebar.</p>
+            </div>
+            <div class="flex items-center gap-3 relative">
+              <button type="button" id="hub-delete-btn" class="flex items-center gap-2 px-3 py-1.5 bg-danger-600 hover:bg-danger-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors hidden">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+                Delete Selected (<span id="hub-delete-count">0</span>)
+              </button>
+              <button type="button" id="hub-edit-btn" class="p-2 rounded-lg transition-colors secondary-btn" aria-label="Select Cards to Delete" title="Select Cards to Delete">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+              </button>
+            </div>
+          </header>
+
+          <div id="hub-main-container">
+            <div id="hub-loading" class="text-center py-12 text-muted">Loading your study sets...</div>
+            <div id="hub-empty" class="text-center py-16 glass-panel rounded-2xl border border-gray-700 hidden">
+              <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-brand-500 mb-4 opacity-50" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+              <h2 class="text-xl font-semibold mb-2">No Study Sets in Hub Yet</h2>
+              <p class="text-muted">Curate a question set in the Quiz Engine and click "Start Quiz Now" or "Confirm &amp; Launch".</p>
+            </div>
+            <div id="hub-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 hidden"></div>
+          </div>
+
+          <!-- Session Review Sub-View -->
+          <div id="hub-review-container" class="w-full flex flex-col hidden">
+            <div class="flex justify-between items-center mb-6">
+              <button type="button" id="hub-review-back-btn" class="flex items-center gap-2 text-muted hover:text-brand-400 transition-colors cursor-pointer border-none bg-transparent">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+                Back to Hub
+              </button>
+              <h2 class="text-xl font-bold">Session Review &amp; Dual Explanations</h2>
+            </div>
+            <div id="hub-review-questions" class="space-y-4"></div>
+          </div>
+        </section>
+
+        <!-- Topic Carousel Sub-View (Global Overlay for Hub & Quiz) -->
+        <div id="hub-carousel-container" class="flex-1 flex flex-col h-full overflow-hidden absolute inset-0 glass-panel z-40 hidden">
+          <div class="h-16 flex items-center justify-between px-4 md:px-8 border-b border-gray-800 glass-panel">
+            <button type="button" id="hub-carousel-back-btn" class="flex items-center gap-2 text-muted hover:text-brand-400 transition-colors cursor-pointer border-none bg-transparent">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+              <span id="hub-carousel-back-label">Back to Hub</span>
+            </button>
+            <div class="flex items-center gap-4">
+              <div class="text-sm font-medium text-muted" id="hub-carousel-counter">Topic 1 of 1</div>
+              <button type="button" id="hub-carousel-toggle-sidebar-btn" class="secondary-btn text-xs px-3 py-1.5 flex items-center gap-1.5 rounded-lg cursor-pointer" title="Toggle Topics List Sidebar">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+                <span>Study Topics</span>
+              </button>
+            </div>
+          </div>
+          <div class="flex-1 overflow-y-auto p-4 md:p-8">
+            <div class="max-w-4xl mx-auto">
+              <div class="mb-6">
+                <h2 class="text-3xl font-bold" id="hub-carousel-title">Topic Title</h2>
+                <span id="hub-carousel-status" class="inline-block mt-2 px-3 py-1 bg-brand-600/20 text-brand-400 text-xs rounded-full border border-brand-500/20">
+                  Clinical Synthesis &amp; Reference
+                </span>
+              </div>
+
+              <div class="glass-card rounded-2xl shadow-xl overflow-hidden mb-8">
+                <div id="hub-carousel-content" class="p-6 md:p-8 prose max-w-none text-sm"></div>
+              </div>
+
+              <div id="hub-carousel-references" class="mt-4 border-t border-gray-700/50 pt-4">
+                <h4 class="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+                  Verified Reference Links (Click to Open)
+                </h4>
+                <div id="hub-carousel-ref-list" class="flex flex-wrap gap-2"></div>
+              </div>
+
+              <div class="mt-8 pt-6 border-t border-gray-800 flex justify-between items-center mb-8">
+                <button type="button" id="hub-carousel-prev" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                  Previous
+                </button>
+                <div class="text-xs text-muted hidden md:block">Use Left/Right arrow keys to navigate</div>
+                <button type="button" id="hub-carousel-next" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg">
+                  Next
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RAG VAULT VIEW -->
+        <section id="rag-vault-view" class="view-section fade-enter">
+          <div class="w-full p-6 animate-fade-in">
+            <div class="flex items-center justify-between mb-6">
+              <div>
+                <h1 class="text-3xl font-bold flex items-center gap-3">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                  Offline Knowledge Sources &amp; RAG Vault
+                </h1>
+                <p class="subtitle mt-1">
+                  Configure local folders (Obsidian Vaults, Medical PDFs, &gt;10GB ZIM archives) for hybrid search &amp; synthesis.
+                </p>
+              </div>
+
+              <button type="button" id="start-indexing-btn" class="primary-btn flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all disabled:opacity-40 shadow-lg">
+                <svg id="indexing-icon-play" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                <svg id="indexing-icon-spin" class="animate-spin hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                <span id="indexing-btn-text">Build/Update Tantivy Index</span>
+              </button>
+            </div>
+
+            <div id="indexing-progress-container" class="bg-brand-600/10 border border-brand-500/30 rounded-2xl p-5 mb-8 animate-fade-in hidden">
+              <div class="flex justify-between items-center mb-2">
+                <span id="indexing-status-message" class="text-sm font-medium text-brand-300"></span>
+                <span id="indexing-progress-text" class="text-sm font-bold text-brand-400">0%</span>
+              </div>
+              <div class="w-full glass-panel rounded-full h-3 overflow-hidden">
+                <div id="indexing-progress-bar" class="bg-gradient-to-r from-brand-500 to-purple-500 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <div class="glass-card rounded-2xl p-6 mb-8">
+              <h3 class="text-lg font-semibold mb-4">➕ Add New Offline Knowledge Directory / File</h3>
+              <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                <div>
+                  <label for="new-source-type" class="text-xs text-muted block mb-1">Source Type</label>
+                  <select id="new-source-type" class="w-full glass-select rounded-lg px-3 py-2 text-sm" aria-label="Source Type">
+                    <option value="obsidian">Obsidian Vault (Folder)</option>
+                    <option value="pdf">PDF Textbooks (File / Folder)</option>
+                    <option value="zim">ZIM Archive (.zim File)</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="new-source-name" class="text-xs text-muted block mb-1">Display Label</label>
+                  <input type="text" id="new-source-name" placeholder="e.g. Surgical Anatomy Vault" class="w-full glass-input rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div class="md:col-span-2">
+                  <label for="new-source-path" class="text-xs text-muted block mb-1">Local Path</label>
+                  <div class="flex gap-2">
+                    <input type="text" id="new-source-path" placeholder="C:\Users\Doctor\Vaults\Surgery or ./data/pdfs/sabiston.pdf" class="flex-1 glass-input rounded-lg px-3 py-2 text-sm font-mono" />
+                    <button type="button" id="add-source-btn" disabled class="primary-btn px-4 py-2 rounded-lg text-sm disabled:opacity-40 transition-colors font-medium cursor-pointer disabled:cursor-default">
+                      Add Source
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div id="pdf-engine-container" class="mt-4 pt-4 border-t border-gray-700/50 hidden">
+                <label class="text-sm font-medium block mb-2">PDF Extraction Engine</label>
+                <div class="flex flex-col sm:flex-row gap-4">
+                  <label id="pdf-engine-fitz-label" for="pdf-engine-fitz" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors bg-brand-600/10 border-brand-500">
+                    <input type="radio" id="pdf-engine-fitz" name="pdfEngine" value="fitz" checked class="mt-1 text-brand-500 focus:ring-brand-500" />
+                    <div>
+                      <div class="font-medium text-sm">PyMuPDF (Fitz)</div>
+                      <div class="text-xs text-muted mt-1 leading-relaxed">Fast text + font-size heading extraction. Best for standard textbooks.</div>
+                    </div>
+                  </label>
+
+                  <label id="pdf-engine-docling-label" for="pdf-engine-docling" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors glass-panel border-gray-700">
+                    <input type="radio" id="pdf-engine-docling" name="pdfEngine" value="docling" class="mt-1 text-brand-500 focus:ring-brand-500" />
+                    <div>
+                      <div class="font-medium text-sm">Docling (ML Layout)</div>
+                      <div class="text-xs text-muted mt-1 leading-relaxed">Preserves complex multi-column tables and staging hierarchies.</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div class="glass-card rounded-2xl p-6">
+              <h3 class="text-lg font-semibold mb-4">📚 Configured Knowledge Repositories</h3>
+              <div id="sources-list-empty" class="hidden text-muted text-sm text-center py-8">
+                No knowledge sources configured yet.
+              </div>
+              <div id="sources-list" class="space-y-3"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- HABIT TRACKER VIEW -->
+        <section id="habit-tracker-view" class="view-section fade-enter">
+          <!-- Populated dynamically by habits.js -->
+        </section>
+
+        <!-- EXPERTISE MAP VIEW -->
+        <section id="expertise-view" class="view-section fade-enter">
+          <div class="w-full">
+            <header class="view-header flex justify-between items-center mb-6">
+              <div>
+                <h2>Expertise Map</h2>
+                <p class="subtitle">Track your mastery level across all medical topics and subjects.</p>
+              </div>
+            </header>
+
+            <div id="expertise-empty" class="text-center py-20 hidden">
+              <h2 class="text-xl text-muted mb-2">No expertise data yet</h2>
+              <p class="text-muted">Complete quizzes to start building your expertise map!</p>
+            </div>
+
+            <div id="expertise-content" class="hidden">
+              <div class="glass-card rounded-xl p-6 mb-8">
+                <h3 class="text-lg font-semibold mb-4">📊 Expertise Distribution</h3>
+                <div id="expertise-distribution-grid" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"></div>
+                <div class="w-full h-6 rounded-full overflow-hidden flex" id="expertise-distribution-bar"></div>
+              </div>
+
+              <div class="bg-gradient-to-r from-purple-600/20 to-brand-600/20 rounded-xl p-6 border border-purple-500/30 mb-8">
+                <h3 class="text-lg font-semibold mb-4">🎯 Focus Recommendations</h3>
+                <div id="expertise-recommendations" class="space-y-3"></div>
+              </div>
+
+              <div id="expertise-subjects-container"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- PROCESSING QUEUE VIEW -->
+        <section id="queue-view" class="view-section fade-enter">
+          <div class="w-full">
+            <header class="view-header">
+              <h2>Processing Queue <span id="queue-worker-status" class="badge bg-warning ml-2">Checking...</span></h2>
+              <p class="subtitle">Monitor background reference resolution and LM Studio synthesis tasks.</p>
+            </header>
+
+            <div class="grid-4col mb-20 gap-4" style="display: grid; grid-template-columns: repeat(4, 1fr);">
+              <div class="card glass-card text-center p-4">
+                <div class="text-3xl font-bold" id="queue-pending">0</div>
+                <div class="text-sm text-muted">Pending</div>
+              </div>
+              <div class="card glass-card text-center p-4">
+                <div class="text-3xl font-bold text-brand-400" id="queue-processing">0</div>
+                <div class="text-sm text-muted">Processing</div>
+              </div>
+              <div class="card glass-card text-center p-4">
+                <div class="text-3xl font-bold text-success-400" id="queue-completed">0</div>
+                <div class="text-sm text-muted">Completed</div>
+              </div>
+              <div class="card glass-card text-center p-4">
+                <div class="text-3xl font-bold text-danger-400" id="queue-failed">0</div>
+                <div class="text-sm text-muted">Failed</div>
+              </div>
+            </div>
+
+            <div class="card glass-card">
+              <div class="flex justify-between items-center mb-10">
+                <h3 id="queue-total">Recent Tasks</h3>
+                <div class="flex gap-2">
+                  <button type="button" id="queue-retry-btn" class="secondary-btn text-xs">Retry Failed</button>
+                  <button type="button" id="queue-clear-btn" class="secondary-btn text-xs" style="color: #ef4444; border-color: #ef4444;">Clear Failed</button>
+                </div>
+              </div>
+              <div id="queue-tasks-list" class="max-h-[450px] overflow-y-auto"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- SETTINGS VIEW -->
+        <section id="settings-view" class="view-section fade-enter">
+          <div class="w-full max-w-6xl mx-auto space-y-6">
+            <header class="view-header mb-6">
+              <h2 class="text-2xl font-bold">System Settings &amp; Offline Management</h2>
+              <p class="subtitle text-sm text-muted">Manage offline ontologies, biomedical NER models, diagnostics, and glassmorphic appearance.</p>
+            </header>
+
+            <!-- 1. SYSTEM DIAGNOSTICS & OFFLINE HEALTH TELEMETRY -->
+            <div class="glass-card p-5 rounded-2xl">
+              <div class="flex items-center justify-between pb-3 mb-4 border-b border-gray-700/50">
+                <div class="flex items-center gap-2.5">
+                  <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-sm border border-amber-500/30">
+                    🩺
+                  </div>
+                  <div>
+                    <h3 class="font-semibold text-sm text-neutral-100">System Diagnostics &amp; Offline Health</h3>
+                    <p class="text-xs text-neutral-400">Real-time status of local LLM, SQLite WAL storage, PDF viewer, and search indices</p>
+                  </div>
+                </div>
+                <button type="button" id="btn-refresh-diagnostics" class="text-xs px-3 py-1.5 rounded-lg secondary-btn transition-colors flex items-center gap-1.5 cursor-pointer">
+                  🔄 Refresh
+                </button>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div class="p-3 rounded-xl glass-panel border border-gray-700/50">
+                  <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">LM Studio Server</div>
+                  <div id="diag-lm-studio-status" class="text-xs text-neutral-300">Checking :1234...</div>
+                </div>
+                <div class="p-3 rounded-xl glass-panel border border-gray-700/50">
+                  <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">SQLite WAL Store</div>
+                  <div id="diag-db-status" class="text-xs text-neutral-300">Inspecting database...</div>
+                </div>
+                <div class="p-3 rounded-xl glass-panel border border-gray-700/50">
+                  <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">SumatraPDF Viewer</div>
+                  <div id="diag-sumatra-status" class="text-xs text-neutral-300">Locating SumatraPDF.exe...</div>
+                </div>
+                <div class="p-3 rounded-xl glass-panel border border-gray-700/50">
+                  <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">Tantivy BM25 Engine</div>
+                  <div id="diag-tantivy-status" class="text-xs text-neutral-300">Checking index directory...</div>
+                </div>
+                <div class="p-3 rounded-xl glass-panel border border-gray-700/50">
+                  <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">Vendor Asset Cache</div>
+                  <div id="diag-vendor-status" class="text-xs text-neutral-300">Checking ui/vendor/ assets...</div>
+                </div>
+                <div class="p-3 rounded-xl glass-panel border border-gray-700/50 flex flex-col justify-between">
+                  <div class="text-[10px] font-bold tracking-wider text-neutral-400 uppercase mb-1">Question Bank (CSV)</div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs text-neutral-300">Build / Refresh DB</span>
+                    <button type="button" id="build-db-btn" class="text-xs px-2.5 py-1 primary-btn rounded font-medium transition-colors cursor-pointer">
+                      Rebuild
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Database Build Progress (Collapsible) -->
+              <div class="progress-container mt-3 hidden" id="build-progress-container">
+                <div class="progress-bar-bg h-2 rounded-full glass-panel overflow-hidden">
+                  <div class="progress-bar-fill h-full bg-brand-500 transition-all duration-300" id="build-progress" style="width: 0%"></div>
+                </div>
+                <p id="build-status" class="text-xs text-brand-300 mt-1 hidden"></p>
+              </div>
+            </div>
+
+            <!-- 2. SCISPACY BIOMEDICAL NER PIPELINE CARD -->
+            <div class="glass-card p-5 rounded-2xl">
+              <div class="flex items-center justify-between pb-3 mb-4 border-b border-gray-700/50">
+                <div class="flex items-center gap-2.5">
+                  <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-sm border border-emerald-500/30">
+                    🔬
+                  </div>
+                  <div>
+                    <h3 class="font-semibold text-sm text-neutral-100">SciSpaCy Biomedical NER Pipeline</h3>
+                    <p class="text-xs text-neutral-400">Extracts Anatomy, Microorganisms, Disease Subtypes, and Procedures on CPU</p>
+                  </div>
+                </div>
+                <div id="scispacy-model-status-badge" class="px-2.5 py-1 rounded-md text-xs font-semibold glass-panel text-neutral-400 border border-gray-700/50">
+                  Checking...
+                </div>
+              </div>
+
+              <div class="space-y-4">
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  <select id="select-scispacy-model" class="flex-1 glass-select rounded-xl px-3.5 py-2 text-xs text-neutral-200 focus:outline-none focus:border-emerald-500/60 font-medium" aria-label="Select SciSpaCy NER model">
+                    <!-- Populated dynamically by settings.js -->
+                  </select>
+                  <button type="button" id="btn-download-scispacy" class="text-xs px-4 py-2 rounded-lg font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center justify-center gap-1.5 shadow-md cursor-pointer">
+                    Download &amp; Install Offline
+                  </button>
+                </div>
+
+                <div id="scispacy-model-details" class="p-3.5 rounded-xl glass-panel border border-gray-700/50">
+                  <!-- Populated dynamically by settings.js -->
+                </div>
+
+                <!-- Download Progress Bar -->
+                <div id="scispacy-download-progress-container" class="hidden space-y-2 p-3 rounded-xl glass-panel border border-gray-700/50">
+                  <div class="flex justify-between text-xs text-neutral-300">
+                    <span id="scispacy-download-progress-msg" class="truncate pr-2">Downloading package...</span>
+                    <span id="scispacy-download-progress-label" class="font-mono font-bold text-emerald-400">0%</span>
+                  </div>
+                  <div class="w-full h-2 glass-panel rounded-full overflow-hidden">
+                    <div id="scispacy-download-progress-bar" class="h-full bg-emerald-500 transition-all duration-300" style="width: 0%"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 3. OFFLINE BIOMEDICAL ONTOLOGIES & LINKERS CARD -->
+            <div class="glass-card p-5 rounded-2xl">
+              <div class="flex items-center justify-between pb-3 mb-4 border-b border-gray-700/50">
+                <div class="flex items-center gap-2.5">
+                  <div class="w-8 h-8 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-sm border border-blue-500/30">
+                    🧬
+                  </div>
+                  <div>
+                    <h3 class="font-semibold text-sm text-neutral-100">Offline Biomedical Ontologies &amp; Linkers</h3>
+                    <p class="text-xs text-neutral-400">Zero-RAM SQLite synonym resolution across UMLS, MeSH, RxNorm, HPO, and GO</p>
+                  </div>
+                </div>
+                <span id="tui-tree-status-badge" class="text-[11px] text-neutral-500 font-medium">Checking TUI...</span>
+              </div>
+
+              <!-- Detected Linkers Grid -->
+              <div id="ontology-sources-list" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
+                <!-- Populated dynamically by settings.js -->
+              </div>
+
+              <!-- Compiled Index Summary Banner -->
+              <div id="ontology-db-summary" class="p-3.5 rounded-xl glass-panel border border-gray-700/50 mb-4">
+                <!-- Populated dynamically by settings.js -->
+              </div>
+
+              <!-- Indexer Action & Rebuild Toggle -->
+              <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
+                <label for="checkbox-force-rebuild-ontology" class="inline-flex items-center gap-2 text-xs text-neutral-400 cursor-pointer">
+                  <input type="checkbox" id="checkbox-force-rebuild-ontology" class="rounded glass-input text-emerald-500 focus:ring-0" />
+                  <span>Force rebuild from scratch</span>
+                </label>
+                <button type="button" id="btn-build-ontology-index" class="text-xs px-4 py-2 rounded-lg font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+                  ⚡ Build / Update Offline Ontology Index
+                </button>
+              </div>
+
+              <!-- Indexing Progress Bar -->
+              <div id="ontology-index-progress-container" class="hidden mt-4 space-y-2 p-3.5 rounded-xl glass-panel border border-gray-700/50">
+                <div class="flex justify-between text-xs text-neutral-300">
+                  <span id="ontology-index-stage-label" class="font-semibold text-neutral-200">Initializing...</span>
+                  <span id="ontology-index-progress-label" class="font-mono font-bold text-emerald-400">0%</span>
+                </div>
+                <div class="w-full h-2 glass-panel rounded-full overflow-hidden">
+                  <div id="ontology-index-progress-bar" class="h-full bg-emerald-500 transition-all duration-300" style="width: 0%"></div>
+                </div>
+                <p id="ontology-index-progress-msg" class="text-[11px] text-neutral-400 truncate">Preparing streaming compiler...</p>
+              </div>
+            </div>
+
+            <!-- 4. CPU EMBEDDINGS & CROSS-ENCODER RERANKERS -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div class="glass-card p-5 rounded-2xl">
+                <div class="flex items-center gap-2.5 mb-3">
+                  <div class="w-7 h-7 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold text-xs border border-purple-500/30">
+                    📐
+                  </div>
+                  <div>
+                    <h3 class="font-semibold text-sm text-neutral-100">CPU Embedding Models (ONNX)</h3>
+                    <p class="text-xs text-neutral-400">Zero-VRAM CPU sentence vectorization</p>
+                  </div>
+                </div>
+                <div id="embedding-models-list" class="space-y-2 mt-4">
+                  <!-- Populated dynamically by settings.js -->
+                </div>
+              </div>
+
+              <div class="glass-card p-5 rounded-2xl">
+                <div class="flex items-center gap-2.5 mb-3">
+                  <div class="w-7 h-7 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center font-bold text-xs border border-cyan-500/30">
+                    ⚡
+                  </div>
+                  <div>
+                    <h3 class="font-semibold text-sm text-neutral-100">FlashRank Cross-Encoder Rerankers</h3>
+                    <p class="text-xs text-neutral-400">Lightweight high-precision deep reranking</p>
+                  </div>
+                </div>
+                <div id="flashrank-models-list" class="space-y-2 mt-4">
+                  <!-- Populated dynamically by settings.js -->
+                </div>
+              </div>
+            </div>
+
+            <!-- 5. APP PREFERENCES, SYNTHESIS CONTROLS & APPEARANCE -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <!-- AI Synthesis & Note Behavior -->
+              <div class="glass-card p-5 rounded-2xl space-y-4">
+                <h3 class="font-semibold text-sm text-neutral-100 flex items-center gap-2 border-b border-gray-700/50 pb-3">
+                  <span>🤖</span> AI Synthesis &amp; Note Reader
+                </h3>
+
+                <div class="form-group">
+                  <label for="setting-llm-enabled" class="flex items-center justify-between cursor-pointer">
+                    <span class="text-xs text-neutral-200 font-medium">Enable LM Studio Processing</span>
+                    <input type="checkbox" id="setting-llm-enabled" class="w-4 h-4 accent-brand-500 cursor-pointer" checked />
+                  </label>
+                  <p class="text-[11px] text-neutral-400 mt-1">
+                    When OFF, only verified reference links (PDF, Obsidian, ZIM) are resolved without querying LM Studio.
+                  </p>
+                </div>
+
+                <div class="form-group pt-2">
+                  <label for="setting-obsidian-mode" class="text-xs text-neutral-300 block mb-1">Obsidian Note Click Behavior:</label>
+                  <select id="setting-obsidian-mode" class="glass-select w-full rounded-lg px-3 py-2 text-xs">
+                    <option value="browser">Render in Browser (LaTeX, Tables, HTML, Images)</option>
+                    <option value="app">Open in Obsidian Desktop App (obsidian://)</option>
+                  </select>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3 pt-2">
+                  <div>
+                    <label for="set-q-target" class="text-xs text-neutral-300 block mb-1">Daily Target (MCQs):</label>
+                    <input type="number" id="set-q-target" class="glass-input w-full rounded-lg px-3 py-1.5 text-xs" value="50" />
+                  </div>
+                  <div>
+                    <label for="set-c-target" class="text-xs text-neutral-300 block mb-1">Daily Correct Target:</label>
+                    <input type="number" id="set-c-target" class="glass-input w-full rounded-lg px-3 py-1.5 text-xs" value="40" />
+                  </div>
+                </div>
+              </div>
+
+              <!-- Appearance, Glassmorphic Opacities & Wallpaper Rotation -->
+              <div class="glass-card p-5 rounded-2xl space-y-4">
+                <h3 class="font-semibold text-sm text-neutral-100 flex items-center gap-2 border-b border-gray-700/50 pb-3">
+                  <span>🎨</span> Appearance &amp; Glassmorphic Opacities
+                </h3>
+
+                <div class="form-group">
+                  <div class="flex justify-between items-center mb-1">
+                    <label for="setting-panel-alpha" class="text-xs text-neutral-300 mb-0">Non-Card Panel Opacity (--panel-alpha):</label>
+                    <span id="setting-panel-alpha-val" class="text-xs font-mono font-bold text-brand-400">78%</span>
+                  </div>
+                  <input type="range" id="setting-panel-alpha" min="0.15" max="0.95" step="0.02" value="0.78" class="w-full accent-brand-500" />
+                </div>
+
+                <div class="form-group">
+                  <div class="flex justify-between items-center mb-1">
+                    <label for="setting-card-alpha" class="text-xs text-neutral-300 mb-0">Card Surface Opacity (--card-alpha):</label>
+                    <span id="setting-card-alpha-val" class="text-xs font-mono font-bold text-brand-400">82%</span>
+                  </div>
+                  <input type="range" id="setting-card-alpha" min="0.40" max="0.98" step="0.02" value="0.82" class="w-full accent-brand-500" />
+                </div>
+
+                <div class="form-group pt-1">
+                  <label for="setting-wallpaper-timer" class="text-xs text-neutral-300 block mb-1">Wallpaper Rotation Duration:</label>
+                  <div class="flex gap-2.5 items-center">
+                    <select id="setting-wallpaper-timer" class="glass-select flex-1 rounded-lg px-3 py-2 text-xs">
+                      <option value="5">Every 5 Minutes</option>
+                      <option value="15">Every 15 Minutes</option>
+                      <option value="30" selected>Every 30 Minutes</option>
+                      <option value="60">Every 1 Hour</option>
+                      <option value="120">Every 2 Hours</option>
+                      <option value="360">Every 6 Hours</option>
+                      <option value="0">Never (Manual Only)</option>
+                    </select>
+                    <button type="button" id="btn-rotate-wallpaper-now" class="text-xs px-3.5 py-2 rounded-lg font-medium secondary-btn transition-colors whitespace-nowrap cursor-pointer">
+                      🖼️ Change Now
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 6. BACKUP & RECOVERY DATA TRANSFER -->
+            <div class="glass-card p-5 rounded-2xl">
+              <h3 class="font-semibold text-sm text-neutral-100 mb-3 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success-400" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                Backup &amp; AppState Transfer
+              </h3>
+              <p class="text-xs text-neutral-400 mb-4">Export or import your user settings, streaks, and quiz session progress as JSON.</p>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <button type="button" id="export-data-btn" class="w-full py-2.5 secondary-btn text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer">
+                  Export Backup (JSON)
+                </button>
+                <label for="import-data-file" class="hidden">Import Backup File</label>
+                <input type="file" id="import-data-file" accept=".json" class="hidden" aria-label="Import Backup File" />
+                <button type="button" id="import-data-btn" class="w-full py-2.5 secondary-btn text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer">
+                  Import Backup (JSON)
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- IN-BROWSER DOCUMENT READER OVERLAY (OBSIDIAN & ZIM) -->
+        <div id="zim-viewer-container" class="overlay-panel fade-enter hidden">
+          <div class="overlay-header">
+            <h2>Document Viewer</h2>
+            <button type="button" id="close-zim-viewer-btn" class="icon-btn cursor-pointer" aria-label="Close Reader" title="Close Reader">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+          </div>
+          <div id="zim-content-area" class="overlay-content"></div>
+        </div>
+      </main>
+
+      <!-- 3. CONTEXTUAL 3RD-COLUMN RIGHT INSPECTOR (Default Hidden via .collapsed) -->
+      <aside class="right-inspector glass-panel collapsed" id="right-sidebar" aria-label="Clinical Inspector">
+        <div class="flex justify-between items-center mb-4 border-b border-gray-700/50 pb-3">
+          <h3 class="font-bold text-brand-400 flex items-center gap-2 text-sm truncate">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+            <span>Clinical Inspector</span>
+          </h3>
+          <button type="button" id="close-inspector-btn" class="text-muted hover:text-brand-400 transition-colors bg-transparent border-none cursor-pointer p-1" aria-label="Hide Inspector" title="Hide Inspector">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+        <div id="inspector-content" class="overflow-y-auto flex-1 pr-1">
+          <div class="text-center py-12 opacity-50">
+            <p class="text-sm">Start a quiz, search a topic, or select a Knowledge Hub card to view contextual details here.</p>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- TOPIC VERIFICATION POPUP MODAL -->
+    <div id="topic-editor-modal" class="modal-backdrop fade-enter hidden" style="z-index: 150;">
+      <div class="glass-modal w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl relative text-left p-0">
+        <!-- Populated dynamically by window.openTopicVerificationModal in quiz.js -->
+        <div id="topic-editor-questions" class="p-6"></div>
+      </div>
+    </div>
+
+    <!-- MISSING DATABASE MODAL -->
+    <div id="missing-db-modal" class="modal-backdrop fade-enter hidden">
+      <div class="modal glass-modal">
+        <h3>Database Index Not Built</h3>
+        <p>Please configure your knowledge sources in the RAG Vault or Settings panel and build the index before searching.</p>
+        <div class="modal-actions mt-24 flex gap-4 justify-end">
+          <button type="button" id="close-modal-btn" class="secondary-btn">Close</button>
+          <button type="button" id="go-to-settings-btn" class="primary-btn">Go to Settings</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- REGENERATE CHOICE MODAL -->
+    <div id="regenerate-confirm-modal" class="modal-backdrop fade-enter hidden" style="z-index: 200;">
+      <div class="modal glass-modal text-left">
+        <h3 id="regen-modal-title" class="text-lg font-bold mb-2">Generate Topic Data</h3>
+        <p id="regen-modal-desc" class="text-sm text-muted mb-6">Choose whether to process all topics or only topics without generated data.</p>
+        <div class="flex flex-col gap-3">
+          <button type="button" id="regen-opt-missing" class="primary-btn w-full py-2.5 text-xs font-bold rounded-xl cursor-pointer">
+            Only for Topics Without One
+          </button>
+          <button type="button" id="regen-opt-all" class="secondary-btn w-full py-2.5 text-xs font-bold rounded-xl cursor-pointer">
+            Regenerate for All Topics
+          </button>
+          <button type="button" id="regen-opt-cancel" class="text-xs text-muted hover:text-brand-400 py-1 cursor-pointer bg-transparent border-none mt-1 text-center">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- HELP MODAL -->
+    <div id="help-modal" class="modal-backdrop fade-enter hidden" style="z-index: 200;">
+      <div class="modal glass-modal w-full max-w-3xl max-h-[85vh] flex flex-col text-left p-0">
+        <div class="flex items-center justify-between p-4 border-b border-gray-700 glass-panel rounded-t-24">
+          <h2 class="text-xl font-bold flex items-center gap-2">📚 Help &amp; Platform Guide</h2>
+          <button type="button" id="close-help-btn" class="p-2 text-muted hover:text-brand-400 bg-transparent border-none cursor-pointer" aria-label="Close Help">✕</button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-6 space-y-6 text-sm">
+          <section>
+            <h3 class="text-base font-semibold text-brand-400 mb-1">🩺 Topic Verification &amp; Knowledge Hub Circles (① ② ③)</h3>
+            <p class="text-muted">
+              • <strong>Circle ①:</strong> Set created (if ② and ③ are grey, click ① or "Review Topics" to confirm the medical topic list).<br/>
+              • <strong>Circle ②:</strong> Blinking while resolving PDF, Obsidian, and ZIM reference links; solid when ready.<br/>
+              • <strong>Circle ③:</strong> Blinking while LM Studio synthesizes detailed MCQ explanations and topic notes; solid when ready.
+            </p>
+          </section>
+          <section>
+            <h3 class="text-base font-semibold text-brand-400 mb-1">🖱️ Topic Chip Controls</h3>
+            <p class="text-muted">
+              • <strong>Normal Text:</strong> Verified clinical topic (matched via ZIM dictionary/synonyms).<br/>
+              • <strong>Grey Text:</strong> Unverified/doubtful term.<br/>
+              • <strong>Single-Click:</strong> Toggle green outline &amp; underline (selected for note generation).<br/>
+              • <strong>Double-Click:</strong> Permanently add false-positive terms to your Ignore List.<br/>
+              • <strong>Click Outside Popup:</strong> Auto-saves your partial topic review to Knowledge Hub.
+            </p>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <!-- TEMPLATES FOR SESSION REVIEW -->
+    <template id="review-card-template">
+      <div class="review-card glass-card rounded-xl p-6">
+        <div class="flex items-start gap-4">
+          <div class="review-icon mt-1"></div>
+          <div class="flex-1 min-w-0">
+            <div class="flex justify-between mb-2 text-sm text-muted">
+              <span class="review-q-num font-bold"></span>
+              <span class="review-q-topic glass-panel px-2.5 py-0.5 rounded text-xs truncate max-w-[240px]"></span>
+            </div>
+            <p class="review-q-text mb-4 whitespace-pre-wrap font-medium"></p>
+            <div class="review-options grid grid-cols-1 md:grid-cols-2 gap-3 mb-4"></div>
+            <div class="review-explanation-container glass-panel border border-brand-500/30 p-4 rounded-xl mt-4 text-sm hidden">
+              <div class="review-explanation prose prose-sm max-w-none"></div>
+            </div>
+            <div class="review-references-container mt-4 border-t border-gray-700/50 pt-4 hidden">
+              <h4 class="text-xs font-bold uppercase tracking-wider text-muted mb-2.5">🔗 Verified Reference Links</h4>
+              <div class="review-references flex flex-wrap gap-2"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <template id="review-option-template">
+      <div class="review-option p-3 rounded-lg border text-sm flex gap-3 glass-panel border-gray-700 text-muted">
+        <span class="review-option-letter font-bold shrink-0"></span>
+        <span class="review-option-text break-words"></span>
+      </div>
+    </template>
+
+    <!-- APPLICATION SCRIPTS (STRICT LOADING ORDER) -->
+    <script src="/js/state.js" defer></script>
+    <script src="/js/app.js" defer></script>
+    <script src="/js/dashboard.js" defer></script>
+    <script src="/js/quiz.js" defer></script>
+    <script src="/js/hub.js" defer></script>
+    <script src="/js/habits.js" defer></script>
+    <script src="/js/expertise.js" defer></script>
+    <script src="/js/queue.js" defer></script>
+    <script src="/js/settings.js" defer></script>
+    <script src="/js/vault.js" defer></script>
+    <script src="/js/search.js" defer></script>
+    <script src="/js/reader.js" defer></script>
   </body>
 </html>
