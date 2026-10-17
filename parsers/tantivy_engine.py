@@ -258,4 +258,59 @@ def search_index(query_str: str, limit_per_source: int = 3) -> Dict[str, List[Di
         except Exception as e:
             logger.debug(f"ZIM direct search bypass skipped: {e}")
 
+    # Stage 4: LanceDB Hybrid Vector + FTS Fallback for PDF and Obsidian sources
+    if len(results["pdf"]) < limit_per_source or len(results["obsidian"]) < limit_per_source:
+        try:
+            from parsers.lancedb_engine import LanceDBEngine
+            from parsers.embedding_engine import CPUEmbeddingEngine, is_embedding_model_downloaded
+
+            embedder = CPUEmbeddingEngine()
+            lancedb_engine = LanceDBEngine(vector_dim=embedder.get_dimension())
+
+            lance_hits: List[Dict[str, Any]] = []
+            if is_embedding_model_downloaded(embedder.model_id):
+                q_vec = embedder.embed_single(primary_query)
+                if q_vec:
+                    lance_hits.extend(lancedb_engine.vector_search(q_vec, limit=20))
+
+            fts_hits = lancedb_engine.fts_search(query_str, limit=20)
+            seen_lance_ids = {h.get("id") for h in lance_hits if h.get("id")}
+            for fh in fts_hits:
+                if fh.get("id") not in seen_lance_ids:
+                    lance_hits.append(fh)
+                    seen_lance_ids.add(fh.get("id"))
+
+            for lh in lance_hits:
+                f_path = str(lh.get("file_path") or lh.get("source_article") or "")
+                src = "pdf" if f_path.lower().endswith(".pdf") else "obsidian"
+
+                if len(results[src]) >= limit_per_source:
+                    continue
+
+                title = lh.get("source_article") or lh.get("main_topic") or "Untitled"
+                heading = lh.get("heading_path") or lh.get("subheading") or title
+                page_num = int(lh.get("page_number", 1) or 1)
+                body_snippet = (lh.get("child_content") or lh.get("parent_content") or "")[:400]
+                art_len = int(lh.get("article_length", len(body_snippet)) or len(body_snippet))
+
+                existing_keys = {
+                    (r.get("file_path", "").lower(), r.get("page", 1))
+                    for r in results[src]
+                }
+                if (f_path.lower(), page_num) in existing_keys:
+                    continue
+
+                results[src].append({
+                    "doc_id": str(lh.get("id", f"lance_{src}")),
+                    "file_path": f_path,
+                    "page": page_num,
+                    "title": title,
+                    "heading": heading,
+                    "snippet": body_snippet,
+                    "doc_length": art_len,
+                    "score": round(float(lh.get("_distance", 0.5)), 4) if "_distance" in lh else 80.0,
+                })
+        except Exception as e:
+            logger.debug(f"LanceDB reference search fallback skipped: {e}")
+
     return results

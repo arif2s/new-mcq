@@ -109,8 +109,9 @@ def launch_sumatra(file_path: str, page: int = 1):
         return {"status": "error", "message": "PDF deep-linking via SumatraPDF is only supported on Windows."}
 
     try:
-        sanitized_path = Path(file_path).resolve()
-        subprocess.Popen([sumatra_exe, "-reuse-instance", "-page", str(page), str(sanitized_path)], shell=False)
+        from server.routes_sources import _resolve_pdf_path
+        resolved_path = _resolve_pdf_path(file_path) or Path(file_path).resolve()
+        subprocess.Popen([sumatra_exe, "-reuse-instance", "-page", str(page), str(resolved_path)], shell=False)
         return {"status": "success"}
     except Exception as e:
         return {"status": "error", "message": str(e)}

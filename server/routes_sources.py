@@ -423,6 +423,41 @@ def index_sources(background_tasks: BackgroundTasks):
     return {"status": "started"}
 
 
+def _resolve_pdf_path(file_path: str) -> Optional[Path]:
+    """
+    Resolves a PDF file path from direct path or by searching enabled PDF sources in knowledge_sources.
+    """
+    if not file_path:
+        return None
+    candidate = Path(file_path)
+    if candidate.exists() and candidate.is_file():
+        return candidate.resolve()
+
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT path FROM knowledge_sources WHERE type = 'pdf' AND enabled = 1")
+        pdf_rows = cursor.fetchall()
+
+    search_name = candidate.name.lower()
+    search_stem = candidate.stem.lower()
+
+    for row in pdf_rows:
+        source_path = Path(row["path"])
+        if not source_path.exists():
+            continue
+        if source_path.is_file():
+            if source_path.name.lower() == search_name or source_path.stem.lower() == search_stem:
+                return source_path.resolve()
+        elif source_path.is_dir():
+            rel_cand = source_path / file_path
+            if rel_cand.exists() and rel_cand.is_file():
+                return rel_cand.resolve()
+            for p_file in source_path.rglob("*.pdf"):
+                if p_file.name.lower() == search_name or p_file.stem.lower() == search_stem:
+                    return p_file.resolve()
+    return None
+
+
 @router.post("/open_pdf")
 def open_pdf(payload: OpenPdfPayload):
     """Launches SumatraPDF directly at the cited page number."""
@@ -434,9 +469,9 @@ def open_pdf(payload: OpenPdfPayload):
 
     sumatra_exe = shutil.which("SumatraPDF") or shutil.which("sumatrapdf.exe") or "SumatraPDF"
     try:
-        sanitized_path = Path(payload.file_path).resolve()
+        resolved_path = _resolve_pdf_path(payload.file_path) or Path(payload.file_path).resolve()
         subprocess.Popen(
-            [sumatra_exe, "-reuse-instance", "-page", str(max(1, int(payload.page))), str(sanitized_path)],
+            [sumatra_exe, "-reuse-instance", "-page", str(max(1, int(payload.page))), str(resolved_path)],
             shell=False,
         )
         return {"status": "success"}
