@@ -3,9 +3,12 @@ import logging
 from typing import Dict, Any, List
 
 try:
-    import fitz
+    import pymupdf as fitz
 except ImportError:
-    fitz = None
+    try:
+        import fitz
+    except ImportError:
+        fitz = None
 
 logger = logging.getLogger(__name__)
 

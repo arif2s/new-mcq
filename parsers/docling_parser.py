@@ -4,15 +4,18 @@ import functools
 import hashlib
 
 try:
-    import fitz
+    import pymupdf as fitz
 except ImportError:
-    fitz = None
+    try:
+        import fitz
+    except ImportError:
+        fitz = None
 
 try:
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.pipeline_options import PdfPipelineOptions
     from docling.datamodel.base_models import InputFormat, DocumentStream
-    from docling_core.types.doc.document import TextItem, SectionHeaderItem, TableItem
+    from docling_core.types.doc.document import TextItem, SectionHeaderItem, TableItem, TitleItem
 except ImportError:
     DocumentConverter = None
     PdfFormatOption = None
@@ -22,6 +25,7 @@ except ImportError:
     TextItem = None
     SectionHeaderItem = None
     TableItem = None
+    TitleItem = None
 
 logger = logging.getLogger(__name__)
 _converter = None
@@ -124,16 +128,27 @@ def extract_pdf_structure(file_path: str) -> list:
                 current_text = []
                 current_page = item_page
 
-            if TextItem and isinstance(item, TextItem):
-                if (SectionHeaderItem and isinstance(item, SectionHeaderItem)) or getattr(item, "label", None) in ["section_header", "title", "page_header"]:
-                    save_section(current_page)
-                    item_level = getattr(item, "level", 1) or 1
-                    for k in [k for k in heading_stack.keys() if k >= item_level]:
-                        del heading_stack[k]
-                    heading_stack[item_level] = item.text.strip()
+            item_label = getattr(item, "label", None)
+            label_str = str(item_label.value if hasattr(item_label, "value") else item_label).lower() if item_label else ""
+
+            is_header = False
+            if (SectionHeaderItem and isinstance(item, SectionHeaderItem)) or (TitleItem and isinstance(item, TitleItem)):
+                is_header = True
+            elif label_str in ["section_header", "title", "page_header", "header", "doc_title"]:
+                is_header = True
+
+            if is_header:
+                save_section(current_page)
+                item_level = getattr(item, "level", 1) or 1
+                for k in [k for k in list(heading_stack.keys()) if k >= item_level]:
+                    del heading_stack[k]
+                item_text = getattr(item, "text", "").strip()
+                if item_text:
+                    heading_stack[item_level] = item_text
                     current_text = [f"[{get_current_heading()}]"]
                     current_page = item_page
-                elif item.text.strip():
+            elif TextItem and isinstance(item, TextItem):
+                if item.text.strip():
                     current_text.append(item.text)
                     current_page = item_page
             elif TableItem and isinstance(item, TableItem):
