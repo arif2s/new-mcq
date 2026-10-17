@@ -15,6 +15,28 @@ window.clearActiveInspectorSession = function() {
     activeInspectorSessionId = null;
 };
 
+window.renderHubInspectorIfActive = function() {
+    if (activeInspectorSessionId && Array.isArray(hubSessions)) {
+        const activeSession = hubSessions.find(s => s.id === activeInspectorSessionId);
+        if (activeSession) {
+            openHubCardInspector(activeSession, false);
+            return;
+        }
+    }
+    if (typeof window.closeInspector === 'function') {
+        window.closeInspector();
+    }
+};
+
+window.closeTopicCarousel = function() {
+    const carousel = document.getElementById('hub-carousel-container');
+    if (carousel) carousel.style.display = 'none';
+    if (carouselInterval) {
+        clearInterval(carouselInterval);
+        carouselInterval = null;
+    }
+};
+
 async function loadSessions(silent = false) {
     const loadingEl = document.getElementById('hub-loading');
     const emptyEl = document.getElementById('hub-empty');
@@ -1220,7 +1242,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (carouselOriginMode === 'quiz') {
             const quizView = document.getElementById('quiz-view');
-            if (quizView) quizView.style.display = 'block';
+            if (quizView) quizView.style.display = '';
+            const quizNav = document.querySelector('.nav-btn[data-target="quiz-view"]');
+            if (quizNav) quizNav.click();
         } else {
             const hubHeader = document.querySelector('#knowledge-hub-view .view-header');
             if (hubHeader) hubHeader.style.display = 'flex';

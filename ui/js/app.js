@@ -479,8 +479,63 @@ document.addEventListener('DOMContentLoaded', async () => {
     const viewSections = document.querySelectorAll('.view-section');
 
     const switchTab = (targetId) => {
+        // 1. Clean up subview overlays and containers so tab content doesn't bleed
+        if (typeof window.closeTopicCarousel === 'function') {
+            window.closeTopicCarousel();
+        } else {
+            const carousel = document.getElementById('hub-carousel-container');
+            if (carousel) carousel.style.display = 'none';
+        }
+
+        const reviewContainer = document.getElementById('hub-review-container');
+        if (reviewContainer) reviewContainer.style.display = 'none';
+
+        const zimViewer = document.getElementById('zim-viewer-container');
+        if (zimViewer) zimViewer.style.display = 'none';
+
+        const hubMainContainer = document.getElementById('hub-main-container');
+        if (hubMainContainer && targetId === 'knowledge-hub-view') {
+            hubMainContainer.style.display = 'block';
+        }
+        const hubHeader = document.querySelector('#knowledge-hub-view .view-header');
+        if (hubHeader && targetId === 'knowledge-hub-view') {
+            hubHeader.style.display = 'flex';
+        }
+
+        // 2. Clear inline display overrides on all view-section elements & toggle active class
+        viewSections.forEach(sec => {
+            sec.style.display = '';
+            sec.classList.toggle('active', sec.id === targetId);
+        });
         navButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.target === targetId));
-        viewSections.forEach(sec => sec.classList.toggle('active', sec.id === targetId));
+
+        // 3. Manage contextual Right Sidebar Inspector content per active tab
+        if (targetId === 'home-view' || targetId === 'dashboard-view') {
+            if (typeof window.renderStudyTopicsInspector === 'function') {
+                window.renderStudyTopicsInspector(null, false);
+            }
+        } else if (targetId === 'quiz-view') {
+            if (window.currentQuiz && Array.isArray(window.currentQuiz.questions) && window.currentQuiz.questions[window.currentIndex]) {
+                if (typeof window.updateInspectorForQuestion === 'function') {
+                    window.updateInspectorForQuestion(window.currentQuiz.questions[window.currentIndex]);
+                }
+            } else {
+                if (typeof window.closeInspector === 'function') {
+                    window.closeInspector();
+                }
+            }
+        } else if (targetId === 'knowledge-hub-view') {
+            if (typeof window.renderHubInspectorIfActive === 'function') {
+                window.renderHubInspectorIfActive();
+            } else if (typeof window.closeInspector === 'function') {
+                window.closeInspector();
+            }
+        } else {
+            // Tabs without sidebar content (settings-view, rag-vault-view, habit-tracker-view, expertise-view, queue-view)
+            if (typeof window.closeInspector === 'function') {
+                window.closeInspector();
+            }
+        }
     };
 
     navButtons.forEach(btn => {

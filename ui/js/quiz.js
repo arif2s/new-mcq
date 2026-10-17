@@ -476,6 +476,8 @@ function renderTopicVerificationModalDOM() {
     const modalCard = modal.querySelector('.glass-modal');
     if (!modalCard) return;
 
+    const prevScrollTop = document.getElementById('topic-editor-content')?.scrollTop || 0;
+
     modalCard.innerHTML = `
         <div class="p-5 border-b border-gray-700 flex justify-between items-center glass-panel rounded-t-24">
             <div>
@@ -661,6 +663,11 @@ function renderTopicVerificationModalDOM() {
             addCustomTopic();
         }
     });
+
+    const newContent = document.getElementById('topic-editor-content');
+    if (newContent) {
+        newContent.scrollTop = prevScrollTop;
+    }
 
     // Close button -> Auto-save draft to Hub
     document.getElementById('close-topic-editor-btn')?.addEventListener('click', () => {
