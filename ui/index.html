@@ -100,9 +100,9 @@
             </button>
           </li>
           <li>
-            <button type="button" class="nav-btn" data-target="home-view" title="MCQ Extractor">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 7 4 4 20 4 20 7"></polyline><line x1="9" y1="20" x2="15" y2="20"></line><line x1="12" y1="4" x2="12" y2="20"></line></svg>
-              <span class="sidebar-text">MCQ Extractor</span>
+            <button type="button" class="nav-btn" data-target="home-view" title="Test Features">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2v7.31M14 2v7.31M8.5 2h7M14 9.3l4.38 7.3a2 2 0 0 1-1.72 3h-9.32a2 2 0 0 1-1.72-3L10 9.3"></path></svg>
+              <span class="sidebar-text">Test Features</span>
             </button>
           </li>
           <li>
@@ -186,33 +186,131 @@
           </div>
         </section>
 
-        <!-- MCQ EXTRACTOR VIEW -->
+        <!-- TEST FEATURES VIEW -->
         <section id="home-view" class="view-section fade-enter">
           <div class="w-full">
             <header class="view-header">
-              <h2>Medical Entity Extractor &amp; MCQ Analyzer</h2>
-              <p class="subtitle">Extract canonical medical topics (medSpaCy + ZIM synonyms) and inspect synthesized notes.</p>
+              <h2>Pipeline Test Features &amp; Diagnostics</h2>
+              <p class="subtitle">Individually inspect, test, analyze, and optimize each pipeline engine, model, database, document extractor, and rendering component.</p>
             </header>
 
-            <div class="card glass-card">
-              <label for="mcq-text" class="sr-only">MCQ Input Text</label>
-              <textarea id="mcq-text" class="glass-input large-textarea" aria-label="MCQ stem and options text" placeholder="Enter MCQ stem and options here...">A 68-year-old patient presents with dyspnea and amyloidosis of the heart, but no asthma. They were prescribed amoxicillin after a heart attack.</textarea>
-              <div class="action-bar">
-                <button type="button" id="extract-btn" class="primary-btn pulse-on-hover">Extract Entities</button>
+            <!-- Main Grid View of Test Cards -->
+            <div id="test-features-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <!-- Card 1: PDF Extraction -->
+              <div class="card glass-card hover:border-brand-500/50 transition-all cursor-pointer flex flex-col justify-between" data-feature="pdf-extractor">
+                <div>
+                  <div class="flex items-center justify-between mb-3">
+                    <span class="p-2.5 rounded-xl bg-brand-500/10 text-brand-400 font-bold flex items-center gap-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                      PDF Extraction &amp; Layout
+                    </span>
+                    <span class="text-xs px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-semibold">Parsers</span>
+                  </div>
+                  <p class="text-sm text-muted mb-4">Compare PyMuPDF (Fitz) text slicing vs Docling ML layout parsing vs PyMuPDF heuristic font-size headings page-by-page.</p>
+                </div>
+                <button type="button" class="primary-btn text-xs py-2 w-full flex items-center justify-center gap-2">
+                  Inspect PDF Extractor &rarr;
+                </button>
+              </div>
+
+              <!-- Card 2: Database Querying -->
+              <div class="card glass-card hover:border-brand-500/50 transition-all cursor-pointer flex flex-col justify-between" data-feature="db-queries">
+                <div>
+                  <div class="flex items-center justify-between mb-3">
+                    <span class="p-2.5 rounded-xl bg-purple-500/10 text-purple-400 font-bold flex items-center gap-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                      Database &amp; Retrieval Queries
+                    </span>
+                    <span class="text-xs px-2.5 py-1 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-semibold">Vector &amp; Lexical</span>
+                  </div>
+                  <p class="text-sm text-muted mb-4">Run test queries against LanceDB (Vector + FTS), Tantivy BM25, ZIM Wikipedia archives, and SciSpaCy UMLS/Ontology SQLite.</p>
+                </div>
+                <button type="button" class="primary-btn text-xs py-2 w-full flex items-center justify-center gap-2">
+                  Query Databases &rarr;
+                </button>
+              </div>
+
+              <!-- Card 3: Topic Extractor -->
+              <div class="card glass-card hover:border-brand-500/50 transition-all cursor-pointer flex flex-col justify-between" data-feature="topic-extractor">
+                <div>
+                  <div class="flex items-center justify-between mb-3">
+                    <span class="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 font-bold flex items-center gap-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+                      Medical Entity &amp; Topic Extractor
+                    </span>
+                    <span class="text-xs px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">Clinical NLP</span>
+                  </div>
+                  <p class="text-sm text-muted mb-4">Extract medSpaCy clinical entities and ZIM synonyms from MCQ stems, test variant expansions, and inspect generated dossier summaries.</p>
+                </div>
+                <button type="button" class="primary-btn text-xs py-2 w-full flex items-center justify-center gap-2">
+                  Test Topic Extractor &rarr;
+                </button>
+              </div>
+
+              <!-- Card 4: AI Models & Diagnostics -->
+              <div class="card glass-card hover:border-brand-500/50 transition-all cursor-pointer flex flex-col justify-between" data-feature="models-diagnostics">
+                <div>
+                  <div class="flex items-center justify-between mb-3">
+                    <span class="p-2.5 rounded-xl bg-amber-500/10 text-amber-400 font-bold flex items-center gap-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="15" x2="23" y2="15"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="15" x2="4" y2="15"></line></svg>
+                      AI Models &amp; Hardware Diagnostics
+                    </span>
+                    <span class="text-xs px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">Zero-VRAM</span>
+                  </div>
+                  <p class="text-sm text-muted mb-4">Inspect SapBERT, 384d MiniLM CPU Embeddings, FlashRank Cross-Encoder, SciSpaCy NER, and LM Studio server connectivity.</p>
+                </div>
+                <button type="button" class="primary-btn text-xs py-2 w-full flex items-center justify-center gap-2">
+                  Run Diagnostics &rarr;
+                </button>
+              </div>
+
+              <!-- Card 5: UI & Citation Rendering -->
+              <div class="card glass-card hover:border-brand-500/50 transition-all cursor-pointer flex flex-col justify-between" data-feature="ui-rendering">
+                <div>
+                  <div class="flex items-center justify-between mb-3">
+                    <span class="p-2.5 rounded-xl bg-cyan-500/10 text-cyan-400 font-bold flex items-center gap-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                      UI Rendering &amp; Citations Test
+                    </span>
+                    <span class="text-xs px-2.5 py-1 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-semibold">Frontend</span>
+                  </div>
+                  <p class="text-sm text-muted mb-4">Test Markdown rendering, KaTeX math formulas, DOMPurify HTML sanitization, and interactive PDF, Obsidian, and ZIM citations.</p>
+                </div>
+                <button type="button" class="primary-btn text-xs py-2 w-full flex items-center justify-center gap-2">
+                  Test UI Renderer &rarr;
+                </button>
+              </div>
+
+              <!-- Card 6: Synthesis Pipeline Steps -->
+              <div class="card glass-card hover:border-brand-500/50 transition-all cursor-pointer flex flex-col justify-between" data-feature="pipeline-runner">
+                <div>
+                  <div class="flex items-center justify-between mb-3">
+                    <span class="p-2.5 rounded-xl bg-rose-500/10 text-rose-400 font-bold flex items-center gap-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+                      Synthesis Pipeline Step Runner
+                    </span>
+                    <span class="text-xs px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 font-semibold">RAG Pipeline</span>
+                  </div>
+                  <p class="text-sm text-muted mb-4">Run and trace individual steps of 1-2-3 synthesis: Step 1 Retrieval &amp; Rerank, Step 2 Prompt Construction, Step 3 LLM Synthesis.</p>
+                </div>
+                <button type="button" class="primary-btn text-xs py-2 w-full flex items-center justify-center gap-2">
+                  Trace Pipeline &rarr;
+                </button>
               </div>
             </div>
 
-            <div class="card glass-card topics-section">
-              <h3>Extracted Medical Topics</h3>
-              <p class="text-xs text-muted mb-2">Green underlined chips are verified clinical entities. Click any chip to load its synthesis and reference links.</p>
-              <div id="topics-container" class="chip-container"></div>
-            </div>
-
-            <div class="card glass-card explanation-section mt-20">
-              <h3>Topic Synthesis &amp; Reference Preview</h3>
-              <div id="explanation-container" class="content-placeholder prose max-w-none">
-                <p>Extract entities above and click a topic chip to view its clinical synthesis.</p>
+            <!-- Central Sub-View Expansion Detail Container -->
+            <div id="test-feature-detail-container" class="hidden mt-6">
+              <div class="flex items-center justify-between mb-6 pb-4 border-b border-gray-700/50">
+                <button type="button" id="test-feature-back-btn" class="secondary-btn text-xs px-4 py-2 flex items-center gap-2 rounded-xl">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+                  Back to Test Features Grid
+                </button>
+                <h3 id="test-feature-detail-title" class="text-lg font-bold text-brand-300">Feature Test Workspace</h3>
               </div>
+
+              <!-- Dynamic Central View Content -->
+              <div id="test-feature-detail-content"></div>
             </div>
           </div>
         </section>
@@ -907,6 +1005,7 @@
     <!-- APPLICATION SCRIPTS (STRICT LOADING ORDER) -->
     <script src="/js/state.js" defer></script>
     <script src="/js/app.js" defer></script>
+    <script src="/js/test_features.js" defer></script>
     <script src="/js/dashboard.js" defer></script>
     <script src="/js/quiz.js" defer></script>
     <script src="/js/hub.js" defer></script>

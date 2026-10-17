@@ -539,3 +539,98 @@ async def build_zim_dict():
         return {"status": "success", "total_entries": total_entries}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+class TestPdfExtractPayload(BaseModel):
+    file_path: Optional[str] = None
+    page_number: int = 1
+    engine: str = "fitz"
+
+
+@router.post("/test_pdf_extract")
+def test_pdf_extract(payload: TestPdfExtractPayload):
+    """
+    Tests PDF extraction engines (PyMuPDF Fitz, Docling ML, or PyMuPDF Heuristic Headings)
+    page-by-page for side-by-side verification and manual optimization.
+    """
+    import parsers.pdf_extractor as pdf_ext
+    import parsers.docling_parser as docling_ext
+
+    available_pdfs = []
+    try:
+        with closing(get_db_connection()) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, name, path FROM knowledge_sources WHERE type = 'pdf'")
+            rows = cursor.fetchall()
+            for r in rows:
+                p = Path(r["path"])
+                if p.exists() and p.is_file():
+                    available_pdfs.append({"id": str(r["id"]), "name": r["name"] or p.name, "path": str(p)})
+    except Exception as e:
+        logger.warning(f"Error querying PDF sources: {e}")
+
+    if not available_pdfs and Path("data").exists():
+        for f in Path("data").rglob("*.pdf"):
+            available_pdfs.append({"id": str(f), "name": f.name, "path": str(f)})
+
+    target_path = None
+    if payload.file_path and payload.file_path.strip():
+        req_p = Path(payload.file_path.strip())
+        if req_p.exists() and req_p.is_file():
+            target_path = req_p
+
+    if not target_path and available_pdfs:
+        target_path = Path(available_pdfs[0]["path"])
+
+    if not target_path:
+        return {
+            "status": "error",
+            "message": "No valid PDF file provided or found in sources. Please add a PDF source or specify a valid path.",
+            "available_pdfs": available_pdfs,
+        }
+
+    try:
+        page_count = 0
+        if pdf_ext.fitz:
+            with pdf_ext.fitz.open(str(target_path)) as doc:
+                page_count = doc.page_count
+
+        page_num = max(1, min(payload.page_number, page_count if page_count > 0 else 1))
+        engine_used = payload.engine.lower().strip()
+        extracted_text = ""
+        heading_path = ""
+        subheading = ""
+
+        if engine_used == "docling":
+            extracted_text = docling_ext.extract_structured_layout(str(target_path), page_num)
+        elif engine_used == "headings" and pdf_ext.fitz and page_count > 0:
+            with pdf_ext.fitz.open(str(target_path)) as doc:
+                page_idx = page_num - 1
+                if 0 <= page_idx < doc.page_count:
+                    res = pdf_ext.extract_page_with_headings(doc[page_idx], default_title=target_path.stem)
+                    extracted_text = res.get("text", "")
+                    heading_path = res.get("heading_path", "")
+                    subheading = res.get("subheading", "")
+        else:
+            engine_used = "fitz"
+            extracted_text = pdf_ext.extract_page_slice(str(target_path), page_num)
+
+        return {
+            "status": "success",
+            "file_path": str(target_path),
+            "file_name": target_path.name,
+            "page_number": page_num,
+            "total_pages": page_count,
+            "engine": engine_used,
+            "extracted_text": extracted_text,
+            "heading_path": heading_path,
+            "subheading": subheading,
+            "available_pdfs": available_pdfs,
+        }
+    except Exception as e:
+        logger.error(f"test_pdf_extract error: {e}")
+        return {
+            "status": "error",
+            "message": f"Extraction failed: {str(e)}",
+            "available_pdfs": available_pdfs,
+        }

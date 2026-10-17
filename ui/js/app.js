@@ -554,8 +554,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (targetId === 'knowledge-hub-view' && typeof window.loadSessions === 'function') {
                 window.loadSessions();
             }
-            if (targetId === 'home-view' && typeof window.renderStudyTopicsInspector === 'function') {
-                window.renderStudyTopicsInspector(null, true);
+            if (targetId === 'home-view') {
+                if (typeof window.initTestFeatures === 'function') {
+                    window.initTestFeatures();
+                }
+                if (typeof window.renderStudyTopicsInspector === 'function') {
+                    window.renderStudyTopicsInspector(null, true);
+                }
             }
         });
     });
@@ -842,70 +847,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.target === helpModal) helpModal.style.display = 'none';
     });
 
-    // Standalone MCQ Entity Extractor Tab (#home-view)
-    const extractBtn = document.getElementById('extract-btn');
-    if (extractBtn) {
-        extractBtn.addEventListener('click', async () => {
-            const textEl = document.getElementById('mcq-text');
-            const chipsContainer = document.getElementById('topics-container');
-            const expContainer = document.getElementById('explanation-container');
-            if (!textEl || !textEl.value.trim()) return;
-
-            extractBtn.disabled = true;
-            extractBtn.textContent = 'Extracting...';
-            try {
-                const res = await fetch('/api/mcq/topics/extract', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mcq_text: textEl.value.trim() })
-                });
-                const data = await res.json();
-                const details = data.topic_details || (data.topics || []).map(t => ({ name: t, verified: true }));
-                const topicNames = details.map(d => d.name).filter(Boolean);
-
-                if (chipsContainer) {
-                    chipsContainer.innerHTML = details.map(d => `
-                        <span class="topic-chip ${d.verified ? 'border-success-500 underline decoration-success-500 font-semibold' : 'opacity-60'}"
-                              data-topic="${window.escapeHTML(d.name)}"
-                              title="${d.verified ? 'Verified Medical Topic (Click to view references)' : 'Unverified / Doubtful Topic'}">
-                            ${window.escapeHTML(d.name)}
-                        </span>
-                    `).join('');
-
-                    chipsContainer.querySelectorAll('.topic-chip').forEach(chip => {
-                        chip.addEventListener('click', async () => {
-                            const topic = chip.dataset.topic;
-                            if (!topic) return;
-                            const sRes = await fetch(`/api/mcq/synthesis?topic=${encodeURIComponent(topic)}`);
-                            if (sRes.ok) {
-                                const sData = await sRes.json();
-                                if (expContainer) {
-                                    expContainer.classList.remove('content-placeholder');
-                                    window.renderMarkdownAndMath(
-                                        sData.unified_article || sData.enhanced_explanation || `References resolved for **${topic}**.`,
-                                        expContainer
-                                    );
-                                }
-                            }
-                        });
-                    });
-                }
-
-                if (typeof window.renderStudyTopicsInspector === 'function') {
-                    window.renderStudyTopicsInspector(topicNames, true);
-                }
-            } catch (e) {
-                console.error('Entity extraction failed:', e);
-            } finally {
-                extractBtn.disabled = false;
-                extractBtn.textContent = 'Extract Entities';
-            }
-        });
-    }
-
-    // Initialize Study Topics Inspector on load if on #home-view
+    // Initialize Test Features Tab (#home-view)
     if (document.getElementById('home-view')?.classList.contains('active')) {
-        window.renderStudyTopicsInspector(['Amyloidosis', 'Amoxicillin', 'Myocardial Infarction'], true);
+        if (typeof window.initTestFeatures === 'function') {
+            window.initTestFeatures();
+        }
+        if (typeof window.renderStudyTopicsInspector === 'function') {
+            window.renderStudyTopicsInspector(['Amyloidosis', 'Amoxicillin', 'Myocardial Infarction'], true);
+        }
     }
 
     // Global Click Delegation for PDF, Obsidian, and ZIM Citations

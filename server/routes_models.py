@@ -1059,3 +1059,53 @@ async def diagnostic_all() -> Dict[str, Any]:
         "tantivy": tantivy,
         "linkers": linkers,
     }
+
+
+class TestEmbedPayload(BaseModel):
+    text: str = Field(..., description="Text input to embed")
+
+
+class TestRerankPayload(BaseModel):
+    query: str = Field(..., description="Search query")
+    passages: List[str] = Field(..., description="List of passages to rerank")
+
+
+@router.post("/test_embed")
+async def test_embed_model(payload: TestEmbedPayload):
+    """Generates 384d CPU MiniLM embedding for input text and measures CPU latency."""
+    try:
+        from parsers.embedding_engine import CPUEmbeddingEngine
+        embedder = CPUEmbeddingEngine()
+        t0 = time.perf_counter()
+        vector = embedder.embed_single(payload.text)
+        t1 = time.perf_counter()
+        elapsed_ms = round((t1 - t0) * 1000, 2)
+        return {
+            "status": "success",
+            "dimension": len(vector) if vector else 0,
+            "sample_vector": vector[:5] if vector else [],
+            "latency_ms": elapsed_ms,
+            "vram_usage_mb": 0.0
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@router.post("/test_rerank")
+async def test_rerank_model(payload: TestRerankPayload):
+    """Reranks input passages against a query using FlashRank cross-encoder and measures latency."""
+    try:
+        from parsers.reranker import rerank_chunks
+        chunks = [{"child_content": p, "id": i} for i, p in enumerate(payload.passages)]
+        t0 = time.perf_counter()
+        reranked = rerank_chunks(payload.query, chunks, top_k=len(chunks))
+        t1 = time.perf_counter()
+        elapsed_ms = round((t1 - t0) * 1000, 2)
+        return {
+            "status": "success",
+            "results": reranked,
+            "latency_ms": elapsed_ms,
+            "vram_usage_mb": 0.0
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
