@@ -44,28 +44,49 @@ def perform_search(req: SearchRequest) -> Dict[str, Any]:
             "candidates": [],
         }
 
-    # 1. Query LanceDB (Semantic + FTS) if offline model is available
+    try:
+        from agents.topic_extractor import get_topic_aliases
+        topic_aliases = get_topic_aliases(query)
+    except Exception:
+        topic_aliases = [query]
+        if "," in query:
+            parts = [p.strip() for p in query.split(",") if p.strip()]
+            if len(parts) == 2:
+                topic_aliases.append(f"{parts[1]} {parts[0]}")
+
+    # 1. Query LanceDB (Semantic + FTS across topic aliases) if offline model is available
     vec_results: List[Dict[str, Any]] = []
     fts_results: List[Dict[str, Any]] = []
+    primary_query = topic_aliases[0] if topic_aliases else query
     if is_embedding_model_downloaded(embedder.model_id):
-        query_vector = embedder.embed_single(query)
+        query_vector = embedder.embed_single(primary_query)
         if query_vector:
             vec_results = lancedb_engine.vector_search(query_vector, limit=25)
+
     fts_results = lancedb_engine.fts_search(query, limit=25)
+    for alias_q in topic_aliases[1:3]:
+        if len(fts_results) >= 25:
+            break
+        extra_fts = lancedb_engine.fts_search(alias_q, limit=15)
+        seen_ids = {r.get("id") for r in fts_results if r.get("id")}
+        for r in extra_fts:
+            if r.get("id") not in seen_ids:
+                fts_results.append(r)
+                seen_ids.add(r.get("id"))
 
     # 2. Query Tantivy + >10GB ZIM Direct B-Tree
     tantivy_results = search_index(query, limit_per_source=8)
 
     combined: Dict[str, Dict[str, Any]] = {}
-    q_lower = query.lower()
-    q_terms = {t for t in q_lower.split() if len(t) >= 2}
+    q_lowers = [a.lower() for a in topic_aliases[:3]]
+    q_terms = {t for a in q_lowers for t in a.split() if len(t) >= 2}
 
     def _calc_depth_bonus(text: str, heading: str, art_len: int) -> float:
         t_low = (text or "").lower()
         h_low = (heading or "").lower()
-        mentions = t_low.count(q_lower) if len(q_lower) >= 3 else 0
+        mentions = sum(t_low.count(ql) for ql in q_lowers if len(ql) >= 3)
         term_hits = sum(t_low.count(w) for w in q_terms)
-        h_match = 3.0 if q_lower in h_low else 0.0
+        h_match = 3.0 if any(ql in h_low for ql in q_lowers) else 0.0
         len_bonus = math.log10(max(art_len, len(text), 10)) * 1.2
         density_bonus = min(mentions * 1.5 + term_hits * 0.3, 8.0)
         return h_match + len_bonus + density_bonus

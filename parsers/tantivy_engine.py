@@ -114,16 +114,27 @@ def _compute_depth_score(
 def search_index(query_str: str, limit_per_source: int = 3) -> Dict[str, List[Dict[str, Any]]]:
     """
     Executes a depth-weighted hybrid lexical + semantic reranked search across
-    Obsidian notes, PDF textbooks, and >10GB ZIM archives.
+    Obsidian notes, PDF textbooks, and >10GB ZIM archives using topic alias expansion.
     """
     results: Dict[str, List[Dict[str, Any]]] = {"obsidian": [], "pdf": [], "zim": []}
     if not query_str or not query_str.strip():
         return results
 
-    expanded_query_str = expand_query_via_zim(query_str)
+    try:
+        from agents.topic_extractor import get_topic_aliases
+        topic_aliases = get_topic_aliases(query_str)
+    except Exception:
+        topic_aliases = [query_str]
+        if "," in query_str:
+            parts = [p.strip() for p in query_str.split(",") if p.strip()]
+            if len(parts) == 2:
+                topic_aliases.append(f"{parts[1]} {parts[0]}")
+
+    primary_query = topic_aliases[0] if topic_aliases else query_str
+    expanded_query_str = expand_query_via_zim(primary_query)
+
     safe_query = re.sub(r"[^\w\s]", " ", expanded_query_str)
     safe_query = re.sub(r"\s+", " ", safe_query).strip()
-    clean_raw_query = re.sub(r"[^\w\s]", " ", query_str).strip()
 
     if not safe_query:
         return results
@@ -135,23 +146,37 @@ def search_index(query_str: str, limit_per_source: int = 3) -> Dict[str, List[Di
             searcher = index.searcher()
             search_fields = ["title", "heading_path", "snippet", "document_body", "obsidian_body"]
 
-            word_count = len(clean_raw_query.split())
+            # Build boosted multi-alias Tantivy query
+            alias_clauses = []
+            for idx, alias_item in enumerate(topic_aliases[:5]):
+                c_alias = re.sub(r"[^\w\s]", " ", alias_item).strip()
+                if not c_alias:
+                    continue
+                w = max(6 - idx * 2, 2)
+                alias_clauses.append(
+                    f'title:"{c_alias}"^{w} OR heading_path:"{c_alias}"^{max(w-1, 1)} '
+                    f'OR document_body:"{c_alias}"^2 OR obsidian_body:"{c_alias}"^2'
+                )
+
+            if alias_clauses:
+                boosted = f"({' OR '.join(alias_clauses)}) OR {safe_query}"
+            else:
+                boosted = safe_query
+
             try:
-                if word_count <= 3 and clean_raw_query:
-                    boosted = (
-                        f'title:"{clean_raw_query}"^6 OR heading_path:"{clean_raw_query}"^5 '
-                        f'OR document_body:"{clean_raw_query}"^3 OR obsidian_body:"{clean_raw_query}"^3 '
-                        f'OR {safe_query}'
-                    )
-                    query = index.parse_query(boosted, search_fields)
-                else:
-                    query = index.parse_query(safe_query, search_fields)
+                query = index.parse_query(boosted, search_fields)
             except Exception:
                 query = index.parse_query(safe_query, ["title", "document_body", "obsidian_body"])
 
             top_docs = searcher.search(query, limit=60)
             candidates = []
-            query_terms = {t for t in clean_raw_query.lower().split() if len(t) >= 2}
+
+            # Gather all terms across aliases for depth scoring
+            all_query_terms = set()
+            for a_item in topic_aliases[:5]:
+                for t in re.sub(r"[^\w\s]", " ", a_item).lower().split():
+                    if len(t) >= 2:
+                        all_query_terms.add(t)
 
             for bm25_score, doc_address in top_docs.hits:
                 doc = searcher.doc(doc_address)
@@ -178,8 +203,8 @@ def search_index(query_str: str, limit_per_source: int = 3) -> Dict[str, List[Di
 
                 comp_score, depth_bonus = _compute_depth_score(
                     bm25_score=bm25_score,
-                    query_str=clean_raw_query,
-                    query_terms=query_terms,
+                    query_str=primary_query,
+                    query_terms=all_query_terms,
                     title=title,
                     heading_path=heading_path,
                     body_text=body_text,
@@ -201,7 +226,7 @@ def search_index(query_str: str, limit_per_source: int = 3) -> Dict[str, List[Di
 
             candidates.sort(key=lambda x: x["score"], reverse=True)
 
-            # Stage 2: Cross-Encoder Reranking (with automatic fallback to composite depth score)
+            # Stage 2: Cross-Encoder Reranking
             top_candidates = candidates[:24]
             reranked = rerank_chunks(query_str, top_candidates, top_k=24) if top_candidates else []
 

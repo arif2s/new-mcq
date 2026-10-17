@@ -408,6 +408,36 @@ ORGAN_TO_ADJECTIVE: Dict[str, str] = {
     "appendix": "appendiceal",
 }
 
+ADJECTIVE_TO_ORGAN: Dict[str, str] = {
+    "cardiac": "heart",
+    "renal": "kidney",
+    "hepatic": "liver",
+    "pulmonary": "lung",
+    "cerebral": "brain",
+    "pancreatic": "pancreas",
+    "gastric": "stomach",
+    "splenic": "spleen",
+    "intestinal": "intestine",
+    "colonic": "colon",
+    "rectal": "rectum",
+    "thyroid": "thyroid",
+    "adrenal": "adrenal",
+    "osseous": "bone",
+    "cutaneous": "skin",
+    "ocular": "eye",
+    "aortic": "aorta",
+    "pericardial": "pericardium",
+    "pleural": "pleura",
+    "peritoneal": "peritoneum",
+    "prostatic": "prostate",
+    "ovarian": "ovary",
+    "uterine": "uterus",
+    "cervical": "cervix",
+    "mammary": "breast",
+    "biliary": "gallbladder",
+    "appendiceal": "appendix",
+}
+
 PREPOSITIONAL_PATHOLOGY_REGEX = re.compile(
     r"\b([A-Za-z]{3,}(?:\s+[A-Za-z]{3,})?)\s+of\s+(?:the\s+)?([A-Za-z]{3,}(?:\s+[A-Za-z]{3,})?)\b",
     re.IGNORECASE,
@@ -645,58 +675,171 @@ def extract_clinical_modifiers(text: str) -> Dict[str, str]:
 
 
 def generate_candidate_variants(term: str) -> List[str]:
-    """Generates acronym, organ-adjective, and prepositional variants."""
+    """Generates acronym, organ-adjective, prepositional, and comma-inverted variants."""
     raw = term.strip()
     if not raw:
         return []
 
     variants: List[str] = [raw]
 
-    # Acronym expansion
+    # Comma-inversion (e.g. "transplantation, renal" -> "renal transplantation")
+    if "," in raw:
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        if len(parts) == 2:
+            inverted = f"{parts[1]} {parts[0]}"
+            if inverted not in variants:
+                variants.append(inverted)
+        elif len(parts) > 2:
+            inverted = " ".join(reversed(parts))
+            if inverted not in variants:
+                variants.append(inverted)
+
+    # Reverse acronym expansion & contraction
     upper = raw.upper()
     if upper in CLINICAL_ACRONYMS:
         exp = CLINICAL_ACRONYMS[upper]
         if exp not in variants:
             variants.append(exp)
 
+    raw_lower = raw.lower()
+    for acr, exp in CLINICAL_ACRONYMS.items():
+        if exp.lower() == raw_lower and acr not in variants:
+            variants.append(acr)
+
     # Strip leading articles
     clean = re.sub(r"^(the|a|an)\s+", "", raw, flags=re.IGNORECASE).strip()
     if clean and clean not in variants:
         variants.append(clean)
 
-    clean_lower = clean.lower()
+    if "," in clean:
+        parts = [p.strip() for p in clean.split(",") if p.strip()]
+        if len(parts) == 2:
+            inv = f"{parts[1]} {parts[0]}"
+            if inv not in variants:
+                variants.append(inv)
 
-    # 1. Prepositional transposition: "amyloidosis of the heart" -> "cardiac amyloidosis"
-    prep_match = PREPOSITIONAL_PATHOLOGY_REGEX.search(clean)
-    if prep_match:
-        condition = prep_match.group(1).strip()
-        organ = prep_match.group(2).strip().lower()
-        if organ in ORGAN_TO_ADJECTIVE:
-            adj = ORGAN_TO_ADJECTIVE[organ]
-            v = f"{adj} {condition}".strip()
+    current_terms = list(variants)
+    for c_term in current_terms:
+        c_lower = c_term.lower()
+
+        # 1. Prepositional transposition: "amyloidosis of the heart" -> "cardiac amyloidosis"
+        prep_match = PREPOSITIONAL_PATHOLOGY_REGEX.search(c_term)
+        if prep_match:
+            condition = prep_match.group(1).strip()
+            organ = prep_match.group(2).strip().lower()
+            if organ in ORGAN_TO_ADJECTIVE:
+                adj = ORGAN_TO_ADJECTIVE[organ]
+                v = f"{adj} {condition}".strip()
+                if v not in variants:
+                    variants.append(v)
+
+        # 2. Organ-to-Adjective transposition: "heart amyloidosis" or "amyloidosis heart"
+        for org, adj in ORGAN_TO_ADJECTIVE.items():
+            if c_lower.startswith(f"{org} "):
+                rem = c_term[len(org) + 1:].strip()
+                v = f"{adj} {rem}".strip()
+                if v not in variants:
+                    variants.append(v)
+            elif c_lower.endswith(f" {org}"):
+                rem = c_term[:-(len(org) + 1)].strip()
+                v = f"{adj} {rem}".strip()
+                if v not in variants:
+                    variants.append(v)
+
+        # 3. Adjective-to-Organ transposition: "renal transplantation" -> "kidney transplantation"
+        for adj, org in ADJECTIVE_TO_ORGAN.items():
+            if c_lower.startswith(f"{adj} "):
+                rem = c_term[len(adj) + 1:].strip()
+                v = f"{org} {rem}".strip()
+                if v not in variants:
+                    variants.append(v)
+            elif c_lower.endswith(f" {adj}"):
+                rem = c_term[:-(len(adj) + 1)].strip()
+                v = f"{rem} {org}".strip()
+                if v not in variants:
+                    variants.append(v)
+
+        # 4. Common clinical verb/noun synonyms: "transplantation" <-> "transplant"
+        if "transplantation" in c_lower:
+            v = re.sub(r"\btransplantation\b", "transplant", c_term, flags=re.IGNORECASE).strip()
+            if v not in variants:
+                variants.append(v)
+        elif "transplant" in c_lower and "transplantation" not in c_lower:
+            v = re.sub(r"\btransplant\b", "transplantation", c_term, flags=re.IGNORECASE).strip()
             if v not in variants:
                 variants.append(v)
 
-    # 2. Prefix / suffix organ transposition: "heart amyloidosis" or "amyloidosis heart"
-    for org, adj in ORGAN_TO_ADJECTIVE.items():
-        if clean_lower.startswith(f"{org} "):
-            rem = clean[len(org) + 1:].strip()
-            v = f"{adj} {rem}".strip()
+        if "insufficiency" in c_lower:
+            v = re.sub(r"\binsufficiency\b", "failure", c_term, flags=re.IGNORECASE).strip()
             if v not in variants:
                 variants.append(v)
-        elif clean_lower.endswith(f" {org}"):
-            rem = clean[:-(len(org) + 1)].strip()
-            v = f"{adj} {rem}".strip()
+        elif "failure" in c_lower:
+            v = re.sub(r"\bfailure\b", "insufficiency", c_term, flags=re.IGNORECASE).strip()
             if v not in variants:
                 variants.append(v)
 
-    # 3. Eponym apostrophe variations
-    if "'" in clean or "’" in clean:
-        no_apos = re.sub(r"['’]s?\b", "", clean).strip()
-        if no_apos and no_apos not in variants:
-            variants.append(no_apos)
+        # 5. Eponym apostrophe variations
+        if "'" in c_term or "’" in c_term:
+            no_apos = re.sub(r"['’]s?\b", "", c_term).strip()
+            if no_apos and no_apos not in variants:
+                variants.append(no_apos)
 
     return variants
+
+
+def get_topic_aliases(term: str) -> List[str]:
+    """
+    Comprehensive topic alias resolver.
+    Returns primary term, candidate variants (transpositions, inverted forms, acronyms),
+    UMLS/Ontology synonyms (via get_concept_aliases), and ZIM redirects/canonical titles.
+    """
+    if not term or not term.strip():
+        return []
+
+    raw = term.strip()
+    seen = set()
+    aliases: List[str] = []
+
+    def _add(a: str):
+        if not a:
+            return
+        a_clean = re.sub(r"^(the|a|an)\s+", "", a.strip(), flags=re.IGNORECASE).strip()
+        a_low = a_clean.lower()
+        if a_clean and len(a_clean) >= 2 and a_low not in seen:
+            seen.add(a_low)
+            aliases.append(a_clean)
+
+    # 1. Primary term and candidate variants
+    variants = generate_candidate_variants(raw)
+    for v in variants:
+        _add(v)
+
+    # 2. UMLS / KB Concept Aliases
+    try:
+        from parsers.scispacy_linker_engine import get_concept_aliases
+        for v in list(variants[:4]):
+            kb_aliases = get_concept_aliases(v)
+            for ka in kb_aliases:
+                _add(ka)
+                for ka_v in generate_candidate_variants(ka):
+                    _add(ka_v)
+    except Exception as e:
+        logger.debug(f"get_topic_aliases KB error: {e}")
+
+    # 3. ZIM Resolution
+    try:
+        from parsers.zim_reader import resolve_zim_topic
+        for v in list(variants[:3]):
+            zim_res = resolve_zim_topic(v)
+            if zim_res.get("matched") and zim_res.get("canonical_title"):
+                can = zim_res["canonical_title"]
+                _add(can)
+                for can_v in generate_candidate_variants(can):
+                    _add(can_v)
+    except Exception as e:
+        logger.debug(f"get_topic_aliases ZIM error: {e}")
+
+    return aliases
 
 
 def canonicalize_clinical_phrase(raw_phrase: str) -> Tuple[str, str]:

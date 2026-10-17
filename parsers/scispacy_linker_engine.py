@@ -114,10 +114,70 @@ def normalize_alias(text: str) -> str:
     raw = text.strip()
     if "," in raw and raw.count(",") == 1:
         parts = [p.strip() for p in raw.split(",")]
-        if len(parts) == 2 and len(parts[0].split()) <= 2 and len(parts[1].split()) <= 2:
+        if len(parts) == 2 and len(parts[0].split()) <= 4 and len(parts[1].split()) <= 4:
             raw = f"{parts[1]} {parts[0]}"
     cleaned = re.sub(r"[^a-z0-9]+", " ", raw.lower()).strip()
     return re.sub(r"\s+", " ", cleaned)
+
+
+def get_concept_aliases(term: str) -> List[str]:
+    """
+    Looks up all aliases, synonyms, and canonical names for a concept in ontology_kb.db
+    given a term or concept identifier.
+    """
+    if not term or not term.strip():
+        return []
+
+    norm = normalize_alias(term)
+    aliases: List[str] = []
+    seen = set()
+
+    def _add(a: str):
+        if not a:
+            return
+        a_clean = a.strip()
+        a_low = a_clean.lower()
+        if a_clean and a_low not in seen:
+            seen.add(a_low)
+            aliases.append(a_clean)
+
+    if ONTOLOGY_DB_PATH.exists():
+        try:
+            with closing(_get_ontology_db_conn()) as conn:
+                cur = conn.cursor()
+                # 1. Look up CUI via alias_norm
+                cur.execute(
+                    "SELECT cui, canonical_name FROM kb_aliases WHERE alias_norm = ? LIMIT 1",
+                    (norm,)
+                )
+                row = cur.fetchone()
+                cui = row["cui"] if row else None
+                if row and row["canonical_name"]:
+                    _add(row["canonical_name"])
+
+                # 2. If CUI found, fetch all aliases associated with that CUI
+                if cui:
+                    cur.execute(
+                        "SELECT canonical_name, kb_source FROM kb_concepts WHERE cui = ?",
+                        (cui,)
+                    )
+                    c_row = cur.fetchone()
+                    if c_row and c_row["canonical_name"]:
+                        _add(c_row["canonical_name"])
+
+                    cur.execute(
+                        "SELECT DISTINCT canonical_name, alias_norm FROM kb_aliases WHERE cui = ? ORDER BY is_canonical DESC, priority ASC LIMIT 20",
+                        (cui,)
+                    )
+                    for a_row in cur.fetchall():
+                        if a_row["canonical_name"]:
+                            _add(a_row["canonical_name"])
+                        if a_row["alias_norm"]:
+                            _add(a_row["alias_norm"])
+        except Exception as e:
+            logger.debug(f"get_concept_aliases SQLite error: {e}")
+
+    return aliases
 
 
 # ============================================================================

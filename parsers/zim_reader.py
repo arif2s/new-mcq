@@ -57,29 +57,45 @@ def _follow_redirect(entry):
 
 def _find_entry_in_archive(archive, query_title: str):
     """
-    Attempts fast O(log N) B-tree lookups inside a >10GB ZIM archive without scanning entries.
-    Checks exact title, sentence-case title, Title_Case path, and C/ or A/ namespaces.
+    Attempts O(log N) B-tree lookups inside a ZIM archive across title variants
+    and candidates (including inverted forms like 'renal transplantation' for 'transplantation, renal').
     """
     if not query_title or not query_title.strip():
         return None
 
     clean = query_title.strip()
-    candidates = [
-        clean,
-        clean.capitalize(),
-        clean.title(),
-        clean.upper() if len(clean) <= 5 else clean,
-    ]
-    seen = set()
-    unique_candidates = []
-    for c in candidates:
-        if c not in seen:
-            seen.add(c)
-            unique_candidates.append(c)
+    try:
+        from agents.topic_extractor import generate_candidate_variants
+        raw_candidates = generate_candidate_variants(clean)
+    except Exception:
+        raw_candidates = [clean]
+        if "," in clean:
+            parts = [p.strip() for p in clean.split(",") if p.strip()]
+            if len(parts) == 2:
+                raw_candidates.append(f"{parts[1]} {parts[0]}")
+
+    search_terms = []
+    seen_terms = set()
+    for term in raw_candidates:
+        if not term:
+            continue
+        c_low = term.lower()
+        if c_low not in seen_terms:
+            seen_terms.add(c_low)
+            search_terms.append(term)
+
+    all_title_cands = []
+    seen_cands = set()
+    for st in search_terms:
+        cands = [st, st.capitalize(), st.title(), st.upper() if len(st) <= 5 else st]
+        for c in cands:
+            if c not in seen_cands:
+                seen_cands.add(c)
+                all_title_cands.append(c)
 
     # 1. Try get_entry_by_title if supported by libzim version
     if hasattr(archive, "get_entry_by_title"):
-        for cand in unique_candidates:
+        for cand in all_title_cands:
             try:
                 entry = archive.get_entry_by_title(cand)
                 if entry:
@@ -88,7 +104,7 @@ def _find_entry_in_archive(archive, query_title: str):
                 pass
 
     # 2. Try direct path lookup in modern (C/) and legacy (A/) ZIM namespaces
-    for cand in unique_candidates:
+    for cand in all_title_cands:
         slug = cand.replace(" ", "_")
         for prefix in ("C/", "A/", ""):
             try:
@@ -330,68 +346,86 @@ def get_zim_asset(asset_path: str, zim_path: Optional[str] = None) -> Optional[D
 def search_zim_articles(query: str, limit: int = 3) -> List[Dict[str, Any]]:
     """
     Fast direct search against >10GB ZIM archives using exact/redirect resolution
-    plus LibZim fulltext/suggestion search when available.
+    plus LibZim fulltext/suggestion search across all topic aliases and synonyms.
     Returns depth-weighted results including article character length.
     """
     hits: List[Dict[str, Any]] = []
     seen_titles = set()
 
-    # 1. Exact or Redirect Match
-    resolved = resolve_zim_topic(query)
-    if resolved["matched"]:
-        c_title = resolved["canonical_title"]
-        body_text = get_zim_article(resolved["zim_path"], c_title, max_chars=4500)
-        doc_len = len(body_text)
-        seen_titles.add(c_title.lower())
-        hits.append({
-            "doc_id": f"zim_{c_title}",
-            "file_path": resolved["zim_path"],
-            "article_id": c_title,
-            "page": 1,
-            "title": c_title,
-            "heading": c_title,
-            "snippet": body_text[:600],
-            "doc_length": doc_len,
-            "score": 120.0 + min(doc_len / 500.0, 20.0),
-        })
+    try:
+        from agents.topic_extractor import get_topic_aliases
+        query_aliases = get_topic_aliases(query)
+    except Exception:
+        query_aliases = [query]
+        if "," in query:
+            parts = [p.strip() for p in query.split(",") if p.strip()]
+            if len(parts) == 2:
+                query_aliases.append(f"{parts[1]} {parts[0]}")
 
-    # 2. Suggestion / Prefix search for related comprehensive articles
-    for zp in get_enabled_zim_paths():
+    # 1. Exact or Redirect Match across topic aliases
+    for alias_q in query_aliases:
         if len(hits) >= limit:
             break
-        try:
-            import libzim
-            archive = get_archive(zp)
-            if hasattr(libzim, "SuggestionSearcher"):
-                s_searcher = libzim.SuggestionSearcher(archive)
-                suggestion = s_searcher.suggest(query)
-                for r_path in suggestion.getResults(0, limit * 2):
-                    if len(hits) >= limit:
-                        break
-                    entry = _follow_redirect(archive.get_entry_by_path(r_path))
-                    if not entry:
-                        continue
-                    t = getattr(entry, "title", "")
-                    if not t or t.lower() in seen_titles:
-                        continue
-                    seen_titles.add(t.lower())
-                    body_text = get_zim_article(zp, t, max_chars=4500)
-                    doc_len = len(body_text)
-                    if doc_len < 80:
-                        continue
-                    hits.append({
-                        "doc_id": f"zim_{t}",
-                        "file_path": zp,
-                        "article_id": t,
-                        "page": 1,
-                        "title": t,
-                        "heading": t,
-                        "snippet": body_text[:600],
-                        "doc_length": doc_len,
-                        "score": 85.0 + min(doc_len / 500.0, 15.0),
-                    })
-        except Exception:
-            pass
+        resolved = resolve_zim_topic(alias_q)
+        if resolved["matched"]:
+            c_title = resolved["canonical_title"]
+            if c_title.lower() not in seen_titles:
+                body_text = get_zim_article(resolved["zim_path"], c_title, max_chars=4500)
+                doc_len = len(body_text)
+                seen_titles.add(c_title.lower())
+                hits.append({
+                    "doc_id": f"zim_{c_title}",
+                    "file_path": resolved["zim_path"],
+                    "article_id": c_title,
+                    "page": 1,
+                    "title": c_title,
+                    "heading": c_title,
+                    "snippet": body_text[:600],
+                    "doc_length": doc_len,
+                    "score": 120.0 + min(doc_len / 500.0, 20.0),
+                })
+
+    # 2. Suggestion / Prefix search for related comprehensive articles across aliases
+    if len(hits) < limit:
+        for alias_q in query_aliases:
+            if len(hits) >= limit:
+                break
+            for zp in get_enabled_zim_paths():
+                if len(hits) >= limit:
+                    break
+                try:
+                    import libzim
+                    archive = get_archive(zp)
+                    if hasattr(libzim, "SuggestionSearcher"):
+                        s_searcher = libzim.SuggestionSearcher(archive)
+                        suggestion = s_searcher.suggest(alias_q)
+                        for r_path in suggestion.getResults(0, limit * 2):
+                            if len(hits) >= limit:
+                                break
+                            entry = _follow_redirect(archive.get_entry_by_path(r_path))
+                            if not entry:
+                                continue
+                            t = getattr(entry, "title", "")
+                            if not t or t.lower() in seen_titles:
+                                continue
+                            seen_titles.add(t.lower())
+                            body_text = get_zim_article(zp, t, max_chars=4500)
+                            doc_len = len(body_text)
+                            if doc_len < 80:
+                                continue
+                            hits.append({
+                                "doc_id": f"zim_{t}",
+                                "file_path": zp,
+                                "article_id": t,
+                                "page": 1,
+                                "title": t,
+                                "heading": t,
+                                "snippet": body_text[:600],
+                                "doc_length": doc_len,
+                                "score": 85.0 + min(doc_len / 500.0, 15.0),
+                            })
+                except Exception:
+                    pass
 
     return hits[:limit]
 
