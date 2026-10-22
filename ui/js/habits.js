@@ -1,38 +1,50 @@
 // ui/js/habits.js
 
+function _getHabitLocalDateStr(dateObj = new Date()) {
+    const year = dateObj.getFullYear();
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
 
 function initHabits() {
+    if (!window.AppState || typeof window.AppState.get !== 'function') return;
     const state = window.AppState.get();
     if (!state) return;
 
     const container = document.getElementById('habit-tracker-view');
     if (!container) return;
 
-    const habitLog = state.habitLog || [];
-    const testResults = state.testResults || [];
-    const streakDays = state.streakDays || 0;
-    const longestStreak = state.longestStreak || 0;
-    const totalQuestionsEver = state.totalQuestionsEver || 0;
-    const dailyTargets = state.dailyTargets || { questionsTarget: 50, correctTarget: 40 };
+    const escapeHTML = window.escapeHTML || ((s) => String(s ?? ''));
 
-    // 1. Data Aggregation & O(1) Lookups
+    const habitLog = Array.isArray(state.habitLog) ? state.habitLog : [];
+    const testResults = Array.isArray(state.testResults) ? state.testResults : [];
+    const streakDays = Number(state.streakDays || 0);
+    const longestStreak = Number(state.longestStreak || 0);
+    const sumFromResults = testResults.reduce((acc, r) => acc + Number(r.totalQuestions ?? r.total_questions ?? 0), 0);
+    const totalQuestionsEver = Math.max(Number(state.totalQuestionsEver || 0), sumFromResults);
+    const dailyTargets = state.dailyTargets || { questionsTarget: 50, correctTarget: 40, reviewTarget: 20 };
+    const targetQuestions = Math.max(1, Number(dailyTargets.questionsTarget || 50));
+
+    // 1. Data Aggregation & O(1) Lookups (Local Calendar Dates)
     const habitMap = new Map();
-    habitLog.forEach(h => habitMap.set(h.date, h));
+    habitLog.forEach(h => {
+        if (h && h.date) habitMap.set(String(h.date).slice(0, 10), h);
+    });
 
     const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
-    const todayCount = habitMap.get(todayStr)?.questionsAnswered || 0;
+    const todayStr = _getHabitLocalDateStr(today);
+    const todayCount = Number(habitMap.get(todayStr)?.questionsAnswered || 0);
 
     const calendarData = [];
-    const iterDate = new Date(today);
-    iterDate.setDate(iterDate.getDate() - 364);
+    const iterDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 364);
 
     for (let i = 0; i <= 364; i++) {
-        const dateStr = iterDate.toISOString().split('T')[0];
+        const dateStr = _getHabitLocalDateStr(iterDate);
         const habit = habitMap.get(dateStr);
         calendarData.push({
             date: dateStr,
-            count: habit?.questionsAnswered || 0,
+            count: Number(habit?.questionsAnswered || 0),
             day: iterDate.getDay()
         });
         iterDate.setDate(iterDate.getDate() + 1);
@@ -59,17 +71,16 @@ function initHabits() {
     const mQuestions = last30Days.reduce((acc, d) => acc + d.count, 0);
     const mActive = last30Days.filter(d => d.count > 0).length;
 
-    const bestDay = habitLog.length > 0
-        ? habitLog.reduce((b, h) => h.questionsAnswered > b.questionsAnswered ? h : b, habitLog[0])
+    const activeHabits = habitLog.filter(h => Number(h?.questionsAnswered || 0) > 0);
+    const bestDay = activeHabits.length > 0
+        ? activeHabits.reduce((b, h) => Number(h.questionsAnswered || 0) > Number(b.questionsAnswered || 0) ? h : b, activeHabits[0])
         : null;
 
-    // Month Labels
+    // Overflow-safe Month Labels (anchored to day 1 of each month)
     const mLabels = [];
-    const labelDate = new Date(today);
-    labelDate.setMonth(labelDate.getMonth() - 11);
     for (let i = 0; i < 12; i++) {
-        mLabels.push(labelDate.toLocaleString('default', { month: 'short' }));
-        labelDate.setMonth(labelDate.getMonth() + 1);
+        const d = new Date(today.getFullYear(), today.getMonth() - 11 + i, 1);
+        mLabels.push(d.toLocaleString('default', { month: 'short' }));
     }
 
     // 2. Intelligent Motivation Engine
@@ -91,7 +102,7 @@ function initHabits() {
             emoji = pickRandom(["🌙", "🦉", "✨"]);
         }
 
-        if (todayCount >= dailyTargets.questionsTarget && dailyTargets.questionsTarget > 0) {
+        if (todayCount >= targetQuestions) {
             return { emoji: '🏆', text: "Mission accomplished! You hit all your goals for today.", color: 'text-success-500' };
         }
         if (streakDays >= 30) return { emoji: '👑', text: "Legendary! 30+ days of pure dedication.", color: 'text-warning-500' };
@@ -102,13 +113,16 @@ function initHabits() {
     };
 
     const motivation = getMotivation();
-    const goalProgress = Math.min((todayCount / (dailyTargets.questionsTarget || 50)) * 100, 100);
+    const goalProgress = Math.min((todayCount / targetQuestions) * 100, 100);
 
     // 3. Intelligent Recommendations
-    const recentAccuracy = testResults.slice(-5).reduce((a, r) => a + r.accuracy, 0) / Math.min(testResults.length, 5) || 0;
+    const recentSlice = testResults.slice(-5);
+    const recentAccuracy = recentSlice.length > 0
+        ? recentSlice.reduce((a, r) => a + Number(r.accuracy || 0), 0) / recentSlice.length
+        : 0;
     let recommendationHtml = '';
     if (wQuestions > 0) {
-        if (recentAccuracy < 50) {
+        if (recentSlice.length > 0 && recentAccuracy < 50) {
             recommendationHtml = `<div class="bg-danger-500/10 border border-danger-500/30 rounded-xl p-4 mb-8">
                 <p class="text-sm text-danger-400 flex items-center gap-2 font-medium">💡 Recommendation: Accuracy is dipping. Try switching to 'Learn Mode' and focus on explanations.</p>
             </div>`;
@@ -128,30 +142,33 @@ function initHabits() {
         return 'bg-success-400 shadow-[0_0_10px_rgba(74,222,128,1)]';
     };
 
-    let heatmapColsHtml = weeks.map((week, wi) => {
+    const heatmapColsHtml = weeks.map((week, wi) => {
         let cellsHtml = '';
         if (wi === 0 && week[0]) {
             for (let p = 0; p < week[0].day; p++) cellsHtml += `<div class="w-3 h-3"></div>`;
         }
         week.forEach(day => {
-            cellsHtml += `<div class="w-3 h-3 rounded-[2px] transition-transform hover:scale-125 cursor-pointer ${getIntensity(day.count)}" title="${day.date}: ${day.count} questions"></div>`;
+            cellsHtml += `<div class="w-3 h-3 rounded-[2px] transition-transform hover:scale-125 cursor-pointer ${getIntensity(day.count)}" title="${escapeHTML(day.date)}: ${day.count} questions"></div>`;
         });
         return `<div class="flex flex-col gap-1">${cellsHtml}</div>`;
     }).join('');
 
     // 5. Recent Activity List
-    const recentActivity = [...habitLog].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 7);
+    const recentActivity = [...habitLog]
+        .filter(h => h && h.date)
+        .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+        .slice(0, 7);
     const recentActivityHtml = recentActivity.length === 0
         ? '<p class="text-sm text-muted">No activity recorded yet.</p>'
         : recentActivity.map(h => `
             <div class="flex items-center justify-between glass-panel border border-gray-700/50 rounded-lg p-3">
                 <div>
-                    <span class="text-sm font-medium">${h.date}</span>
-                    <span class="text-xs text-muted ml-2 truncate max-w-[120px] inline-block align-bottom">${(h.subjects || []).join(', ')}</span>
+                    <span class="text-sm font-medium">${escapeHTML(h.date)}</span>
+                    <span class="text-xs text-muted ml-2 truncate max-w-[140px] inline-block align-bottom">${escapeHTML((h.subjects || []).join(', '))}</span>
                 </div>
                 <div class="flex items-center gap-4 text-sm font-medium">
-                    <span class="text-brand-400">${h.questionsAnswered} Q</span>
-                    <span class="text-success-500">${h.correctAnswers} ✓</span>
+                    <span class="text-brand-400">${Number(h.questionsAnswered || 0)} Q</span>
+                    <span class="text-success-500">${Number(h.correctAnswers || 0)} ✓</span>
                 </div>
             </div>
         `).join('');
@@ -172,46 +189,53 @@ function initHabits() {
         const achieved = m.current >= m.target;
         return `
         <div class="p-4 rounded-xl border transition-all ${achieved ? 'bg-success-500/10 border-success-500/30' : 'glass-panel border-gray-700/50 opacity-60'} text-center flex flex-col justify-center items-center">
-            <span class="text-2xl mb-2">${achieved ? m.icon : '🔒'}</span>
-            <p class="text-xs font-medium ${achieved ? 'text-success-400' : 'text-muted'}">${m.label}</p>
+            <span class="text-2xl mb-2">${achieved ? escapeHTML(m.icon) : '🔒'}</span>
+            <p class="text-xs font-medium ${achieved ? 'text-success-400' : 'text-muted'}">${escapeHTML(m.label)}</p>
             ${!achieved ? `<p class="text-[10px] text-muted mt-1">${m.current}/${m.target}</p>` : ''}
         </div>`;
     }).join('');
 
     // SVG Icons
     const icons = {
-        flame: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-warning-500 mb-2"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"></path></svg>`,
-        award: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-warning-400 mb-2"><circle cx="12" cy="8" r="7"></circle><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"></polyline></svg>`,
-        book: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400 mb-2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>`,
-        cal: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-purple-400 mb-2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`,
-        trendUp: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success-500 mb-2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>`,
-        target: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400 mb-2"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>`
+        flame: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-warning-500 mb-2 mx-auto"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"></path></svg>`,
+        award: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-warning-400 mb-2 mx-auto"><circle cx="12" cy="8" r="7"></circle><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"></polyline></svg>`,
+        book: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400 mb-2 mx-auto"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>`,
+        cal: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-purple-400 mb-2 mx-auto"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`,
+        trendUp: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success-500 mb-2 mx-auto"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>`,
+        target: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400 mb-2 mx-auto"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>`
     };
 
     // 7. Render DOM
     container.innerHTML = `
       <div class="w-full p-6 animate-fade-in">
-        <h1 class="text-3xl font-bold mb-2">📅 Habit Tracker</h1>
-        <p class="subtitle mb-8">Track your daily learning consistency and build unbreakable momentum.</p>
+        <div class="flex items-center justify-between flex-wrap gap-4 mb-8">
+            <div>
+                <h1 class="text-3xl font-bold mb-2">📅 Habit Tracker</h1>
+                <p class="subtitle">Track your daily learning consistency and build unbreakable momentum.</p>
+            </div>
+            <button type="button" id="btn-edit-daily-goal" class="secondary-btn px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer">
+                🎯 Daily Goal: ${targetQuestions} Qs
+            </button>
+        </div>
 
         <!-- Motivation Banner -->
         <div class="glass-card card-shade-1 p-6 mb-8 flex items-center gap-5">
-            <div class="w-16 h-16 glass-panel rounded-full flex items-center justify-center text-4xl shadow-inner border border-gray-700/50">
+            <div class="w-16 h-16 glass-panel rounded-full flex items-center justify-center text-4xl shadow-inner border border-gray-700/50 shrink-0">
                 ${motivation.emoji}
             </div>
-            <div class="flex-1">
+            <div class="flex-1 min-w-0">
                 <h2 class="text-2xl font-bold mb-1">
                     ${streakDays > 0 ? `${streakDays} Day Streak! 🔥` : 'Start Your Streak Today! 💪'}
                 </h2>
-                <p class="${motivation.color} text-sm">${motivation.text}</p>
+                <p class="${motivation.color} text-sm">${escapeHTML(motivation.text)}</p>
 
                 <!-- Progress Bar -->
                 <div class="mt-4">
                     <div class="flex justify-between items-center mb-1 text-xs text-muted">
-                        <span>Today's Goal: ${todayCount}/${dailyTargets.questionsTarget || 50} questions</span>
+                        <span>Today's Goal: ${todayCount}/${targetQuestions} questions</span>
                         <span class="font-medium">${goalProgress.toFixed(0)}%</span>
                     </div>
-                    <div class="w-full glass-panel rounded-full h-2 shadow-inner border border-gray-700/50">
+                    <div class="w-full glass-panel rounded-full h-2 shadow-inner border border-gray-700/50 overflow-hidden">
                         <div class="h-2 rounded-full transition-all duration-1000 ${goalProgress >= 100 ? 'bg-success-500 shadow-[0_0_10px_rgba(34,197,94,0.6)]' : 'bg-brand-500 shadow-[0_0_10px_rgba(139,92,246,0.6)]'}" style="width: ${goalProgress}%"></div>
                     </div>
                 </div>
@@ -259,7 +283,7 @@ function initHabits() {
             <h3 class="text-lg font-semibold mb-4 opacity-90">📊 Activity Heatmap (Last 365 Days)</h3>
 
             <div class="flex mb-2 ml-6">
-                ${mLabels.map(m => `<span class="text-[10px] text-muted flex-1">${m}</span>`).join('')}
+                ${mLabels.map(m => `<span class="text-[10px] text-muted flex-1">${escapeHTML(m)}</span>`).join('')}
             </div>
 
             <div class="flex gap-1 overflow-x-auto pb-2 scrollbar-thin">
@@ -306,12 +330,28 @@ function initHabits() {
 
       </div>
     `;
+
+    document.getElementById('btn-edit-daily-goal')?.addEventListener('click', () => {
+        const input = prompt("Enter your daily questions goal:", String(targetQuestions));
+        if (input !== null) {
+            const parsed = parseInt(input.trim(), 10);
+            if (!isNaN(parsed) && parsed > 0) {
+                window.AppState.update({
+                    dailyTargets: {
+                        ...dailyTargets,
+                        questionsTarget: parsed
+                    }
+                });
+            }
+        }
+    });
 }
+
+window.initHabits = initHabits;
 
 // Bind to event lifecycle
 document.addEventListener('stateUpdated', initHabits);
 document.addEventListener('DOMContentLoaded', () => {
-    // Also re-render specifically when navigating to the habits tab to ensure layout calculations are correct
     const navBtns = document.querySelectorAll('.nav-btn');
     navBtns.forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -320,7 +360,5 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     });
-
-    if (window.AppState && window.AppState.fetch) window.AppState.fetch().then(initHabits);
-    else initHabits();
+    initHabits();
 });

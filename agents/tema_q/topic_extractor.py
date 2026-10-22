@@ -14,68 +14,81 @@ Key Characteristics:
 - Subtype protection guard: Prevents merging distinct disease subtypes, stages, or lateralities
   (e.g., Type 1 vs. Type 2 diabetes; Acute vs. Chronic pancreatitis).
 - Multi-tier verification: Verified (high confidence / pre-selected) vs. Doubtful (low confidence).
-- SQLite-backed persistent ignore list integration.
+- Thread-safe singleton models, zero-DDL cached ignore lists, and thread-boundary safety.
 """
 
 from __future__ import annotations
 
 import contextlib
+import functools
+import json
 import logging
 import os
 from pathlib import Path
 import re
 import sqlite3
+import threading
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 import unicodedata
 
-# Enforce CPU execution for spaCy / PyTorch before any NLP modules load
+# ---------------------------------------------------------------------------
+# Enforce Invariant 1: Zero VRAM for backend workers
+# ---------------------------------------------------------------------------
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Project Module Imports & Fallbacks
+# Project Configuration & Directory Aliases
 # ---------------------------------------------------------------------------
 try:
     import config
 
-    DATA_DIR = Path(getattr(config, "DATA_DIR", "data"))
-    LINKERS_DIR = Path(getattr(config, "LINKERS_DIR", DATA_DIR / "linkers"))
-    MODELS_DIR = Path(getattr(config, "MODELS_DIR", DATA_DIR / "models"))
-    SCISPACY_MODELS_DIR = Path(
+    DATA_DIR: Path = Path(getattr(config, "DATA_DIR", "data"))
+    LINKERS_DIR: Path = Path(getattr(config, "LINKERS_DIR", DATA_DIR / "linkers"))
+    MODELS_DIR: Path = Path(getattr(config, "MODELS_DIR", DATA_DIR / "models"))
+    SCISPACY_MODELS_DIR: Path = Path(
         getattr(config, "SCISPACY_MODELS_DIR", MODELS_DIR / "scispacy")
     )
-    ONTOLOGY_DB_PATH = Path(
+    ONTOLOGY_DB_PATH: Path = Path(
         getattr(config, "ONTOLOGY_DB_PATH", LINKERS_DIR / "ontology_kb.db")
     )
+    DB_PATH: Path = Path(getattr(config, "DB_PATH", DATA_DIR / "mcq_hub.db"))
 except ImportError:
     DATA_DIR = Path("data")
     LINKERS_DIR = DATA_DIR / "linkers"
     MODELS_DIR = DATA_DIR / "models"
     SCISPACY_MODELS_DIR = MODELS_DIR / "scispacy"
     ONTOLOGY_DB_PATH = LINKERS_DIR / "ontology_kb.db"
+    DB_PATH = DATA_DIR / "mcq_hub.db"
 
+# ---------------------------------------------------------------------------
+# Database Connection Isolation (Contract-Guarded)
+# ---------------------------------------------------------------------------
 try:
-    from core.database import (
-        get_db_connection,
-        lookup_concept_by_cui,
-        lookup_ontology_alias,
-    )
+    from core.database import get_db_connection
 except ImportError:
 
     def get_db_connection() -> sqlite3.Connection:
-        db_path = Path("data") / "mcq_hub.db"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(db_path), timeout=20.0)
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(DB_PATH), timeout=20.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA busy_timeout = 20000;")
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
+        conn.execute("PRAGMA mmap_size = 536870912;")  # 512 MB cap
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA cache_size = -64000;")
         return conn
 
-    def lookup_ontology_alias(term: str) -> Optional[Dict[str, Any]]:
-        return None
 
-    def lookup_concept_by_cui(cui: str) -> Optional[Dict[str, Any]]:
-        return None
+try:
+    from core.database import lookup_concept_by_cui, lookup_ontology_alias  # type: ignore
+except ImportError:
+    lookup_ontology_alias = None
+    lookup_concept_by_cui = None
 
 try:
     from parsers.scispacy_linker_engine import (
@@ -107,101 +120,82 @@ except ImportError:
     def normalize_alias(text: str) -> str:
         return text.strip().lower()
 
-try:
-    from parsers.zim_reader import resolve_zim_topic
-except ImportError:
 
-    def resolve_zim_topic(term: str) -> Dict[str, Any]:
-        return {"matched": False, "canonical_title": "", "zim_path": "", "entry_path": ""}
+try:
+    from parsers.zim_reader import resolve_zim_topic as _raw_resolve_zim_topic  # type: ignore
+except ImportError:
+    _raw_resolve_zim_topic = None
 
 try:
     from parsers.tantivy_engine import search_index
 except ImportError:
 
     def search_index(query_str: str, limit_per_source: int = 1) -> Dict[str, list]:
-        return {}
+        return {"obsidian": [], "pdf": [], "zim": []}
 
 
 # ---------------------------------------------------------------------------
-# Singleton MedSpaCy / SciSpaCy Model Loader
+# Singleton MedSpaCy / SciSpaCy Model Loader (Thread-Safe, Invariant 8)
 # ---------------------------------------------------------------------------
-_SPACY_NLP_SINGLETON: Optional[Any] = None
+_SPACY_FALLBACK_NLP: Optional[Any] = None
+_SPACY_INIT_LOCK = threading.RLock()
+_SPACY_EXEC_LOCK = threading.RLock()
+
+
+def _get_active_spacy_pipelines() -> List[Any]:
+    """
+    Retrieves the active SciSpaCy pipeline(s) from parsers.scispacy_linker_engine
+    so model switches in Settings never leave duplicate pipelines in RAM.
+    """
+    global _SPACY_FALLBACK_NLP
+    try:
+        pipelines = load_scispacy_pipeline()
+        if pipelines:
+            return [p for p in pipelines if p is not None]
+    except Exception as exc:
+        logger.debug("load_scispacy_pipeline invocation note: %s", exc)
+
+    if _SPACY_FALLBACK_NLP is not None:
+        return [_SPACY_FALLBACK_NLP]
+
+    with _SPACY_INIT_LOCK:
+        if _SPACY_FALLBACK_NLP is not None:
+            return [_SPACY_FALLBACK_NLP]
+        try:
+            import spacy
+
+            if hasattr(spacy, "require_cpu"):
+                spacy.require_cpu()
+            blank_nlp = spacy.blank("en")
+            if "sentencizer" not in blank_nlp.pipe_names:
+                blank_nlp.add_pipe("sentencizer")
+            _SPACY_FALLBACK_NLP = blank_nlp
+            logger.info("Initialized fallback blank English spaCy pipeline.")
+            return [_SPACY_FALLBACK_NLP]
+        except Exception as exc:
+            logger.warning("Could not initialize fallback spaCy pipeline: %s", exc)
+            return []
 
 
 def get_medspacy_model() -> Any:
     """
-    Returns a loaded spaCy / SciSpaCy Language pipeline running strictly on CPU.
-    Preserves dependency parser and entity recognizer needed for biomedical noun chunks.
+    Returns the primary loaded spaCy / SciSpaCy Language pipeline running strictly on CPU.
+    Satisfies blueprint.md Section 3 signature (`get_medspacy_model() -> Any`).
     """
-    global _SPACY_NLP_SINGLETON
-    if _SPACY_NLP_SINGLETON is not None:
-        return _SPACY_NLP_SINGLETON
-
-    try:
-        import spacy
-
-        if hasattr(spacy, "require_cpu"):
-            spacy.require_cpu()
-    except Exception:
-        pass
-
-    # 1. Try engine-loaded pipelines
-    try:
-        pipelines = load_scispacy_pipeline()
-        if pipelines and len(pipelines) > 0 and pipelines[0] is not None:
-            _SPACY_NLP_SINGLETON = pipelines[0]
-            logger.info("Loaded SciSpaCy pipeline from linker engine.")
-            return _SPACY_NLP_SINGLETON
-    except Exception as e:
-        logger.debug("load_scispacy_pipeline invocation note: %s", e)
-
-    # 2. Try loading biomedical models or local folder packages
-    try:
-        import spacy
-
-        candidate_model_ids = [
-            "en_core_sci_md",
-            "en_core_sci_sm",
-            "en_ner_bionlp13cg_md",
-            "en_ner_bc5cdr_md",
-            "en_core_web_sm",
-        ]
-
-        for model_id in candidate_model_ids:
-            # Check installed Python package
-            try:
-                _SPACY_NLP_SINGLETON = spacy.load(model_id)
-                logger.info("Loaded spaCy model '%s' from environment.", model_id)
-                return _SPACY_NLP_SINGLETON
-            except Exception:
-                pass
-
-            # Check extracted directory in SCISPACY_MODELS_DIR
-            if SCISPACY_MODELS_DIR:
-                local_dir = SCISPACY_MODELS_DIR / model_id
-                if local_dir.exists() and (local_dir / "config.cfg").exists():
-                    try:
-                        _SPACY_NLP_SINGLETON = spacy.load(str(local_dir))
-                        logger.info("Loaded spaCy model from local folder: %s", local_dir)
-                        return _SPACY_NLP_SINGLETON
-                    except Exception:
-                        pass
-
-        # 3. Fallback blank pipeline with sentencizer
-        blank_nlp = spacy.blank("en")
-        if "sentencizer" not in blank_nlp.pipe_names:
-            blank_nlp.add_pipe("sentencizer")
-        _SPACY_NLP_SINGLETON = blank_nlp
-        logger.info("Initialized fallback blank English spaCy pipeline.")
-        return _SPACY_NLP_SINGLETON
-    except Exception as exc:
-        logger.warning("Could not initialize spaCy pipeline: %s", exc)
-        return None
+    pipelines = _get_active_spacy_pipelines()
+    return pipelines[0] if pipelines else None
 
 
 # ---------------------------------------------------------------------------
-# Ignore List & DB Persistence
+# Ignore List & DB Persistence (Zero DDL in Hot Loops + Fast In-Memory TTL)
 # ---------------------------------------------------------------------------
+_IGNORED_TOPICS_CACHE: Optional[Set[str]] = None
+_IGNORED_TOPICS_CACHE_TIMESTAMP: float = 0.0
+_IGNORED_TOPICS_CACHE_TTL: float = 5.0
+_IGNORED_TOPICS_LOCK = threading.RLock()
+_IGNORED_TABLE_VERIFIED: bool = False
+
+
 def normalize_topic_key(text: str) -> str:
     """
     Normalizes a topic string into a consistent lookup key:
@@ -213,79 +207,110 @@ def normalize_topic_key(text: str) -> str:
     if not text:
         return ""
     norm = unicodedata.normalize("NFKC", str(text)).strip().lower()
-    norm = re.sub(r"^(the|a|an)\s+", "", norm)
+    norm = re.sub(r"^(?:the|a|an)\s+", "", norm)
     norm = re.sub(r"^[\W_]+|[\W_]+$", "", norm)
     norm = re.sub(r"[\s_]+", " ", norm)
     return norm.strip()
 
 
-def _ensure_ignored_topics_table(conn: sqlite3.Connection) -> None:
-    try:
-        with conn:
+def _ensure_ignored_topics_table_once(conn: sqlite3.Connection) -> None:
+    global _IGNORED_TABLE_VERIFIED
+    if _IGNORED_TABLE_VERIFIED:
+        return
+    with _IGNORED_TOPICS_LOCK:
+        if _IGNORED_TABLE_VERIFIED:
+            return
+        try:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS ignored_topics (
                     topic_norm TEXT PRIMARY KEY,
                     original_text TEXT NOT NULL,
-                    created_at REAL
+                    created_at REAL DEFAULT (unixepoch('now'))
                 )
                 """
             )
-    except Exception as exc:
-        logger.error("Failed to ensure ignored_topics table: %s", exc)
+            _IGNORED_TABLE_VERIFIED = True
+        except Exception as exc:
+            logger.debug("Failed checking ignored_topics table: %s", exc)
 
 
-def get_ignored_topics_set() -> Set[str]:
-    """Retrieves all normalized topic keys marked as permanently ignored."""
-    try:
-        with contextlib.closing(get_db_connection()) as conn:
-            _ensure_ignored_topics_table(conn)
-            cursor = conn.cursor()
-            cursor.execute("SELECT topic_norm FROM ignored_topics")
-            rows = cursor.fetchall()
-            return {r[0] for r in rows if r and r[0]}
-    except Exception as e:
-        logger.error("Error loading ignored topics: %s", e)
-        return set()
+def get_ignored_topics_set(force_refresh: bool = False) -> Set[str]:
+    """Retrieves all normalized topic keys marked as permanently ignored with memory TTL caching."""
+    global _IGNORED_TOPICS_CACHE, _IGNORED_TOPICS_CACHE_TIMESTAMP
+
+    now = time.time()
+    if (
+        not force_refresh
+        and _IGNORED_TOPICS_CACHE is not None
+        and (now - _IGNORED_TOPICS_CACHE_TIMESTAMP) < _IGNORED_TOPICS_CACHE_TTL
+    ):
+        return set(_IGNORED_TOPICS_CACHE)
+
+    with _IGNORED_TOPICS_LOCK:
+        if (
+            not force_refresh
+            and _IGNORED_TOPICS_CACHE is not None
+            and (time.time() - _IGNORED_TOPICS_CACHE_TIMESTAMP) < _IGNORED_TOPICS_CACHE_TTL
+        ):
+            return set(_IGNORED_TOPICS_CACHE)
+
+        try:
+            with contextlib.closing(get_db_connection()) as conn:
+                _ensure_ignored_topics_table_once(conn)
+                cursor = conn.cursor()
+                cursor.execute("SELECT topic_norm FROM ignored_topics")
+                rows = cursor.fetchall()
+                loaded = {str(r[0]) for r in rows if r and r[0]}
+                _IGNORED_TOPICS_CACHE = loaded
+                _IGNORED_TOPICS_CACHE_TIMESTAMP = time.time()
+                return set(loaded)
+        except Exception as exc:
+            logger.error("Error loading ignored topics: %s", exc)
+            return set(_IGNORED_TOPICS_CACHE) if _IGNORED_TOPICS_CACHE is not None else set()
 
 
 def add_ignored_topic(term: str) -> bool:
-    """Adds a term to the persistent ignored_topics SQLite table."""
+    """Adds a term to the persistent ignored_topics SQLite table and invalidates cache."""
     key = normalize_topic_key(term)
     if not key:
         return False
     try:
         with contextlib.closing(get_db_connection()) as conn:
-            _ensure_ignored_topics_table(conn)
-            with conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO ignored_topics (topic_norm, original_text, created_at) VALUES (?, ?, ?)",
-                    (key, term.strip(), time.time()),
-                )
+            _ensure_ignored_topics_table_once(conn)
+            conn.execute(
+                "INSERT OR REPLACE INTO ignored_topics (topic_norm, original_text, created_at) VALUES (?, ?, ?)",
+                (key, str(term).strip(), time.time()),
+            )
+        with _IGNORED_TOPICS_LOCK:
+            if _IGNORED_TOPICS_CACHE is not None:
+                _IGNORED_TOPICS_CACHE.add(key)
         return True
-    except Exception as e:
-        logger.error("Error adding ignored topic '%s': %s", term, e)
+    except Exception as exc:
+        logger.error("Error adding ignored topic '%s': %s", term, exc)
         return False
 
 
 def remove_ignored_topic(term: str) -> bool:
-    """Removes a term from the persistent ignored_topics SQLite table."""
+    """Removes a term from the persistent ignored_topics SQLite table and invalidates cache."""
     key = normalize_topic_key(term)
     if not key:
         return False
     try:
         with contextlib.closing(get_db_connection()) as conn:
-            _ensure_ignored_topics_table(conn)
-            with conn:
-                conn.execute("DELETE FROM ignored_topics WHERE topic_norm = ?", (key,))
+            _ensure_ignored_topics_table_once(conn)
+            conn.execute("DELETE FROM ignored_topics WHERE topic_norm = ?", (key,))
+        with _IGNORED_TOPICS_LOCK:
+            if _IGNORED_TOPICS_CACHE is not None:
+                _IGNORED_TOPICS_CACHE.discard(key)
         return True
-    except Exception as e:
-        logger.error("Error removing ignored topic '%s': %s", term, e)
+    except Exception as exc:
+        logger.error("Error removing ignored topic '%s': %s", term, exc)
         return False
 
 
 # ---------------------------------------------------------------------------
-# Clinical Lexicons, Patterns & Stopwords
+# Pre-Compiled Regexes & Static Lexicons (Zero Per-Call Recompilation)
 # ---------------------------------------------------------------------------
 CLINICAL_STOPWORDS: Set[str] = {
     "patient", "female", "male", "man", "woman", "boy", "girl", "infant", "child",
@@ -306,10 +331,9 @@ CLINICAL_STOPWORDS: Set[str] = {
     "daily", "iv", "po", "subcutaneous", "oral", "intravenous", "mild", "moderate",
     "severe", "unremarkable", "reveals", "showed", "demonstrated", "presents with",
     "complains of", "history of", "consistent with", "associated with",
-    "which of the following", "what is the", "most likely diagnosis", "next step in management"
+    "which of the following", "what is the", "most likely diagnosis", "next step in management",
 }
 
-# Standalone generic words that must never form solitary topics
 ISOLATED_GENERIC_WORDS: Set[str] = {
     "heart", "liver", "lung", "lungs", "kidney", "kidneys", "brain", "bone",
     "bones", "skin", "eye", "eyes", "ear", "ears", "nose", "blood", "cell",
@@ -322,7 +346,7 @@ ISOLATED_GENERIC_WORDS: Set[str] = {
     "acute", "chronic", "left", "right", "bilateral", "unilateral", "primary",
     "secondary", "tertiary", "normal", "abnormal", "high", "low", "positive", "negative",
     "type 1", "type 2", "stage 1", "stage 2", "stage 3", "stage 4", "stage i",
-    "stage ii", "stage iii", "stage iv"
+    "stage ii", "stage iii", "stage iv", "pain",
 }
 
 GENERIC_QUESTION_BOILERPLATE = re.compile(
@@ -341,7 +365,7 @@ GENERIC_QUESTION_BOILERPLATE = re.compile(
     re.IGNORECASE,
 )
 
-PUNCT_SPLIT_REGEX = re.compile(r"[,;:|/\\(\\)\[\]\n\r\t—–]")
+PUNCT_SPLIT_REGEX = re.compile(r"[,;:|/()\[\]\n\r\t—–•]")
 
 CLAUSE_CONJUNCTIONS_REGEX = re.compile(
     r"\b(?:and|or|vs\.?|versus|with|without|due to|caused by|secondary to|associated with|followed by)\b",
@@ -353,7 +377,9 @@ NEGATION_SCOPE_TRIGGER = re.compile(
     re.IGNORECASE,
 )
 
-CONTRAST_RESET_REGEX = re.compile(r"\b(?:but|however|although|yet|except|nevertheless)\b", re.IGNORECASE)
+CONTRAST_RESET_REGEX = re.compile(
+    r"\b(?:but|however|although|yet|except|nevertheless)\b", re.IGNORECASE
+)
 
 LAB_VALUE_OR_NUMERIC_REGEX = re.compile(
     r"^(?:\d+(?:\.\d+)?|\d+/\d+)(?:\s*(?:mg/dl|g/dl|mmol/l|meq/l|ug/dl|mcg/dl|u/l|iu/l|mmhg|bpm|/min|%|cells/u[lL]|fl|pg|cm|mm|m|kg|g|mg|mcg|ml|l))?$",
@@ -365,9 +391,13 @@ AGE_TERM_REGEX = re.compile(
     re.IGNORECASE,
 )
 
+SENTENCE_SPLIT_REGEX = re.compile(
+    r"(?<=[.!?])(?<!\b[A-Z]\.)(?<!\bvs\.)(?<!\bVs\.)(?<!\beg\.)(?<!\bie\.)(?<!\bdr\.)(?<!\bDr\.)(?<!\bpt\.)(?<!\bSt\.)\s+"
+)
+
 SPACY_EXCLUDED_NER_TYPES: Set[str] = {
     "DATE", "TIME", "PERCENT", "MONEY", "QUANTITY", "ORDINAL", "CARDINAL",
-    "GPE", "LOC", "FAC", "LANGUAGE", "PERSON", "NORP"
+    "GPE", "LOC", "FAC", "LANGUAGE", "PERSON", "NORP",
 }
 
 ORGAN_TO_ADJECTIVE: Dict[str, str] = {
@@ -454,7 +484,7 @@ KNOWN_GENERA: Set[str] = {
     "aspergillus", "cryptococcus", "histoplasma", "coccidioides", "blastomyces",
     "pneumocystis", "toxoplasma", "giardia", "entamoeba", "trichomonas",
     "leishmania", "trypanosoma", "schistosoma", "taenia", "echinococcus",
-    "moraxella", "nocardia", "actinomyces", "bartonella", "coxiella"
+    "moraxella", "nocardia", "actinomyces", "bartonella", "coxiella",
 }
 
 VIRAL_PARASITIC_ENTITIES: Set[str] = {
@@ -463,16 +493,11 @@ VIRAL_PARASITIC_ENTITIES: Set[str] = {
     "hepatitis c virus", "hepatitis d virus", "hepatitis e virus", "respiratory syncytial virus",
     "human papillomavirus", "coxsackievirus", "norovirus", "rotavirus", "adenovirus",
     "parvovirus b19", "rabies virus", "dengue virus", "yellow fever virus", "chikungunya virus",
-    "zika virus", "ebola virus", "influenza virus"
+    "zika virus", "ebola virus", "influenza virus",
 }
 
-BINOMIAL_SPECIES_REGEX = re.compile(
-    r"\b([A-Z][a-z]{2,})\s+([a-z]{3,}(?:-[a-z]{3,})?)\b"
-)
-
-ABBREV_SPECIES_REGEX = re.compile(
-    r"\b([A-Z])\.\s*([a-z]{3,}(?:-[a-z]{3,})?)\b"
-)
+BINOMIAL_SPECIES_REGEX = re.compile(r"\b([A-Z][a-z]{2,})\s+([a-z]{3,}(?:-[a-z]{3,})?)\b")
+ABBREV_SPECIES_REGEX = re.compile(r"\b([A-Z])\.\s*([a-z]{3,}(?:-[a-z]{3,})?)\b")
 
 PHARMA_SUFFIXES: Tuple[str, ...] = (
     "cillin", "olol", "statin", "mab", "pril", "sartan", "prazole",
@@ -481,7 +506,7 @@ PHARMA_SUFFIXES: Tuple[str, ...] = (
     "grel", "setron", "triptan", "afil", "nib", "tinib", "zumab",
     "ximab", "umab", "vir", "navir", "vudine", "caine", "semide",
     "pam", "lam", "pine", "dronate", "lukast", "coxib", "zole",
-    "toin", "barbital", "sone", "olone", "onide"
+    "toin", "barbital", "sone", "olone", "onide",
 )
 
 KNOWN_DRUGS: Set[str] = {
@@ -494,7 +519,7 @@ KNOWN_DRUGS: Set[str] = {
     "cisplatin", "carboplatin", "doxorubicin", "cyclophosphamide",
     "hydroxychloroquine", "allopurinol", "colchicine", "levothyroxine",
     "propylthiouracil", "methimazole", "spironolactone", "furosemide",
-    "hydrochlorothiazide", "mannitol", "acetazolamide"
+    "hydrochlorothiazide", "mannitol", "acetazolamide",
 }
 
 CLINICAL_HEAD_NOUNS: Set[str] = {
@@ -514,8 +539,23 @@ CLINICAL_HEAD_NOUNS: Set[str] = {
     "anemia", "leukopenia", "thrombocytopenia", "leukocytosis", "thrombocytosis",
     "diabetes", "thyroiditis", "arthritis", "arthropathy", "spondylitis",
     "osteomyelitis", "calculus", "lithiasis", "cholelithiasis", "nephrolithiasis",
-    "hernia", "diverticulitis", "diverticulosis", "colitis", "gastritis", "esophagitis"
+    "hernia", "diverticulitis", "diverticulosis", "colitis", "gastritis", "esophagitis",
 }
+
+EPONYMIC_SYNDROME_REGEX = re.compile(
+    r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:syndrome|disease|sign|phenomenon|node|triad|criteria|classification)\b"
+)
+MEDICAL_SUFFIX_REGEX = re.compile(
+    r"\b(?:[A-Za-z-]{3,}\s+){0,2}[A-Za-z-]{3,}(?:emia|osis|itis|oma|pathy|trophy|plasia|uria|penia|cytosis|ectasis|sclerosis|megaly)\b",
+    re.IGNORECASE,
+)
+_HEAD_NOUNS_PATTERN_STR = "|".join(
+    re.escape(h) for h in sorted(CLINICAL_HEAD_NOUNS, key=len, reverse=True)
+)
+HEAD_NOUN_MATCH_REGEX = re.compile(
+    rf"\b(?:[A-Za-z-]{{3,}}\s+){{0,2}}(?:{_HEAD_NOUNS_PATTERN_STR})\b",
+    re.IGNORECASE,
+)
 
 LAYPERSON_MEDICAL_SYNONYMS: Dict[str, List[str]] = {
     "heart attack": ["myocardial infarction", "myocardial ischemia", "cardiac arrest", "acute coronary syndrome"],
@@ -609,22 +649,89 @@ ROMAN_NUMERAL_MAP = {
     "a": "a", "b": "b", "c": "c", "d": "d",
 }
 
+_ALLOWED_SEMANTIC_CATEGORIES: Set[str] = {
+    "disease",
+    "microorganism",
+    "anatomy",
+    "drug_chemical",
+    "procedure",
+    "unknown",
+}
+
+
+def _normalize_semantic_category(raw_cat: str) -> str:
+    """Normalizes ontology categories to the strict TopicExtractorOutputDict contract (Section 4)."""
+    c = str(raw_cat or "unknown").strip().lower()
+    if c in _ALLOWED_SEMANTIC_CATEGORIES:
+        return c
+    if c in {"sign_symptom", "clinical", "mesh", "physiology", "pathology"}:
+        return "disease"
+    return "unknown"
+
 
 # ---------------------------------------------------------------------------
-# Concept Resolution & Phrase Canonicalization
+# Concept Resolution & Fast LRU Caching
 # ---------------------------------------------------------------------------
-def _resolve_clinical_concept(term: str) -> Dict[str, Any]:
-    """
-    Unified multi-tier offline resolver:
-    1. SciSpaCy linker engine (UMLS / MeSH / RxNorm)
-    2. Direct SQLite kb_aliases lookup
-    3. Zero-copy LibZim B-Tree lookup & redirects
-    """
-    clean_term = term.strip()
-    if not clean_term:
-        return {"matched": False, "cui": "", "canonical_name": "", "score": 0.0, "semantic_category": "unknown"}
+def _lookup_zim_title_cache(term: str) -> Optional[str]:
+    """Fast indexed point-lookup in SQLite zim_titles cache (<0.1ms)."""
+    try:
+        with contextlib.closing(get_db_connection()) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT title FROM zim_titles WHERE title = ? COLLATE NOCASE LIMIT 1",
+                (term,),
+            )
+            row = cursor.fetchone()
+            if row and row[0]:
+                return str(row[0])
+    except Exception:
+        pass
+    return None
 
-    # 1. ScispaCy Linker Engine
+
+def resolve_zim_topic(term: str) -> Dict[str, Any]:
+    """Unified offline ZIM resolver supporting B-Tree lookup and SQLite caching."""
+    if _raw_resolve_zim_topic is not None:
+        try:
+            res = _raw_resolve_zim_topic(term)
+            if res and res.get("matched"):
+                return res
+        except Exception:
+            pass
+
+    cached_title = _lookup_zim_title_cache(term)
+    if cached_title:
+        return {
+            "matched": True,
+            "canonical_title": cached_title,
+            "zim_path": "",
+            "entry_path": "",
+        }
+
+    try:
+        from parsers.zim_reader import search_zim_articles  # type: ignore
+
+        hits = search_zim_articles(term, limit=1)
+        if hits and isinstance(hits, list):
+            first = hits[0]
+            hit_title = first.get("title", "")
+            if hit_title and hit_title.lower() == term.lower():
+                return {
+                    "matched": True,
+                    "canonical_title": hit_title,
+                    "zim_path": first.get("file_path", ""),
+                    "entry_path": first.get("entry_path", ""),
+                }
+    except Exception:
+        pass
+
+    return {"matched": False, "canonical_title": "", "zim_path": "", "entry_path": ""}
+
+
+@functools.lru_cache(maxsize=4096)
+def _cached_resolve_clinical_concept(clean_term: str) -> Dict[str, Any]:
+    """Internal memoized resolver for clinical concepts."""
+    # 1. SciSpaCy Linker Engine
     try:
         res = resolve_ontology_concept(clean_term)
         if res.get("matched") and res.get("score", 0.0) >= 0.70:
@@ -633,31 +740,32 @@ def _resolve_clinical_concept(term: str) -> Dict[str, Any]:
         pass
 
     # 2. SQLite kb_aliases lookup
-    try:
-        alias_row = lookup_ontology_alias(clean_term)
-        if alias_row:
-            types = alias_row.get("types", [])
-            cat = "disease"
-            t_str = " ".join(str(t) for t in types).lower()
-            if any(x in t_str for x in ["t007", "bacter", "organism", "virus", "t005"]):
-                cat = "microorganism"
-            elif any(x in t_str for x in ["t121", "t200", "pharmacolog", "drug", "chemical"]):
-                cat = "drug_chemical"
-            elif any(x in t_str for x in ["t023", "t024", "anatom", "body part"]):
-                cat = "anatomy"
-            elif any(x in t_str for x in ["t060", "t061", "procedur", "therap"]):
-                cat = "procedure"
+    if lookup_ontology_alias is not None:
+        try:
+            alias_row = lookup_ontology_alias(clean_term)
+            if alias_row:
+                types = alias_row.get("types", [])
+                cat = "disease"
+                t_str = " ".join(str(t) for t in types).lower()
+                if any(x in t_str for x in ["t007", "bacter", "organism", "virus", "t005"]):
+                    cat = "microorganism"
+                elif any(x in t_str for x in ["t121", "t200", "pharmacolog", "drug", "chemical"]):
+                    cat = "drug_chemical"
+                elif any(x in t_str for x in ["t023", "t024", "anatom", "body part"]):
+                    cat = "anatomy"
+                elif any(x in t_str for x in ["t060", "t061", "procedur", "therap"]):
+                    cat = "procedure"
 
-            return {
-                "matched": True,
-                "cui": alias_row.get("cui", ""),
-                "canonical_name": alias_row.get("canonical_name", clean_term.title()),
-                "kb_source": alias_row.get("kb_source", "kb"),
-                "semantic_category": cat,
-                "score": 1.0,
-            }
-    except Exception:
-        pass
+                return {
+                    "matched": True,
+                    "cui": alias_row.get("cui", ""),
+                    "canonical_name": alias_row.get("canonical_name", clean_term.title()),
+                    "kb_source": alias_row.get("kb_source", "kb"),
+                    "semantic_category": cat,
+                    "score": 1.0,
+                }
+        except Exception:
+            pass
 
     # 3. LibZim Resolution
     try:
@@ -684,11 +792,25 @@ def _resolve_clinical_concept(term: str) -> Dict[str, Any]:
     }
 
 
+def _resolve_clinical_concept(term: str) -> Dict[str, Any]:
+    """Unified multi-tier offline resolver returning mutable dictionary copies."""
+    clean_term = term.strip().lower()
+    if not clean_term:
+        return {
+            "matched": False,
+            "cui": "",
+            "canonical_name": "",
+            "score": 0.0,
+            "semantic_category": "unknown",
+        }
+    return dict(_cached_resolve_clinical_concept(clean_term))
+
+
 def extract_clinical_modifiers(text: str) -> Dict[str, str]:
-    """Extracts clinical modifier flags (Type 1 vs 2, Acute vs Chronic, etc.)."""
+    """Extracts first clinical modifier flags (Type 1 vs 2, Acute vs Chronic, etc.)."""
     mods: Dict[str, str] = {}
     for mod_name, pattern in SUBTYPE_MODIFIER_PATTERNS.items():
-        match = pattern.search(text)
+        match = pattern.search(text or "")
         if match:
             raw_val = match.group(1).lower().strip()
             norm_val = ROMAN_NUMERAL_MAP.get(raw_val, raw_val)
@@ -696,9 +818,39 @@ def extract_clinical_modifiers(text: str) -> Dict[str, str]:
     return mods
 
 
+def extract_all_clinical_modifiers(text: str) -> Dict[str, Set[str]]:
+    """Extracts all clinical modifier flags present within a text block to handle comparative sections."""
+    mods: Dict[str, Set[str]] = {}
+    for mod_name, pattern in SUBTYPE_MODIFIER_PATTERNS.items():
+        found = set()
+        for match in pattern.finditer(text or ""):
+            raw_val = match.group(1).lower().strip()
+            norm_val = ROMAN_NUMERAL_MAP.get(raw_val, raw_val)
+            found.add(f"{mod_name}_{norm_val}")
+        if found:
+            mods[mod_name] = found
+    return mods
+
+
+@functools.lru_cache(maxsize=2048)
+def _word_boundary_pattern(phrase: str) -> re.Pattern:
+    return re.compile(rf"\b{re.escape(phrase.lower())}\b", re.IGNORECASE)
+
+
+def _contains_phrase_bounded(text_lower: str, phrase_lower: str) -> bool:
+    """Checks whether phrase_lower occurs in text_lower on strict word boundaries."""
+    if not text_lower or not phrase_lower:
+        return False
+    if text_lower == phrase_lower:
+        return True
+    if phrase_lower not in text_lower:
+        return False
+    return bool(_word_boundary_pattern(phrase_lower).search(text_lower))
+
+
 def generate_candidate_variants(term: str) -> List[str]:
     """Generates acronym, organ-adjective, prepositional, and comma-inverted variants."""
-    raw = term.strip()
+    raw = (term or "").strip()
     if not raw:
         return []
 
@@ -716,17 +868,17 @@ def generate_candidate_variants(term: str) -> List[str]:
             if inverted not in variants:
                 variants.append(inverted)
 
-    # Layperson and medical synonym mappings
+    # Layperson and medical synonym mappings (strict word-boundary matching)
     raw_low = raw.lower()
-    clean_low = re.sub(r"^(the|a|an)\s+", "", raw_low).strip()
+    clean_low = re.sub(r"^(?:the|a|an)\s+", "", raw_low).strip()
     for lp, med_list in LAYPERSON_MEDICAL_SYNONYMS.items():
-        if lp in raw_low or lp in clean_low or raw_low in lp:
+        if _contains_phrase_bounded(raw_low, lp) or _contains_phrase_bounded(clean_low, lp):
             for med in med_list:
                 if med not in variants:
                     variants.append(med)
         else:
             for med in med_list:
-                if med in raw_low or med in clean_low or raw_low in med:
+                if _contains_phrase_bounded(raw_low, med) or _contains_phrase_bounded(clean_low, med):
                     if lp not in variants:
                         variants.append(lp)
                     for other_med in med_list:
@@ -740,13 +892,12 @@ def generate_candidate_variants(term: str) -> List[str]:
         if exp not in variants:
             variants.append(exp)
 
-    raw_lower = raw.lower()
     for acr, exp in CLINICAL_ACRONYMS.items():
-        if exp.lower() == raw_lower and acr not in variants:
+        if exp.lower() == raw_low and acr not in variants:
             variants.append(acr)
 
     # Strip leading articles
-    clean = re.sub(r"^(the|a|an)\s+", "", raw, flags=re.IGNORECASE).strip()
+    clean = re.sub(r"^(?:the|a|an)\s+", "", raw, flags=re.IGNORECASE).strip()
     if clean and clean not in variants:
         variants.append(clean)
 
@@ -775,12 +926,12 @@ def generate_candidate_variants(term: str) -> List[str]:
         # 2. Organ-to-Adjective transposition: "heart amyloidosis" or "amyloidosis heart"
         for org, adj in ORGAN_TO_ADJECTIVE.items():
             if c_lower.startswith(f"{org} "):
-                rem = c_term[len(org) + 1:].strip()
+                rem = c_term[len(org) + 1 :].strip()
                 v = f"{adj} {rem}".strip()
                 if v not in variants:
                     variants.append(v)
             elif c_lower.endswith(f" {org}"):
-                rem = c_term[:-(len(org) + 1)].strip()
+                rem = c_term[: -(len(org) + 1)].strip()
                 v = f"{adj} {rem}".strip()
                 if v not in variants:
                     variants.append(v)
@@ -788,32 +939,40 @@ def generate_candidate_variants(term: str) -> List[str]:
         # 3. Adjective-to-Organ transposition: "renal transplantation" -> "kidney transplantation"
         for adj, org in ADJECTIVE_TO_ORGAN.items():
             if c_lower.startswith(f"{adj} "):
-                rem = c_term[len(adj) + 1:].strip()
+                rem = c_term[len(adj) + 1 :].strip()
                 v = f"{org} {rem}".strip()
                 if v not in variants:
                     variants.append(v)
             elif c_lower.endswith(f" {adj}"):
-                rem = c_term[:-(len(adj) + 1)].strip()
+                rem = c_term[: -(len(adj) + 1)].strip()
                 v = f"{rem} {org}".strip()
                 if v not in variants:
                     variants.append(v)
 
-        # 4. Common clinical verb/noun synonyms: "transplantation" <-> "transplant"
+        # 4. Common clinical verb/noun synonyms
         if "transplantation" in c_lower:
-            v = re.sub(r"\btransplantation\b", "transplant", c_term, flags=re.IGNORECASE).strip()
+            v = re.sub(
+                r"\btransplantation\b", "transplant", c_term, flags=re.IGNORECASE
+            ).strip()
             if v not in variants:
                 variants.append(v)
         elif "transplant" in c_lower and "transplantation" not in c_lower:
-            v = re.sub(r"\btransplant\b", "transplantation", c_term, flags=re.IGNORECASE).strip()
+            v = re.sub(
+                r"\btransplant\b", "transplantation", c_term, flags=re.IGNORECASE
+            ).strip()
             if v not in variants:
                 variants.append(v)
 
         if "insufficiency" in c_lower:
-            v = re.sub(r"\binsufficiency\b", "failure", c_term, flags=re.IGNORECASE).strip()
+            v = re.sub(
+                r"\binsufficiency\b", "failure", c_term, flags=re.IGNORECASE
+            ).strip()
             if v not in variants:
                 variants.append(v)
         elif "failure" in c_lower:
-            v = re.sub(r"\bfailure\b", "insufficiency", c_term, flags=re.IGNORECASE).strip()
+            v = re.sub(
+                r"\bfailure\b", "insufficiency", c_term, flags=re.IGNORECASE
+            ).strip()
             if v not in variants:
                 variants.append(v)
 
@@ -826,9 +985,9 @@ def generate_candidate_variants(term: str) -> List[str]:
     return variants
 
 
-def get_topic_aliases(term: str) -> List[str]:
+def get_topic_aliases(term: str, max_aliases: int = 20) -> List[str]:
     """
-    Comprehensive topic alias resolver.
+    Comprehensive topic alias resolver bounded to prevent BM25 query expansion explosion.
     Returns primary term, candidate variants (transpositions, inverted forms, acronyms),
     UMLS/Ontology synonyms (via get_concept_aliases), and ZIM redirects/canonical titles.
     """
@@ -836,13 +995,14 @@ def get_topic_aliases(term: str) -> List[str]:
         return []
 
     raw = term.strip()
-    seen = set()
+    max_aliases = max(1, int(max_aliases or 20))
+    seen: Set[str] = set()
     aliases: List[str] = []
 
-    def _add(a: str):
-        if not a:
+    def _add(a: str) -> None:
+        if not a or len(aliases) >= max_aliases:
             return
-        a_clean = re.sub(r"^(the|a|an)\s+", "", a.strip(), flags=re.IGNORECASE).strip()
+        a_clean = re.sub(r"^(?:the|a|an)\s+", "", a.strip(), flags=re.IGNORECASE).strip()
         a_low = a_clean.lower()
         if a_clean and len(a_clean) >= 2 and a_low not in seen:
             seen.add(a_low)
@@ -852,31 +1012,33 @@ def get_topic_aliases(term: str) -> List[str]:
     variants = generate_candidate_variants(raw)
     for v in variants:
         _add(v)
+        if len(aliases) >= max_aliases:
+            return aliases
 
     # 2. UMLS / KB Concept Aliases
     try:
-        from parsers.scispacy_linker_engine import get_concept_aliases
-        for v in list(variants[:4]):
+        from parsers.scispacy_linker_engine import get_concept_aliases  # type: ignore
+
+        for v in variants[:3]:
             kb_aliases = get_concept_aliases(v)
-            for ka in kb_aliases:
+            for ka in kb_aliases[:5]:
                 _add(ka)
-                for ka_v in generate_candidate_variants(ka):
-                    _add(ka_v)
-    except Exception as e:
-        logger.debug(f"get_topic_aliases KB error: {e}")
+                if len(aliases) >= max_aliases:
+                    return aliases
+    except Exception as exc:
+        logger.debug("get_topic_aliases KB error: %s", exc)
 
     # 3. ZIM Resolution
     try:
-        from parsers.zim_reader import resolve_zim_topic
-        for v in list(variants[:3]):
+        for v in variants[:2]:
             zim_res = resolve_zim_topic(v)
             if zim_res.get("matched") and zim_res.get("canonical_title"):
                 can = zim_res["canonical_title"]
                 _add(can)
-                for can_v in generate_candidate_variants(can):
-                    _add(can_v)
-    except Exception as e:
-        logger.debug(f"get_topic_aliases ZIM error: {e}")
+                if len(aliases) >= max_aliases:
+                    return aliases
+    except Exception as exc:
+        logger.debug("get_topic_aliases ZIM error: %s", exc)
 
     return aliases
 
@@ -887,15 +1049,21 @@ def canonicalize_clinical_phrase(raw_phrase: str) -> Tuple[str, str]:
     Suppresses isolated generic words ('heart', 'patient', 'acute', etc.).
     Guarantees subtype protection: phrases with different clinical modifiers receive distinct signatures.
     """
-    clean_phrase = raw_phrase.strip()
+    clean_phrase = (raw_phrase or "").strip()
     if not clean_phrase:
         return "", ""
 
-    clean_phrase = re.sub(r"^(the|a|an)\s+", "", clean_phrase, flags=re.IGNORECASE).strip()
+    clean_phrase = re.sub(
+        r"^(?:the|a|an)\s+", "", clean_phrase, flags=re.IGNORECASE
+    ).strip()
     clean_phrase = re.sub(r"^[\W_]+|[\W_]+$", "", clean_phrase).strip()
 
     norm_key = normalize_topic_key(clean_phrase)
-    if not norm_key or norm_key in CLINICAL_STOPWORDS or norm_key in ISOLATED_GENERIC_WORDS:
+    if (
+        not norm_key
+        or norm_key in CLINICAL_STOPWORDS
+        or norm_key in ISOLATED_GENERIC_WORDS
+    ):
         return "", ""
 
     modifiers = extract_clinical_modifiers(clean_phrase)
@@ -916,7 +1084,6 @@ def canonicalize_clinical_phrase(raw_phrase: str) -> Tuple[str, str]:
 
     base_id = resolved_cui if resolved_cui else normalize_topic_key(resolved_name)
 
-    # Subtype-Guarded Signature Construction
     display_name = resolved_name
     if modifiers:
         mod_sig = "_".join(f"{k}:{v}" for k, v in sorted(modifiers.items()))
@@ -924,7 +1091,11 @@ def canonicalize_clinical_phrase(raw_phrase: str) -> Tuple[str, str]:
 
         disp_lower = display_name.lower()
         prefix_parts: List[str] = []
-        if "chronicity_acute" in mod_sig and "acute" not in disp_lower and "subacute" not in disp_lower:
+        if (
+            "chronicity_acute" in mod_sig
+            and "acute" not in disp_lower
+            and "subacute" not in disp_lower
+        ):
             prefix_parts.append("Acute")
         elif "chronicity_chronic" in mod_sig and "chronic" not in disp_lower:
             prefix_parts.append("Chronic")
@@ -963,7 +1134,7 @@ def is_clause_negated(clause_text: str, preceding_context: str) -> bool:
         boundary_matches = list(CONTRAST_RESET_REGEX.finditer(preceding_context))
         check_window = preceding_context
         if boundary_matches:
-            check_window = preceding_context[boundary_matches[-1].end():]
+            check_window = preceding_context[boundary_matches[-1].end() :]
         if NEGATION_SCOPE_TRIGGER.search(check_window):
             return True
 
@@ -973,15 +1144,13 @@ def is_clause_negated(clause_text: str, preceding_context: str) -> bool:
 def isolate_subclauses(text: str) -> List[Tuple[str, bool]]:
     """
     Splits clinical narrative into atomic sub-clauses on punctuation and conjunctions.
-    Preserves single-letter genus abbreviations (e.g., 'S. aureus') from sentence chopping.
+    Preserves single-letter genus abbreviations (e.g., 'S. aureus') and clinical abbreviations.
     """
     if not text or not text.strip():
         return []
 
     cleaned_text = GENERIC_QUESTION_BOILERPLATE.sub(" ", text.strip())
-
-    # Split into sentences without breaking genus abbreviations (e.g. S. aureus, E. coli)
-    sentences = re.split(r"(?<!\b[A-Z])(?<=[.!?])\s+", cleaned_text)
+    sentences = SENTENCE_SPLIT_REGEX.split(cleaned_text)
     subclauses: List[Tuple[str, bool]] = []
 
     for sentence in sentences:
@@ -1015,16 +1184,26 @@ def isolate_subclauses(text: str) -> List[Tuple[str, bool]]:
 # ---------------------------------------------------------------------------
 def is_valid_clinical_candidate(term: str, ignored_keys: Set[str]) -> bool:
     """Validates candidate text against length, stopwords, and generic terms."""
-    term_clean = term.strip()
+    term_clean = term.strip(".,;:?!'\"()[]{} \t\n\r")
+    if not term_clean:
+        return False
+
     words = term_clean.split()
     if not (1 <= len(words) <= 6):
         return False
 
-    if len(term_clean) < 3 and term_clean.upper() not in {"MI", "PE", "TB", "RA", "MS", "DM", "CHF", "COPD"}:
+    if len(term_clean) < 3 and term_clean.upper() not in {
+        "MI", "PE", "TB", "RA", "MS", "DM", "CHF", "COPD"
+    }:
         return False
 
     key = normalize_topic_key(term_clean)
-    if not key or key in ignored_keys or key in CLINICAL_STOPWORDS or key in ISOLATED_GENERIC_WORDS:
+    if (
+        not key
+        or key in ignored_keys
+        or key in CLINICAL_STOPWORDS
+        or key in ISOLATED_GENERIC_WORDS
+    ):
         return False
 
     if LAB_VALUE_OR_NUMERIC_REGEX.match(term_clean) or AGE_TERM_REGEX.match(term_clean):
@@ -1034,7 +1213,7 @@ def is_valid_clinical_candidate(term: str, ignored_keys: Set[str]) -> bool:
 
 
 def extract_regex_medical_entities(text: str) -> List[str]:
-    """Extracts binomial microbes, pharmacology stems, and prepositional conditions."""
+    """Extracts binomial microbes, pharmacology stems, and prepositional conditions via precompiled patterns."""
     candidates: List[str] = []
 
     # 1. Microorganisms: Binomial
@@ -1069,87 +1248,123 @@ def extract_regex_medical_entities(text: str) -> List[str]:
     for m in PREPOSITIONAL_PATHOLOGY_REGEX.finditer(text):
         span = m.group(0).strip()
         span_lower = span.lower()
-        if not any(sw in span_lower for sw in ["which of", "history of", "evidence of", "diagnosis of", "years of"]):
+        if not any(
+            sw in span_lower
+            for sw in ["which of", "history of", "evidence of", "diagnosis of", "years of"]
+        ):
             candidates.append(span)
 
-    # 6. Eponymic clinical syndromes (excluding generic demonstratives)
-    for m in re.finditer(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:syndrome|disease|sign|phenomenon|node|triad|criteria|classification)\b", text):
+    # 6. Eponymic clinical syndromes
+    for m in EPONYMIC_SYNDROME_REGEX.finditer(text):
         eponym = m.group(1).lower()
-        if eponym not in {"this", "that", "the", "which", "what", "each", "every", "another", "same", "current", "present"}:
+        if eponym not in {
+            "this", "that", "the", "which", "what", "each", "every",
+            "another", "same", "current", "present",
+        }:
             candidates.append(m.group(0).strip())
 
-    # 7. Clinical Head Nouns and Medical Suffixes (1-3 preceding modifier words)
-    medical_suffix_pattern = r"\b(?:[A-Za-z-]{3,}\s+){0,2}[A-Za-z-]{3,}(?:emia|osis|itis|oma|pathy|trophy|plasia|uria|penia|cytosis|ectasis|sclerosis|megaly)\b"
-    for m in re.finditer(medical_suffix_pattern, text, re.IGNORECASE):
+    # 7. Clinical Head Nouns and Medical Suffixes
+    for m in MEDICAL_SUFFIX_REGEX.finditer(text):
         span = m.group(0).strip()
         span_lower = span.lower()
-        if not any(sw in span_lower for sw in ["which of", "history of", "evidence of", "diagnosis of", "years of", "most likely"]):
+        if not any(
+            sw in span_lower
+            for sw in [
+                "which of", "history of", "evidence of",
+                "diagnosis of", "years of", "most likely",
+            ]
+        ):
             candidates.append(span)
 
-    head_nouns_joined = "|".join(re.escape(h) for h in CLINICAL_HEAD_NOUNS)
-    head_noun_pattern = rf"\b(?:[A-Za-z-]{3,}\s+){{0,2}}(?:{head_nouns_joined})\b"
-    for m in re.finditer(head_noun_pattern, text, re.IGNORECASE):
+    for m in HEAD_NOUN_MATCH_REGEX.finditer(text):
         span = m.group(0).strip()
         span_lower = span.lower()
-        if not any(sw in span_lower for sw in ["which of", "history of", "evidence of", "diagnosis of", "years of", "most likely"]):
+        if not any(
+            sw in span_lower
+            for sw in [
+                "which of", "history of", "evidence of",
+                "diagnosis of", "years of", "most likely",
+            ]
+        ):
             candidates.append(span)
 
     return candidates
 
 
-def extract_spacy_entities(nlp: Any, text: str) -> List[str]:
-    """Runs CPU-bound spaCy entity recognition and dependency noun-phrase walking."""
-    if nlp is None or not text.strip():
+def extract_spacy_entities(nlp_or_pipelines: Any, text: str) -> List[str]:
+    """Runs CPU-bound spaCy entity recognition and dependency noun-phrase walking with thread safety."""
+    if nlp_or_pipelines is None or not text.strip():
         return []
 
+    pipelines = (
+        nlp_or_pipelines
+        if isinstance(nlp_or_pipelines, list)
+        else [nlp_or_pipelines]
+    )
     candidates: List[str] = []
-    try:
-        doc = nlp(text)
 
-        # 1. SpaCy Entities
-        for ent in doc.ents:
-            if ent.label_ not in SPACY_EXCLUDED_NER_TYPES:
-                ent_text = ent.text.strip()
-                if len(ent_text) >= 3 and len(ent_text.split()) <= 6:
-                    candidates.append(ent_text)
+    with _SPACY_EXEC_LOCK:
+        for idx, nlp in enumerate(pipelines):
+            if nlp is None:
+                continue
+            try:
+                doc = nlp(text)
 
-        # 2. Dependency Noun Chunks
-        try:
-            if hasattr(doc, "noun_chunks"):
-                for chunk in doc.noun_chunks:
-                    chunk_text = chunk.text.strip()
-                    if 3 <= len(chunk_text) <= 60 and len(chunk_text.split()) <= 6:
-                        candidates.append(chunk_text)
-        except Exception:
-            pass
+                # 1. SpaCy Entities (runs across all ensemble NER models)
+                for ent in doc.ents:
+                    if ent.label_ not in SPACY_EXCLUDED_NER_TYPES:
+                        ent_text = ent.text.strip()
+                        if len(ent_text) >= 3 and len(ent_text.split()) <= 6:
+                            candidates.append(ent_text)
 
-        # 3. Head Noun Syntactic Dependency Walking (amod + compound + prep_of)
-        try:
-            for token in doc:
-                tok_lower = token.text.lower()
-                tok_lemma = token.lemma_.lower()
-                if tok_lower in CLINICAL_HEAD_NOUNS or tok_lemma in CLINICAL_HEAD_NOUNS:
-                    left_mods = [t for t in token.lefts if t.dep_ in {"amod", "compound", "nummod"}]
-                    span_tokens = left_mods + [token]
+                # 2 & 3. Dependency Noun Chunks & Head Noun Walking (only needed on primary parser)
+                if idx == 0:
+                    try:
+                        if hasattr(doc, "noun_chunks"):
+                            for chunk in doc.noun_chunks:
+                                chunk_text = chunk.text.strip()
+                                if 3 <= len(chunk_text) <= 60 and len(chunk_text.split()) <= 6:
+                                    candidates.append(chunk_text)
+                    except Exception:
+                        pass
 
-                    for right in token.rights:
-                        if right.dep_ == "prep" and right.text.lower() == "of":
-                            pobjs = [p for p in right.children if p.dep_ == "pobj"]
-                            if pobjs:
-                                pobj = pobjs[0]
-                                span_tokens = span_tokens + [right] + sorted(list(pobj.subtree), key=lambda t: t.i)
-                                break
+                    try:
+                        for token in doc:
+                            tok_lower = token.text.lower()
+                            tok_lemma = token.lemma_.lower()
+                            if tok_lower in CLINICAL_HEAD_NOUNS or tok_lemma in CLINICAL_HEAD_NOUNS:
+                                left_mods = [
+                                    t
+                                    for t in token.lefts
+                                    if t.dep_ in {"amod", "compound", "nummod"}
+                                ]
+                                span_tokens = left_mods + [token]
 
-                    if len(span_tokens) > 1:
-                        span_tokens = sorted(span_tokens, key=lambda t: t.i)
-                        span_str = " ".join(t.text for t in span_tokens).strip()
-                        if 3 <= len(span_str) <= 60 and len(span_str.split()) <= 6:
-                            candidates.append(span_str)
-        except Exception:
-            pass
+                                for right in token.rights:
+                                    if right.dep_ == "prep" and right.text.lower() == "of":
+                                        pobjs = [
+                                            p for p in right.children if p.dep_ == "pobj"
+                                        ]
+                                        if pobjs:
+                                            pobj = pobjs[0]
+                                            span_tokens = (
+                                                span_tokens
+                                                + [right]
+                                                + sorted(list(pobj.subtree), key=lambda t: t.i)
+                                            )
+                                            break
 
-    except Exception as exc:
-        logger.debug("spaCy extraction exception on text: %s", exc)
+                                if len(span_tokens) > 1:
+                                    unique_tokens = sorted(
+                                        list(set(span_tokens)), key=lambda t: t.i
+                                    )
+                                    span_str = " ".join(t.text for t in unique_tokens).strip()
+                                    if 3 <= len(span_str) <= 60 and len(span_str.split()) <= 6:
+                                        candidates.append(span_str)
+                    except Exception:
+                        pass
+            except Exception as exc:
+                logger.debug("spaCy extraction exception on text: %s", exc)
 
     return candidates
 
@@ -1158,69 +1373,115 @@ def extract_spacy_entities(nlp: Any, text: str) -> List[str]:
 # Primary Extraction Pipelines
 # ---------------------------------------------------------------------------
 def extract_topics_local(
-    question: str,
+    question: str = "",
     options: Optional[Any] = None,
     explanation: str = "",
     strategy: str = "medspacy",
     use_zim_refinement: bool = False,
     use_tantivy_refinement: bool = False,
+    text: Optional[str] = None,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
     """
     Main extraction interface. Resolves clinical concepts, protects subtypes,
-    and returns verified and doubtful classifications.
+    and returns verified and doubtful classifications conforming to TopicExtractorOutputDict (Section 4).
     """
+    input_text = text if (text is not None and not question) else question
     ignored_keys = get_ignored_topics_set()
-    nlp = get_medspacy_model()
+    active_pipelines = _get_active_spacy_pipelines()
 
     raw_candidates: List[Dict[str, Any]] = []
 
-    # 1. OPTION ISOLATION: Process answer choices first (high signal)
+    # 1. OPTION ISOLATION: Process answer choices first (high priority signal)
     if options:
         option_texts: List[str] = []
-        if isinstance(options, dict):
+        if isinstance(options, str):
+            try:
+                parsed = json.loads(options)
+                if isinstance(parsed, dict):
+                    option_texts = [str(v) for v in parsed.values() if v]
+                elif isinstance(parsed, (list, tuple)):
+                    option_texts = [str(v) for v in parsed if v]
+                else:
+                    option_texts = [options]
+            except Exception:
+                option_texts = [options]
+        elif isinstance(options, dict):
             option_texts = [str(v) for v in options.values() if v]
         elif isinstance(options, (list, tuple)):
             option_texts = [str(v) for v in options if v]
 
         for opt in option_texts:
-            opt_clean = opt.strip()
+            opt_clean = str(opt).strip()
             # Strip MCQ option prefixes (e.g., "(A) Gout", "A. Gout", "1. Gout")
-            opt_clean = re.sub(r"^(?:\(?[A-Ea-e1-5]\)?[\.\)]\s*|\(?[A-Ea-e]\)\s*)", "", opt_clean).strip()
+            opt_clean = re.sub(
+                r"^(?:\(?[A-Ea-e1-5]\)?[\.\)]\s*|\(?[A-Ea-e]\)\s*)", "", opt_clean
+            ).strip()
 
-            # If option has separators (e.g., "Asthma / COPD"), split into individual candidates
+            # Split compound answer choices (e.g., "Asthma / COPD")
             if any(sep in opt_clean for sep in [",", "/", ";", " and "]):
-                pieces = [p.strip() for p in re.split(r"[,/;\n]|(?:\band\b)", opt_clean) if p.strip()]
+                pieces = [
+                    p.strip()
+                    for p in re.split(r"[,/;\n]|(?:\band\b)", opt_clean)
+                    if p.strip()
+                ]
                 for piece in pieces:
                     if is_valid_clinical_candidate(piece, ignored_keys):
-                        raw_candidates.append({"term": piece, "source": "option", "priority": 1.25, "is_negated": False})
+                        raw_candidates.append(
+                            {
+                                "term": piece,
+                                "source": "option",
+                                "priority": 1.25,
+                                "is_negated": False,
+                            }
+                        )
 
             if is_valid_clinical_candidate(opt_clean, ignored_keys):
-                raw_candidates.append({"term": opt_clean, "source": "option", "priority": 1.20, "is_negated": False})
+                raw_candidates.append(
+                    {
+                        "term": opt_clean,
+                        "source": "option",
+                        "priority": 1.20,
+                        "is_negated": False,
+                    }
+                )
 
     # 2. QUESTION & EXPLANATION ISOLATION: Sub-clause boundary processing
     narratives = [
-        (question, "question", 1.0),
+        (input_text, "question", 1.0),
         (explanation, "explanation", 0.9),
     ]
 
     for narrative_text, source_type, base_priority in narratives:
-        if not narrative_text or not narrative_text.strip():
+        if not narrative_text or not str(narrative_text).strip():
             continue
 
-        subclauses = isolate_subclauses(narrative_text)
+        subclauses = isolate_subclauses(str(narrative_text))
         for clause, is_negated in subclauses:
             if is_negated:
                 continue
 
-            # A. Regex and domain pattern extraction
             for rent in extract_regex_medical_entities(clause):
                 if is_valid_clinical_candidate(rent, ignored_keys):
-                    raw_candidates.append({"term": rent, "source": source_type, "priority": base_priority * 1.15, "is_negated": False})
+                    raw_candidates.append(
+                        {
+                            "term": rent,
+                            "source": source_type,
+                            "priority": base_priority * 1.15,
+                            "is_negated": False,
+                        }
+                    )
 
-            # B. SciSpaCy / SpaCy extraction
-            for sent in extract_spacy_entities(nlp, clause):
+            for sent in extract_spacy_entities(active_pipelines, clause):
                 if is_valid_clinical_candidate(sent, ignored_keys):
-                    raw_candidates.append({"term": sent, "source": source_type, "priority": base_priority, "is_negated": False})
+                    raw_candidates.append(
+                        {
+                            "term": sent,
+                            "source": source_type,
+                            "priority": base_priority,
+                            "is_negated": False,
+                        }
+                    )
 
     # 3. DEDUPLICATION, RESOLUTION & SUBTYPE PROTECTION
     canonical_clusters: Dict[str, Dict[str, Any]] = {}
@@ -1237,27 +1498,31 @@ def extract_topics_local(
             continue
 
         if signature not in canonical_clusters:
-            # Resolve concept against multi-tier linkers
             ont_result = _resolve_clinical_concept(term)
             if not ont_result.get("matched") and display_name != term:
                 ont_result = _resolve_clinical_concept(display_name)
 
-            cui = ont_result.get("cui", "")
-            cat = ont_result.get("semantic_category", "unknown")
-            score = ont_result.get("score", 0.0)
-            ont_matched = ont_result.get("matched", False) and score >= 0.70
+            cui = str(ont_result.get("cui", "") or "")
+            cat = _normalize_semantic_category(
+                ont_result.get("semantic_category", "unknown")
+            )
+            score = float(ont_result.get("score", 0.0) or 0.0)
+            ont_matched = bool(ont_result.get("matched", False) and score >= 0.70)
 
             zim_matched = False
             if use_zim_refinement or not ont_matched:
                 zim_res = resolve_zim_topic(term)
                 if not zim_res.get("matched") and display_name != term:
                     zim_res = resolve_zim_topic(display_name)
-                zim_matched = zim_res.get("matched", False)
+                zim_matched = bool(zim_res.get("matched", False))
 
+            # Invariant 10: Tantivy search_index returns dict of lists {"obsidian":[], ...}
             tantivy_boost = False
             if use_tantivy_refinement:
                 t_hits = search_index(display_name, limit_per_source=1)
-                tantivy_boost = bool(t_hits)
+                tantivy_boost = any(
+                    len(source_results) > 0 for source_results in t_hits.values()
+                )
 
             term_lower = term.lower()
             is_microorganism = (
@@ -1285,9 +1550,20 @@ def extract_topics_local(
                     cat = "microorganism"
                 elif is_pharmacology:
                     cat = "drug_chemical"
-                elif any(term_lower.endswith(w) for w in ["nerve", "artery", "vein", "trunk", "canal", "fossa"]):
+                elif any(
+                    term_lower.endswith(w)
+                    for w in ["nerve", "artery", "vein", "trunk", "canal", "fossa"]
+                ):
                     cat = "anatomy"
-                elif any(term_lower.endswith(w) for w in ["syndrome", "disease", "itis", "osis", "oma", "emia"]):
+                elif any(
+                    term_lower.endswith(w)
+                    for w in ["ectomy", "otomy", "ostomy", "plasty", "scopy", "biopsy"]
+                ):
+                    cat = "procedure"
+                elif any(
+                    term_lower.endswith(w)
+                    for w in ["syndrome", "disease", "itis", "osis", "oma", "emia", "pathy"]
+                ):
                     cat = "disease"
 
             canonical_clusters[signature] = {
@@ -1321,34 +1597,43 @@ def extract_topics_local(
         reverse=True,
     )
 
+    # 5. MAIN TOPIC SELECTION
+    main_topic = ""
+    for item in sorted_clusters:
+        if item["verified"]:
+            if item["semantic_category"] in {
+                "disease",
+                "microorganism",
+                "anatomy",
+                "drug_chemical",
+                "procedure",
+            }:
+                main_topic = item["name"]
+                break
+
+    if not main_topic and sorted_clusters:
+        main_topic = sorted_clusters[0]["name"]
+
     topic_details: List[Dict[str, Any]] = []
     all_topics: List[str] = []
 
     for item in sorted_clusters:
         t_name = item["name"]
         all_topics.append(t_name)
+        is_main = 1 if t_name == main_topic else 0
         topic_details.append(
             {
                 "name": t_name,
-                "verified": item["verified"],
-                "selected": item["selected"],
+                "topic_name": t_name,  # Matches extracted_topics SQLite table
+                "is_main_topic": is_main,
+                "verified": 1 if item["verified"] else 0,
+                "selected": 1 if item["selected"] else 0,
                 "confidence": item["confidence"],
                 "semantic_category": item["semantic_category"],
                 "cui": item["cui"],
-                "score": round(item["score"], 3),
+                "score": round(float(item["score"]), 3),
             }
         )
-
-    # 5. MAIN TOPIC SELECTION
-    main_topic = ""
-    for item in sorted_clusters:
-        if item["verified"]:
-            if item["semantic_category"] in {"disease", "microorganism", "anatomy", "drug_chemical"}:
-                main_topic = item["name"]
-                break
-
-    if not main_topic and sorted_clusters:
-        main_topic = sorted_clusters[0]["name"]
 
     return {
         "main_topic": main_topic,
@@ -1359,14 +1644,21 @@ def extract_topics_local(
 
 def extract_topics(
     text: str,
+    explanation: str = "",
+    strategy: str = "medspacy",
     use_zim_refinement: bool = False,
     use_tantivy_refinement: bool = False,
+    **kwargs: Any,
 ) -> List[str]:
-    """Helper extracting topic strings from a standalone clinical query or text."""
+    """
+    Extracts ordered clinical topic strings adhering to blueprint.md signature verbatim.
+    Backward-compatible with single-argument and full keyword calls.
+    """
     res = extract_topics_local(
         question=text,
-        options=None,
-        explanation="",
+        options=kwargs.get("options", None),
+        explanation=explanation,
+        strategy=strategy,
         use_zim_refinement=use_zim_refinement,
         use_tantivy_refinement=use_tantivy_refinement,
     )
@@ -1374,10 +1666,10 @@ def extract_topics(
 
 
 # ---------------------------------------------------------------------------
-# Sibling Topic Filtering
+# Sibling Topic Filtering (ChunkDict Contract Compliant)
 # ---------------------------------------------------------------------------
 SIBLING_MUTUAL_EXCLUSIONS: List[Tuple[Set[str], Set[str]]] = [
-    ({"type 1", "type 1 diabetes", "t1d"}, {"type 2", "type 2 diabetes", "t2d"}),
+    ({"type 1", "type 1 diabetes", "t1d", "t1dm"}, {"type 2", "type 2 diabetes", "t2d", "t2dm"}),
     ({"crohn", "crohn's", "crohn disease"}, {"ulcerative colitis", "uc"}),
     (
         {"hodgkin lymphoma", "hodgkin's lymphoma", "hodgkin disease"},
@@ -1397,13 +1689,20 @@ SIBLING_MUTUAL_EXCLUSIONS: List[Tuple[Set[str], Set[str]]] = [
 ]
 
 
-def filter_sibling_topics(query: str, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Prunes search hits addressing conflicting sibling subtypes or contradictory modifiers."""
+def filter_sibling_topics(
+    query: str, chunks: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """
+    Prunes search hits addressing conflicting sibling subtypes or contradictory modifiers.
+    Uses strict word-boundary checks so short acronyms ('uc', 'aki', 't1d') never
+    falsely match substrings inside normal words ('mucosa', 'structure').
+    Preserves comparative passages containing both sibling topics.
+    """
     if not query or not chunks:
         return chunks
 
     query_lower = query.lower()
-    query_mods = extract_clinical_modifiers(query_lower)
+    query_mods = extract_all_clinical_modifiers(query_lower)
 
     filtered: List[Dict[str, Any]] = []
 
@@ -1411,33 +1710,42 @@ def filter_sibling_topics(query: str, chunks: List[Dict[str, Any]]) -> List[Dict
         chunk_title = str(chunk.get("title", "")).lower()
         chunk_topic = str(chunk.get("topic", chunk.get("main_topic", ""))).lower()
         chunk_heading = str(chunk.get("heading", chunk.get("heading_path", ""))).lower()
-        chunk_subheading = str(chunk.get("subheading", "")).lower()
-        chunk_meta = f"{chunk_title} {chunk_topic} {chunk_heading} {chunk_subheading}"
+        chunk_subheading = str(
+            chunk.get("subheading", chunk.get("section_title", ""))
+        ).lower()
+        chunk_snippet = str(chunk.get("snippet", chunk.get("text", "")))[:600].lower()
+        chunk_meta = (
+            f"{chunk_title} {chunk_topic} {chunk_heading} {chunk_subheading} {chunk_snippet}"
+        )
 
         is_conflict = False
 
-        # 1. Mutual exclusion pairs
+        # 1. Mutual exclusion pairs (strict word-boundary matching)
         for group_a, group_b in SIBLING_MUTUAL_EXCLUSIONS:
-            in_a_query = any(t in query_lower for t in group_a)
-            in_b_query = any(t in query_lower for t in group_b)
+            in_a_query = any(_contains_phrase_bounded(query_lower, t) for t in group_a)
+            in_b_query = any(_contains_phrase_bounded(query_lower, t) for t in group_b)
 
-            in_a_chunk = any(t in chunk_meta for t in group_a)
-            in_b_chunk = any(t in chunk_meta for t in group_b)
+            if not (in_a_query ^ in_b_query):
+                continue
 
-            if in_a_query and not in_b_query and in_b_chunk and not in_a_chunk:
+            in_a_chunk = any(_contains_phrase_bounded(chunk_meta, t) for t in group_a)
+            in_b_chunk = any(_contains_phrase_bounded(chunk_meta, t) for t in group_b)
+
+            if in_a_query and in_b_chunk and not in_a_chunk:
                 is_conflict = True
                 break
-            if in_b_query and not in_a_query and in_a_chunk and not in_b_chunk:
+            if in_b_query and in_a_chunk and not in_b_chunk:
                 is_conflict = True
                 break
 
         # 2. Contradictory subtype modifiers
         if not is_conflict and query_mods:
-            chunk_mods = extract_clinical_modifiers(chunk_meta)
-            for mod_cat, query_val in query_mods.items():
+            chunk_mods = extract_all_clinical_modifiers(chunk_meta)
+            for mod_cat, query_vals in query_mods.items():
                 if mod_cat in chunk_mods:
-                    chunk_val = chunk_mods[mod_cat]
-                    if query_val != chunk_val:
+                    chunk_vals = chunk_mods[mod_cat]
+                    # Conflict exists only if chunk has contradictory values and NONE of the query values
+                    if not (query_vals & chunk_vals):
                         is_conflict = True
                         break
 
@@ -1445,3 +1753,24 @@ def filter_sibling_topics(query: str, chunks: List[Dict[str, Any]]) -> List[Dict
             filtered.append(chunk)
 
     return filtered if filtered else chunks
+
+
+# ---------------------------------------------------------------------------
+# Module Public Exports
+# ---------------------------------------------------------------------------
+__all__ = [
+    "extract_topics",
+    "extract_topics_local",
+    "filter_sibling_topics",
+    "get_topic_aliases",
+    "generate_candidate_variants",
+    "add_ignored_topic",
+    "remove_ignored_topic",
+    "get_ignored_topics_set",
+    "canonicalize_clinical_phrase",
+    "extract_clinical_modifiers",
+    "extract_all_clinical_modifiers",
+    "get_medspacy_model",
+    "normalize_topic_key",
+    "resolve_zim_topic",
+]

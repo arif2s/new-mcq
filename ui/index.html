@@ -3,11 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Medisearch AI — Offline-First Clinical MCQ Hub, Knowledge Synthesizer, and RAG Vault for Medical Education." />
+    <meta
+      name="description"
+      content="Medisearch AI — Offline-First Clinical MCQ Hub, Knowledge Synthesizer, and RAG Vault for Medical Education."
+    />
     <meta name="theme-color" content="#0f172a" />
     <title>Medisearch AI — Clinical MCQ Hub</title>
 
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>" />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>"
+    />
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
 
     <link rel="stylesheet" href="/css/main.css" />
@@ -39,32 +46,42 @@
       defer
       onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js';"
     ></script>
-    <script
-      src="/vendor/tailwind.js"
-      defer
-      onerror="this.onerror=null;this.src='https://cdn.tailwindcss.com';"
-    ></script>
     <script>
-      window.addEventListener('DOMContentLoaded', function() {
+      window.__applyTailwindConfig = function () {
         if (window.tailwind) {
-          tailwind.config = {
+          window.tailwind.config = {
             theme: {
               extend: {
                 colors: {
                   brand: { 300: "#8b5cf6", 400: "#7c3aed", 500: "#6d28d9", 600: "#5b21b6" },
-                  success: { 300: "#86efac", 400: "#4ade80", 500: "#22c55e" },
-                  warning: { 200: "#fef08a", 400: "#facc15", 500: "#eab308" },
+                  success: { 300: "#86efac", 400: "#4ade80", 500: "#22c55e", 600: "#16a34a", 700: "#15803d" },
+                  warning: { 200: "#fef08a", 300: "#fde047", 400: "#facc15", 500: "#eab308", 600: "#ca8a04" },
                   danger: { 300: "#fca5a5", 400: "#f87171", 500: "#ef4444", 600: "#dc2626" }
                 }
               }
             }
           };
         }
-      });
+      };
     </script>
+    <script
+      src="/vendor/tailwind.min.js"
+      onload="window.__applyTailwindConfig()"
+      onerror="this.onerror=function(){this.onerror=null;this.src='https://cdn.tailwindcss.com';};this.src='/vendor/tailwind.js';"
+    ></script>
   </head>
 
-  <body class="light-theme">
+  <body class="dark-theme">
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem("theme");
+          if (saved === "light-theme" || saved === "dark-theme") {
+            document.body.className = saved;
+          }
+        } catch (_) {}
+      })();
+    </script>
     <div class="background-animation"></div>
     <div class="app-container glass-panel">
       <!-- 1. COLLAPSIBLE LEFT NAVIGATION RAIL -->
@@ -302,7 +319,7 @@
             <!-- Central Sub-View Expansion Detail Container -->
             <div id="test-feature-detail-container" class="hidden mt-6">
               <div class="flex items-center justify-between mb-6 pb-4 border-b border-gray-700/50">
-                <button type="button" id="test-feature-back-btn" class="secondary-btn text-xs px-4 py-2 flex items-center gap-2 rounded-xl">
+                <button type="button" id="test-feature-back-btn" class="secondary-btn text-xs px-4 py-2 flex items-center gap-2 rounded-xl cursor-pointer">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
                   Back to Test Features Grid
                 </button>
@@ -328,11 +345,11 @@
               <p class="subtitle">Your curated question sets, 1-2-3 synthesis status, and topic dossiers. Click any card to inspect analytics in the Right Sidebar.</p>
             </div>
             <div class="flex items-center gap-3 relative">
-              <button type="button" id="hub-delete-btn" class="flex items-center gap-2 px-3 py-1.5 bg-danger-600 hover:bg-danger-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors hidden">
+              <button type="button" id="hub-delete-btn" class="flex items-center gap-2 px-3 py-1.5 bg-danger-600 hover:bg-danger-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors cursor-pointer" style="display: none;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
                 Delete Selected (<span id="hub-delete-count">0</span>)
               </button>
-              <button type="button" id="hub-edit-btn" class="p-2 rounded-lg transition-colors secondary-btn" aria-label="Select Cards to Delete" title="Select Cards to Delete">
+              <button type="button" id="hub-edit-btn" class="p-2 rounded-lg transition-colors secondary-btn cursor-pointer" aria-label="Select Cards to Delete" title="Select Cards to Delete">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
               </button>
             </div>
@@ -340,16 +357,16 @@
 
           <div id="hub-main-container">
             <div id="hub-loading" class="text-center py-12 text-muted">Loading your study sets...</div>
-            <div id="hub-empty" class="text-center py-16 glass-panel rounded-2xl border border-gray-700 hidden">
+            <div id="hub-empty" class="text-center py-16 glass-panel rounded-2xl border border-gray-700" style="display: none;">
               <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-brand-500 mb-4 opacity-50" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
               <h2 class="text-xl font-semibold mb-2">No Study Sets in Hub Yet</h2>
               <p class="text-muted">Curate a question set in the Quiz Engine and click "Start Quiz Now" or "Confirm &amp; Launch".</p>
             </div>
-            <div id="hub-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 hidden"></div>
+            <div id="hub-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" style="display: none;"></div>
           </div>
 
           <!-- Session Review Sub-View -->
-          <div id="hub-review-container" class="w-full flex flex-col hidden">
+          <div id="hub-review-container" class="w-full flex flex-col" style="display: none;">
             <div class="flex justify-between items-center mb-6">
               <button type="button" id="hub-review-back-btn" class="flex items-center gap-2 text-muted hover:text-brand-400 transition-colors cursor-pointer border-none bg-transparent">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
@@ -362,7 +379,7 @@
         </section>
 
         <!-- Topic Carousel Sub-View (Global Overlay for Hub & Quiz) -->
-        <div id="hub-carousel-container" class="flex-1 flex flex-col h-full overflow-hidden absolute inset-0 glass-panel z-40 hidden">
+        <div id="hub-carousel-container" class="flex-1 flex flex-col h-full overflow-hidden absolute inset-0 glass-panel z-40" style="display: none;">
           <div class="h-16 flex items-center justify-between px-4 md:px-8 border-b border-gray-800 glass-panel">
             <button type="button" id="hub-carousel-back-btn" class="flex items-center gap-2 text-muted hover:text-brand-400 transition-colors cursor-pointer border-none bg-transparent">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
@@ -398,12 +415,12 @@
               </div>
 
               <div class="mt-8 pt-6 border-t border-gray-800 flex justify-between items-center mb-8">
-                <button type="button" id="hub-carousel-prev" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg">
+                <button type="button" id="hub-carousel-prev" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer">
                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"></polyline></svg>
                   Previous
                 </button>
                 <div class="text-xs text-muted hidden md:block">Use Left/Right arrow keys to navigate</div>
-                <button type="button" id="hub-carousel-next" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg">
+                <button type="button" id="hub-carousel-next" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer">
                   Next
                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
                 </button>
@@ -426,7 +443,7 @@
                 </p>
               </div>
 
-              <button type="button" id="start-indexing-btn" class="primary-btn flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all disabled:opacity-40 shadow-lg">
+              <button type="button" id="start-indexing-btn" class="primary-btn flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all disabled:opacity-40 shadow-lg cursor-pointer">
                 <svg id="indexing-icon-play" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                 <svg id="indexing-icon-spin" class="animate-spin hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                 <span id="indexing-btn-text">Build/Update Tantivy Index</span>
@@ -566,11 +583,12 @@
             </div>
 
             <div class="card glass-card">
-              <div class="flex justify-between items-center mb-10">
+              <div class="flex justify-between items-center mb-10 flex-wrap gap-2">
                 <h3 id="queue-total">Recent Tasks</h3>
                 <div class="flex gap-2">
-                  <button type="button" id="queue-retry-btn" class="secondary-btn text-xs">Retry Failed</button>
-                  <button type="button" id="queue-clear-btn" class="secondary-btn text-xs" style="color: #ef4444; border-color: #ef4444;">Clear Failed</button>
+                  <button type="button" id="queue-retry-btn" class="secondary-btn text-xs cursor-pointer">Retry Failed</button>
+                  <button type="button" id="queue-clear-completed-btn" class="secondary-btn text-xs cursor-pointer">Clear Completed</button>
+                  <button type="button" id="queue-clear-btn" class="secondary-btn text-xs cursor-pointer" style="color: #ef4444; border-color: #ef4444;">Clear Failed</button>
                 </div>
               </div>
               <div id="queue-tasks-list" class="max-h-[450px] overflow-y-auto"></div>
@@ -636,11 +654,11 @@
               </div>
 
               <!-- Database Build Progress (Collapsible) -->
-              <div class="progress-container mt-3 hidden" id="build-progress-container">
+              <div class="progress-container mt-3" id="build-progress-container" style="display: none;">
                 <div class="progress-bar-bg h-2 rounded-full glass-panel overflow-hidden">
                   <div class="progress-bar-fill h-full bg-brand-500 transition-all duration-300" id="build-progress" style="width: 0%"></div>
                 </div>
-                <p id="build-status" class="text-xs text-brand-300 mt-1 hidden"></p>
+                <p id="build-status" class="text-xs text-brand-300 mt-1" style="display: none;"></p>
               </div>
             </div>
 
@@ -799,11 +817,11 @@
                 <div class="grid grid-cols-2 gap-3 pt-2">
                   <div>
                     <label for="set-q-target" class="text-xs text-neutral-300 block mb-1">Daily Target (MCQs):</label>
-                    <input type="number" id="set-q-target" class="glass-input w-full rounded-lg px-3 py-1.5 text-xs" value="50" />
+                    <input type="number" id="set-q-target" class="glass-input w-full rounded-lg px-3 py-1.5 text-xs" value="50" min="1" />
                   </div>
                   <div>
                     <label for="set-c-target" class="text-xs text-neutral-300 block mb-1">Daily Correct Target:</label>
-                    <input type="number" id="set-c-target" class="glass-input w-full rounded-lg px-3 py-1.5 text-xs" value="40" />
+                    <input type="number" id="set-c-target" class="glass-input w-full rounded-lg px-3 py-1.5 text-xs" value="40" min="1" />
                   </div>
                 </div>
               </div>
@@ -872,7 +890,7 @@
         </section>
 
         <!-- IN-BROWSER DOCUMENT READER OVERLAY (OBSIDIAN & ZIM) -->
-        <div id="zim-viewer-container" class="overlay-panel fade-enter hidden">
+        <div id="zim-viewer-container" class="overlay-panel fade-enter" style="display: none;">
           <div class="overlay-header">
             <h2>Document Viewer</h2>
             <button type="button" id="close-zim-viewer-btn" class="icon-btn cursor-pointer" aria-label="Close Reader" title="Close Reader">
@@ -903,7 +921,7 @@
     </div>
 
     <!-- TOPIC VERIFICATION POPUP MODAL -->
-    <div id="topic-editor-modal" class="modal-backdrop fade-enter hidden" style="z-index: 150;">
+    <div id="topic-editor-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 150;">
       <div class="glass-modal w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl relative text-left p-0">
         <!-- Populated dynamically by window.openTopicVerificationModal in quiz.js -->
         <div id="topic-editor-questions" class="p-6"></div>
@@ -911,19 +929,19 @@
     </div>
 
     <!-- MISSING DATABASE MODAL -->
-    <div id="missing-db-modal" class="modal-backdrop fade-enter hidden">
+    <div id="missing-db-modal" class="modal-backdrop fade-enter" style="display: none;">
       <div class="modal glass-modal">
         <h3>Database Index Not Built</h3>
         <p>Please configure your knowledge sources in the RAG Vault or Settings panel and build the index before searching.</p>
         <div class="modal-actions mt-24 flex gap-4 justify-end">
-          <button type="button" id="close-modal-btn" class="secondary-btn">Close</button>
-          <button type="button" id="go-to-settings-btn" class="primary-btn">Go to Settings</button>
+          <button type="button" id="close-modal-btn" class="secondary-btn cursor-pointer">Close</button>
+          <button type="button" id="go-to-settings-btn" class="primary-btn cursor-pointer">Go to Settings</button>
         </div>
       </div>
     </div>
 
     <!-- REGENERATE CHOICE MODAL -->
-    <div id="regenerate-confirm-modal" class="modal-backdrop fade-enter hidden" style="z-index: 200;">
+    <div id="regenerate-confirm-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 200;">
       <div class="modal glass-modal text-left">
         <h3 id="regen-modal-title" class="text-lg font-bold mb-2">Generate Topic Data</h3>
         <p id="regen-modal-desc" class="text-sm text-muted mb-6">Choose whether to process all topics or only topics without generated data.</p>
@@ -942,7 +960,7 @@
     </div>
 
     <!-- HELP MODAL -->
-    <div id="help-modal" class="modal-backdrop fade-enter hidden" style="z-index: 200;">
+    <div id="help-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 200;">
       <div class="modal glass-modal w-full max-w-3xl max-h-[85vh] flex flex-col text-left p-0">
         <div class="flex items-center justify-between p-4 border-b border-gray-700 glass-panel rounded-t-24">
           <h2 class="text-xl font-bold flex items-center gap-2">📚 Help &amp; Platform Guide</h2>
@@ -1016,5 +1034,67 @@
     <script src="/js/vault.js" defer></script>
     <script src="/js/search.js" defer></script>
     <script src="/js/reader.js" defer></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        var qInput = document.getElementById("set-q-target");
+        var cInput = document.getElementById("set-c-target");
+        var exportBtn = document.getElementById("export-data-btn");
+        var importBtn = document.getElementById("import-data-btn");
+        var importFile = document.getElementById("import-data-file");
+
+        function syncTargetsFromState() {
+          if (!window.AppState || !window.AppState.get) return;
+          var dt = (window.AppState.get() || {}).dailyTargets || {};
+          if (qInput && dt.questionsTarget) qInput.value = dt.questionsTarget;
+          if (cInput && dt.correctTarget) cInput.value = dt.correctTarget;
+        }
+
+        function saveTargetsToState() {
+          if (!window.AppState || !window.AppState.update) return;
+          var curr = (window.AppState.get() || {}).dailyTargets || {};
+          window.AppState.update({
+            dailyTargets: {
+              questionsTarget: Math.max(1, parseInt(qInput ? qInput.value : 50, 10) || 50),
+              correctTarget: Math.max(1, parseInt(cInput ? cInput.value : 40, 10) || 40),
+              reviewTarget: curr.reviewTarget || 20
+            }
+          });
+        }
+
+        if (qInput) qInput.addEventListener("change", saveTargetsToState);
+        if (cInput) cInput.addEventListener("change", saveTargetsToState);
+        document.addEventListener("stateUpdated", syncTargetsFromState);
+        syncTargetsFromState();
+
+        if (exportBtn) {
+          exportBtn.addEventListener("click", function () {
+            if (window.AppState && window.AppState.exportData) {
+              window.AppState.exportData();
+            }
+          });
+        }
+
+        if (importBtn && importFile) {
+          importBtn.addEventListener("click", function () {
+            importFile.click();
+          });
+          importFile.addEventListener("change", function (e) {
+            var file = e.target.files && e.target.files[0];
+            if (!file) return;
+            var reader = new FileReader();
+            reader.onload = async function (ev) {
+              if (window.AppState && window.AppState.importData) {
+                var ok = await window.AppState.importData(ev.target.result);
+                if (window.showToast) {
+                  window.showToast(ok ? "Backup imported successfully!" : "Invalid backup JSON file.");
+                }
+              }
+            };
+            reader.readAsText(file);
+            importFile.value = "";
+          });
+        }
+      });
+    </script>
   </body>
 </html>

@@ -3,6 +3,11 @@
 let isQueueViewActive = false;
 let queueSocket = null;
 
+function _isQueueVisible() {
+    const viewEl = document.getElementById('queue-view');
+    return Boolean(isQueueViewActive || (viewEl && viewEl.classList.contains('active')));
+}
+
 async function fetchQueueStatus() {
     try {
         const res = await fetch('/api/queue/status');
@@ -14,20 +19,22 @@ async function fetchQueueStatus() {
         console.error("Failed to fetch queue status:", e);
     }
 }
+window.fetchQueueStatus = fetchQueueStatus;
 
 function formatTaskTitle(task) {
-    const taskType = (task.task_type || '').toUpperCase();
+    const taskType = String(task.task_type || '').toUpperCase();
     const topic = task.topic_name || task.topic || '';
+    const taskId = task.task_id ?? task.id ?? 0;
 
-    if (taskType === 'SESSION_PROCESSING') {
+    if (taskType === 'PROCESS_SESSION' || taskType === 'SESSION_PROCESSING') {
         return `📦 Session Reference & Note Pipeline (${task.session_id || 'Session'})`;
     }
-    if (taskType === 'MCQ_EXPLAIN' || topic.startsWith('MCQ:')) {
+    if (taskType === 'EXPLAIN_MCQ' || taskType === 'MCQ_EXPLAIN' || topic.startsWith('MCQ:')) {
         const qLabel = task.question ? task.question : `Question ${topic.replace('MCQ:', '')}`;
         return `📝 Detailed MCQ Breakdown: ${qLabel}`;
     }
-    if (taskType === 'BATCH_PRECOMPUTE' && !topic) {
-        return `📂 CSV Question Bank Precomputation`;
+    if (taskType === 'BATCH_PRECOMPUTE') {
+        return `📂 ${topic || 'CSV Question Bank Precomputation'}`;
     }
     if (topic) {
         return `🩺 Clinical Topic Synthesis: ${topic}`;
@@ -35,7 +42,7 @@ function formatTaskTitle(task) {
     if (task.question) {
         return task.question;
     }
-    return `Synthesis Task #${task.id}`;
+    return `Synthesis Task #${taskId}`;
 }
 
 function formatPriorityBadge(priority) {
@@ -53,6 +60,8 @@ function renderQueue(status) {
     const tasksList = document.getElementById('queue-tasks-list');
     if (!tasksList) return;
 
+    const escapeHTML = window.escapeHTML || ((s) => String(s ?? ''));
+
     let slicePending = 0;
     let sliceProcessing = 0;
     let sliceFailed = 0;
@@ -61,52 +70,55 @@ function renderQueue(status) {
     const tasks = Array.isArray(status.tasks) ? status.tasks : [];
 
     if (tasks.length > 0) {
-        tasks.forEach((task, idx) => {
-            if (task.status === 'PENDING') slicePending++;
-            else if (task.status === 'PROCESSING') sliceProcessing++;
-            else if (task.status === 'FAILED') sliceFailed++;
+        tasks.forEach((task) => {
+            const stUpper = String(task.status || 'pending').toUpperCase();
+            const taskId = task.task_id ?? task.id ?? 0;
+
+            if (stUpper === 'PENDING') slicePending++;
+            else if (stUpper === 'PROCESSING') sliceProcessing++;
+            else if (stUpper === 'FAILED') sliceFailed++;
 
             const div = document.createElement('div');
             let statusColor = 'text-muted';
-            if (task.status === 'COMPLETED') statusColor = 'text-success-500';
-            else if (task.status === 'FAILED') statusColor = 'text-danger-500';
-            else if (task.status === 'PROCESSING') statusColor = 'text-brand-400 animate-pulse';
+            if (stUpper === 'COMPLETED') statusColor = 'text-success-500';
+            else if (stUpper === 'FAILED') statusColor = 'text-danger-500';
+            else if (stUpper === 'PROCESSING') statusColor = 'text-brand-400 animate-pulse';
 
             div.className = 'glass-panel p-4 rounded-xl mb-3 flex flex-col sm:flex-row justify-between sm:items-center gap-3 transition-colors border border-gray-700/50';
 
-            const safeTitle = window.escapeHTML(formatTaskTitle(task));
+            const safeTitle = escapeHTML(formatTaskTitle(task));
             const updatedTime = task.updated_at
                 ? new Date((task.updated_at < 1e11 ? task.updated_at * 1000 : task.updated_at)).toLocaleTimeString()
                 : 'Just now';
 
-            const canPrioritize = task.status === 'PENDING' && Number(task.priority || 3) > 1 && (task.session_id || task.id);
+            const canPrioritize = stUpper === 'PENDING' && Number(task.priority || 3) > 1 && (task.session_id || taskId);
 
             div.innerHTML = `
                 <div class="flex-1 min-w-0 pr-2">
                     <div class="font-medium truncate text-sm" title="${safeTitle}">${safeTitle}</div>
                     <div class="text-xs text-muted mt-1.5 flex flex-wrap items-center gap-2">
-                        <span class="glass-panel px-2 py-0.5 rounded font-mono text-[10px]">ID: #${task.id}</span>
+                        <span class="glass-panel px-2 py-0.5 rounded font-mono text-[10px]">ID: #${taskId}</span>
                         ${formatPriorityBadge(task.priority)}
-                        ${task.session_id ? `<span class="glass-panel px-2 py-0.5 rounded font-mono text-[10px] truncate max-w-[140px]">${window.escapeHTML(task.session_id)}</span>` : ''}
+                        ${task.session_id ? `<span class="glass-panel px-2 py-0.5 rounded font-mono text-[10px] truncate max-w-[140px]">${escapeHTML(task.session_id)}</span>` : ''}
                         <span>Updated: ${updatedTime}</span>
                     </div>
-                    ${task.status === 'FAILED' && task.error_message ? `
-                        <div class="mt-2 text-[11px] text-danger-400 bg-danger-500/10 border border-danger-500/20 rounded-lg px-2.5 py-1 truncate" title="${window.escapeHTML(task.error_message)}">
-                            ⚠️ ${window.escapeHTML(task.error_message)}
+                    ${stUpper === 'FAILED' && task.error_message ? `
+                        <div class="mt-2 text-[11px] text-danger-400 bg-danger-500/10 border border-danger-500/20 rounded-lg px-2.5 py-1 truncate" title="${escapeHTML(task.error_message)}">
+                            ⚠️ ${escapeHTML(task.error_message)}
                         </div>
                     ` : ''}
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
                     ${canPrioritize ? `
-                        <button type="button" class="queue-prio-btn secondary-btn px-2.5 py-1 text-[11px] font-semibold"
-                                data-session-id="${window.escapeHTML(task.session_id || '')}"
-                                data-task-id="${task.id}"
+                        <button type="button" class="queue-prio-btn secondary-btn px-2.5 py-1 text-[11px] font-semibold cursor-pointer"
+                                data-session-id="${escapeHTML(task.session_id || '')}"
+                                data-task-id="${taskId}"
                                 title="Raise to #1 Priority in Queue">
                             🚀 Move to #1
                         </button>
                     ` : ''}
                     <div class="font-bold text-xs uppercase tracking-wider ${statusColor} px-3 py-1 rounded-full glass-panel">
-                        ${window.escapeHTML(task.status)}
+                        ${escapeHTML(stUpper)}
                     </div>
                 </div>
             `;
@@ -116,7 +128,6 @@ function renderQueue(status) {
         tasksList.innerHTML = '';
         tasksList.appendChild(fragment);
 
-        // Wire "Move to #1" priority boost buttons
         tasksList.querySelectorAll('.queue-prio-btn').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const sessionId = btn.dataset.sessionId;
@@ -149,7 +160,6 @@ function renderQueue(status) {
         `;
     }
 
-    // Update numeric summary cards using accurate SQL counts (falling back to slice counts if omitted)
     const pendingEl = document.getElementById('queue-pending');
     const processingEl = document.getElementById('queue-processing');
     const completedEl = document.getElementById('queue-completed');
@@ -175,6 +185,15 @@ async function clearFailedTasks() {
     }
 }
 
+async function clearCompletedTasks() {
+    try {
+        await fetch('/api/queue/clear_completed', { method: 'POST' });
+        fetchQueueStatus();
+    } catch (e) {
+        console.error(e);
+    }
+}
+
 async function retryFailedTasks() {
     try {
         await fetch('/api/queue/retry_failed', { method: 'POST' });
@@ -184,39 +203,61 @@ async function retryFailedTasks() {
     }
 }
 
+function _setWorkerBadge(live) {
+    const workerBadge = document.getElementById('queue-worker-status');
+    if (!workerBadge) return;
+    if (live) {
+        workerBadge.textContent = 'Live';
+        workerBadge.className = 'badge bg-ok ml-2';
+    } else {
+        workerBadge.textContent = 'Reconnecting...';
+        workerBadge.className = 'badge bg-warning ml-2';
+    }
+}
+
 function initQueueWebSocket() {
+    document.addEventListener('ws:task_update', () => {
+        _setWorkerBadge(true);
+        if (_isQueueVisible()) fetchQueueStatus();
+    });
+    document.addEventListener('ws:session_update', () => {
+        _setWorkerBadge(true);
+        if (_isQueueVisible()) fetchQueueStatus();
+    });
+
+    if (window.appWebSocket) {
+        _setWorkerBadge(window.appWebSocket.readyState === WebSocket.OPEN);
+        return;
+    }
+
     const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
     const wsUrl = `${protocol}${window.location.host}/ws/tasks`;
 
-    queueSocket = new WebSocket(wsUrl);
-
-    queueSocket.onopen = () => {
-        const workerBadge = document.getElementById('queue-worker-status');
-        if (workerBadge) {
-            workerBadge.textContent = 'Live';
-            workerBadge.className = 'badge bg-ok ml-2';
-        }
-    };
-
-    queueSocket.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            if ((data.event === 'TASK_UPDATE' || data.event === 'SESSION_STATUS_UPDATE') && isQueueViewActive) {
-                fetchQueueStatus();
+    try {
+        queueSocket = new WebSocket(wsUrl);
+        queueSocket.onopen = () => _setWorkerBadge(true);
+        queueSocket.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                const msgType = data.type || data.event || '';
+                if (
+                    (msgType === 'task_update' || msgType === 'TASK_UPDATE' ||
+                     msgType === 'session_update' || msgType === 'SESSION_STATUS_UPDATE') &&
+                    _isQueueVisible()
+                ) {
+                    fetchQueueStatus();
+                }
+            } catch (e) {
+                console.error("Failed to parse queue WebSocket message:", e);
             }
-        } catch (e) {
-            console.error("Failed to parse queue WebSocket message:", e);
-        }
-    };
-
-    queueSocket.onclose = () => {
-        const workerBadge = document.getElementById('queue-worker-status');
-        if (workerBadge) {
-            workerBadge.textContent = 'Reconnecting...';
-            workerBadge.className = 'badge bg-warning ml-2';
-        }
-        setTimeout(initQueueWebSocket, 5000);
-    };
+        };
+        queueSocket.onclose = () => {
+            _setWorkerBadge(false);
+            setTimeout(() => {
+                if (!window.appWebSocket) initQueueWebSocket();
+            }, 5000);
+        };
+    } catch (_) {}
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -234,7 +275,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.getElementById('queue-clear-btn')?.addEventListener('click', clearFailedTasks);
+    document.getElementById('queue-clear-completed-btn')?.addEventListener('click', clearCompletedTasks);
     document.getElementById('queue-retry-btn')?.addEventListener('click', retryFailedTasks);
 
+    if (_isQueueVisible()) {
+        fetchQueueStatus();
+    }
     initQueueWebSocket();
 });

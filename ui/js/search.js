@@ -6,6 +6,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const closeModalBtn = document.getElementById('close-modal-btn');
     const goToSettingsBtn = document.getElementById('go-to-settings-btn');
 
+    const escapeHTML = window.escapeHTML || ((str) =>
+        String(str ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;')
+    );
+
     // Memory state for central search page
     let currentSearchQuery = '';
     let currentSearchAliases = [];
@@ -17,38 +26,42 @@ document.addEventListener('DOMContentLoaded', () => {
     // 1. CITATION CARD BUILDER FOR CENTRAL SEARCH PAGE
     // =========================================================
     function buildSearchCitationCard(item, rankIdx) {
-        const source = (item.source || 'obsidian').toLowerCase();
+        const rawSource = String(item.source || 'obsidian').toLowerCase();
         const title = item.title || item.main_topic || 'Untitled Document';
         const heading = item.heading || item.heading_path || item.subheading || '';
         const page = item.page_number || item.page || 1;
         const filePath = item.file_path || item.source_article || '';
-        const snippet = item.snippet || item.child_content || item.parent_content || '';
+        const snippet = item.snippet || item.child_content || item.parent_content || item.text || '';
         const docLen = item.doc_length || item.article_length || snippet.length || 0;
         const lenLabel = docLen > 1000 ? `${(docLen / 1000).toFixed(1)}k chars` : `${docLen} chars`;
+        const scoreVal = item.rerank_score ?? item.score;
 
-        let actionClass = 'citation-obsidian';
+        let sourceType = 'obsidian';
+        let actionClass = 'citation-link citation-obsidian';
         let badgeLabel = '🟣 Obsidian Note';
-        let dataAttrs = `data-filepath="${window.escapeHTML(filePath)}" data-file="${window.escapeHTML(title)}"`;
+        let dataAttrs = `data-source-type="obsidian" data-file-path="${escapeHTML(filePath || title)}" data-filepath="${escapeHTML(filePath || title)}" data-file="${escapeHTML(title)}"`;
 
-        if (source === 'pdf' || filePath.toLowerCase().endsWith('.pdf')) {
-            actionClass = 'citation-pdf';
+        if (rawSource === 'pdf' || filePath.toLowerCase().endsWith('.pdf')) {
+            sourceType = 'pdf';
+            actionClass = 'citation-link citation-pdf';
             badgeLabel = `📕 PDF Textbook • Pg ${page}`;
-            dataAttrs = `data-filepath="${window.escapeHTML(filePath)}" data-page="${page}"`;
-        } else if (source === 'zim' || String(item.doc_id || '').startsWith('zim_')) {
-            actionClass = 'citation-zim';
+            dataAttrs = `data-source-type="pdf" data-file-path="${escapeHTML(filePath)}" data-filepath="${escapeHTML(filePath)}" data-page="${page}"`;
+        } else if (rawSource === 'zim' || filePath.toLowerCase().endsWith('.zim') || String(item.doc_id || '').startsWith('zim')) {
+            sourceType = 'zim';
+            actionClass = 'citation-link citation-zim';
             badgeLabel = '🌐 ZIM Encyclopedia Article';
             const articleId = item.article_id || title;
-            dataAttrs = `data-article-id="${window.escapeHTML(articleId)}"`;
+            dataAttrs = `data-source-type="zim" data-article-id="${escapeHTML(articleId)}" data-file-path="${escapeHTML(filePath)}" data-filepath="${escapeHTML(filePath)}"`;
         }
 
         const cleanSnippet = snippet
-            ? window.escapeHTML(snippet.substring(0, 320)) + (snippet.length > 320 ? '...' : '')
+            ? escapeHTML(snippet.substring(0, 320)) + (snippet.length > 320 ? '...' : '')
             : 'Click to open full reference document.';
 
         return `
             <div class="glass-card p-5 rounded-2xl border ${rankIdx === 0 ? 'border-brand-500/60 shadow-lg' : 'border-gray-700/50'} transition-all hover:border-brand-400">
-                <div class="flex items-center justify-between gap-2 mb-2">
-                    <div class="flex items-center gap-2">
+                <div class="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                    <div class="flex items-center gap-2 flex-wrap">
                         <span class="text-xs font-bold px-2.5 py-0.5 rounded-md glass-panel text-brand-300 uppercase tracking-wider">
                             ${badgeLabel}
                         </span>
@@ -57,19 +70,24 @@ document.addEventListener('DOMContentLoaded', () => {
                                 ⚡ ${item.alias_hit_count} alias matches
                             </span>
                         ` : ''}
+                        ${scoreVal !== undefined ? `
+                            <span class="text-[10px] font-mono px-2 py-0.5 rounded glass-panel text-muted" title="Hybrid Rerank Score">
+                                Score: ${Number(scoreVal).toFixed(2)}
+                            </span>
+                        ` : ''}
                     </div>
                     <span class="text-xs font-mono text-muted" title="Document Article Length">
                         ${lenLabel}
                     </span>
                 </div>
 
-                <h4 class="font-bold text-base text-neutral-100 mb-1 truncate" title="${window.escapeHTML(title)}">
-                    ${window.escapeHTML(title)}
+                <h4 class="font-bold text-base text-neutral-100 mb-1 truncate" title="${escapeHTML(title)}">
+                    ${escapeHTML(title)}
                 </h4>
 
                 ${heading && heading !== title ? `
-                    <p class="text-xs text-brand-300 font-semibold mb-2 truncate" title="${window.escapeHTML(heading)}">
-                        📑 Heading: ${window.escapeHTML(heading)}
+                    <p class="text-xs text-brand-300 font-semibold mb-2 truncate" title="${escapeHTML(heading)}">
+                        📑 Heading: ${escapeHTML(heading)}
                     </p>
                 ` : ''}
 
@@ -78,8 +96,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 </p>
 
                 <div class="flex items-center justify-between gap-3 pt-2 border-t border-gray-700/40">
-                    <span class="text-[11px] font-mono text-neutral-400 truncate max-w-[60%]" title="${window.escapeHTML(filePath)}">
-                        ${window.escapeHTML(filePath)}
+                    <span class="text-[11px] font-mono text-neutral-400 truncate max-w-[60%]" title="${escapeHTML(filePath || title)}">
+                        ${escapeHTML(filePath || (sourceType === 'zim' ? 'ZIM Archive' : title))}
                     </span>
                     <a href="#" class="${actionClass} primary-btn py-2 px-4 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 no-underline shrink-0"
                        ${dataAttrs}>
@@ -93,6 +111,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // =========================================================
     // 2. CENTRAL SEARCH RESULTS PAGE RENDERER
     // =========================================================
+    function _matchesSourceFilter(h, filterName) {
+        if (filterName === 'all') return true;
+        const src = String(h.source || '').toLowerCase();
+        const fp = String(h.file_path || '').toLowerCase();
+        const docId = String(h.doc_id || '').toLowerCase();
+        if (filterName === 'pdf') return src === 'pdf' || fp.endsWith('.pdf');
+        if (filterName === 'obsidian') return src === 'obsidian' || fp.endsWith('.md');
+        if (filterName === 'zim') return src === 'zim' || fp.endsWith('.zim') || docId.startsWith('zim');
+        return true;
+    }
+
     function renderCentralSearchResults() {
         const container = document.getElementById('search-results-container');
         const queryDisplay = document.getElementById('search-query-display');
@@ -105,26 +134,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (aliasesDisplay) {
             if (currentSearchAliases && currentSearchAliases.length > 1) {
-                aliasesDisplay.innerHTML = `<span class="font-semibold text-brand-300">Aliases &amp; Synonyms Included:</span> ${currentSearchAliases.map(a => `<span class="glass-panel px-1.5 py-0.5 rounded text-[11px] font-mono mr-1">${window.escapeHTML(a)}</span>`).join('')}`;
+                aliasesDisplay.innerHTML = `<span class="font-semibold text-brand-300">Aliases &amp; Synonyms Included:</span> ${currentSearchAliases.map(a => `<span class="glass-panel px-1.5 py-0.5 rounded text-[11px] font-mono mr-1">${escapeHTML(a)}</span>`).join('')}`;
             } else {
                 aliasesDisplay.textContent = 'Searched exact match and clinical variants.';
             }
         }
 
-        // Filter hits by activeSourceFilter
-        let filtered = rawSearchHits;
-        if (activeSourceFilter !== 'all') {
-            filtered = rawSearchHits.filter(h => {
-                const src = (h.source || '').toLowerCase();
-                if (activeSourceFilter === 'pdf') return src === 'pdf' || (h.file_path || '').toLowerCase().endsWith('.pdf');
-                if (activeSourceFilter === 'obsidian') return src === 'obsidian' || (h.file_path || '').toLowerCase().endsWith('.md');
-                if (activeSourceFilter === 'zim') return src === 'zim' || (h.doc_id || '').startsWith('zim_');
-                return true;
-            });
-        }
-
-        // Limit results
-        const limitNum = activeResultLimit === 'all' ? filtered.length : parseInt(activeResultLimit) || 10;
+        const filtered = rawSearchHits.filter(h => _matchesSourceFilter(h, activeSourceFilter));
+        const limitNum = activeResultLimit === 'all' ? filtered.length : (parseInt(activeResultLimit, 10) || 10);
         const sliced = filtered.slice(0, limitNum);
 
         if (countBadge) {
@@ -137,19 +154,22 @@ document.addEventListener('DOMContentLoaded', () => {
             container.innerHTML = `
                 <div class="text-center py-16 glass-panel rounded-2xl p-8 text-muted">
                     <p class="font-bold text-base text-neutral-200 mb-1">No Matching Files Found</p>
-                    <p class="text-xs text-muted mb-4">No indexed PDF textbooks, Obsidian notes, or ZIM articles matched "${window.escapeHTML(currentSearchQuery)}".</p>
-                    <button type="button" onclick="if(window.refreshDiagnostics) window.refreshDiagnostics();" class="secondary-btn text-xs px-3.5 py-2 rounded-xl">
+                    <p class="text-xs text-muted mb-4">No indexed PDF textbooks, Obsidian notes, or ZIM articles matched "${escapeHTML(currentSearchQuery)}".</p>
+                    <button type="button" id="btn-empty-search-diag" class="secondary-btn text-xs px-3.5 py-2 rounded-xl cursor-pointer">
                         Check Diagnostics / Build Index
                     </button>
                 </div>
             `;
+            document.getElementById('btn-empty-search-diag')?.addEventListener('click', () => {
+                if (typeof window.switchTab === 'function') window.switchTab('rag-vault-view');
+            });
             return;
         }
 
         if (sliced.length === 0) {
             container.innerHTML = `
                 <div class="text-center py-12 glass-panel rounded-2xl p-6 text-muted">
-                    <p class="font-semibold text-sm mb-1">No results for source filter "${window.escapeHTML(activeSourceFilter.toUpperCase())}"</p>
+                    <p class="font-semibold text-sm mb-1">No results for source filter "${escapeHTML(activeSourceFilter.toUpperCase())}"</p>
                     <p class="text-xs mb-3">Try changing the source filter in the Right Sidebar to "All Sources".</p>
                 </div>
             `;
@@ -170,9 +190,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!window.openInspector) return;
 
         const totalUnique = rawSearchHits.length;
-        const pdfCount = rawSearchHits.filter(h => h.source === 'pdf' || (h.file_path || '').toLowerCase().endsWith('.pdf')).length;
-        const obsCount = rawSearchHits.filter(h => h.source === 'obsidian' || (h.file_path || '').toLowerCase().endsWith('.md')).length;
-        const zimCount = rawSearchHits.filter(h => h.source === 'zim' || (h.doc_id || '').startsWith('zim_')).length;
+        const pdfCount = rawSearchHits.filter(h => _matchesSourceFilter(h, 'pdf')).length;
+        const obsCount = rawSearchHits.filter(h => _matchesSourceFilter(h, 'obsidian')).length;
+        const zimCount = rawSearchHits.filter(h => _matchesSourceFilter(h, 'zim')).length;
 
         const limitOptions = [5, 10, 20, 30, 'all'];
 
@@ -180,7 +200,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="space-y-5 text-xs">
                 <div class="glass-panel p-3.5 rounded-xl border border-brand-500/30">
                     <span class="text-[10px] text-muted uppercase font-bold tracking-wider block mb-0.5">Active Query</span>
-                    <p class="font-bold text-sm text-brand-300 truncate">${window.escapeHTML(currentSearchQuery || 'None')}</p>
+                    <p class="font-bold text-sm text-brand-300 truncate">${escapeHTML(currentSearchQuery || 'None')}</p>
                     <p class="text-[11px] text-neutral-400 mt-1">
                         Found <strong>${totalUnique}</strong> unique matching file(s) across PDF, Obsidian, and ZIM.
                     </p>
@@ -245,7 +265,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="flex flex-wrap gap-1 pt-1">
                         ${(currentSearchAliases || []).map(a => `
                             <span class="text-[10px] px-2 py-0.5 rounded-md glass-panel text-brand-300 font-mono border border-brand-500/20">
-                                ${window.escapeHTML(a)}
+                                ${escapeHTML(a)}
                             </span>
                         `).join('')}
                     </div>
@@ -255,14 +275,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         window.openInspector("Search Filters", html, true);
 
-        // Attach event listeners inside Right Sidebar
         const inspectorEl = document.getElementById('inspector-content');
         if (!inspectorEl) return;
 
         inspectorEl.querySelectorAll('.btn-search-limit').forEach(btn => {
             btn.addEventListener('click', () => {
                 const lim = btn.dataset.limit;
-                activeResultLimit = lim === 'all' ? 'all' : parseInt(lim) || 10;
+                activeResultLimit = lim === 'all' ? 'all' : (parseInt(lim, 10) || 10);
                 renderCentralSearchResults();
                 renderSearchFilterInspector();
             });
@@ -279,29 +298,36 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.renderSearchFilterInspector = renderSearchFilterInspector;
 
+    // Bind "Create Quiz Set from Search" button once at init
+    document.getElementById('search-create-quiz-btn')?.addEventListener('click', () => {
+        if (currentSearchQuery && typeof window.startCustomTopicQuiz === 'function') {
+            window.startCustomTopicQuiz(currentSearchQuery);
+        }
+    });
+
     // =========================================================
     // 4. PERFORM GLOBAL HYBRID SEARCH
     // =========================================================
     async function performGlobalSearch(query) {
-        if (!query) return;
+        if (!query || !String(query).trim()) return;
+        const cleanQuery = String(query).trim();
 
         try {
-            // Check if Tantivy index or ZIM sources exist
-            const diagRes = await fetch('/api/models/diagnostics/tantivy').catch(() =>
-                fetch('/api/search/diagnostics/tantivy')
+            const diagRes = await fetch('/api/search/diagnostics/tantivy').catch(() =>
+                fetch('/api/models/diagnostics/tantivy')
             );
             if (diagRes && diagRes.ok) {
                 const diagData = await diagRes.json();
-                if (!diagData.exists && missingDbModal) {
+                const hasIndex = Boolean(diagData.exists || diagData.is_built || diagData.has_sources || (diagData.doc_count && diagData.doc_count > 0));
+                if (!hasIndex && missingDbModal) {
                     missingDbModal.style.display = 'flex';
                     return;
                 }
             }
         } catch (_) {}
 
-        currentSearchQuery = query;
+        currentSearchQuery = cleanQuery;
 
-        // Switch active tab to central search-results-view
         if (typeof window.switchTab === 'function') {
             window.switchTab('search-results-view');
         } else {
@@ -321,7 +347,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
                     <p class="font-bold text-sm text-neutral-100 mb-1">Searching Knowledge Vaults...</p>
-                    <p class="text-xs text-muted">Resolving LanceDB vectors, Tantivy BM25, and ZIM archives for <strong>${window.escapeHTML(query)}</strong> (including aliases &amp; synonyms)...</p>
+                    <p class="text-xs text-muted">Resolving LanceDB vectors, Tantivy BM25, and ZIM archives for <strong>${escapeHTML(cleanQuery)}</strong> (including aliases &amp; synonyms)...</p>
                 </div>
             `;
         }
@@ -330,33 +356,29 @@ document.addEventListener('DOMContentLoaded', () => {
             const searchResp = await fetch('/api/search', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query, limit: 50 })
+                body: JSON.stringify({ query: cleanQuery, limit: 50 })
             });
             const searchData = await searchResp.json();
 
             rawSearchHits = searchData.candidates || [];
-            currentSearchAliases = searchData.aliases || [query];
+            currentSearchAliases = searchData.aliases || [cleanQuery];
 
             renderCentralSearchResults();
             renderSearchFilterInspector();
-
-            document.getElementById('search-create-quiz-btn')?.addEventListener('click', () => {
-                if (typeof window.startCustomTopicQuiz === 'function') {
-                    window.startCustomTopicQuiz(currentSearchQuery);
-                }
-            });
         } catch (err) {
             console.error("Hybrid search error:", err);
             if (container) {
                 container.innerHTML = `
                     <div class="text-center py-12 glass-panel rounded-2xl p-6 text-danger-400">
                         <p class="font-bold text-sm mb-1">Search Execution Failed</p>
-                        <p class="text-xs">${window.escapeHTML(err.message)}</p>
+                        <p class="text-xs">${escapeHTML(err.message)}</p>
                     </div>
                 `;
             }
         }
     }
+
+    window.performGlobalSearch = performGlobalSearch;
 
     if (globalSearchInput) {
         globalSearchInput.addEventListener('keydown', async (e) => {
@@ -391,6 +413,32 @@ document.addEventListener('DOMContentLoaded', () => {
     const buildStatus = document.getElementById('build-status');
 
     if (buildDbBtn) {
+        const handleBuildProgress = (msg) => {
+            if (!msg || !buildDbBtn.disabled) return;
+            const msgType = msg.type || msg.event || '';
+            if (msgType !== 'indexing_progress' && msgType !== 'INDEXING_PROGRESS') return;
+
+            const pct = msg.percent !== undefined ? msg.percent : (msg.progress !== undefined ? msg.progress : 0);
+            if (buildProgress) {
+                buildProgress.classList.remove('progress-indeterminate');
+                buildProgress.style.width = `${pct}%`;
+            }
+            if (buildStatus && msg.message) {
+                buildStatus.textContent = `${msg.message} (${pct}%)`;
+            }
+            const st = String(msg.status || '').toLowerCase();
+            if (pct >= 100 || st === 'done' || st === 'error') {
+                buildDbBtn.disabled = false;
+                if (typeof window.refreshDiagnostics === 'function') {
+                    window.refreshDiagnostics();
+                }
+            }
+        };
+
+        document.addEventListener('ws:indexing_progress', (e) => {
+            handleBuildProgress(e.detail);
+        });
+
         buildDbBtn.addEventListener('click', async () => {
             buildDbBtn.disabled = true;
             if (buildProgressContainer) buildProgressContainer.style.display = 'block';
@@ -404,49 +452,21 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             try {
-                // 1. Trigger CSV Question Bank reload (data/csv & data/mcqs)
                 await fetch('/api/mcq/build_db', { method: 'POST' }).catch(() => {});
 
-                // 2. Connect to WebSocket for live Tantivy/LanceDB indexing progress
-                const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-                const wsUrl = `${protocol}${window.location.host}/ws/indexing`;
-                let indexingWs = null;
-
-                try {
-                    indexingWs = new WebSocket(wsUrl);
-                    indexingWs.onmessage = (event) => {
-                        try {
-                            const msg = JSON.parse(event.data);
-                            if (msg.event === 'INDEXING_PROGRESS') {
-                                if (buildProgress) {
-                                    buildProgress.classList.remove('progress-indeterminate');
-                                    buildProgress.style.width = `${msg.progress}%`;
-                                }
-                                if (buildStatus) {
-                                    buildStatus.textContent = `${msg.message} (${msg.progress}%)`;
-                                }
-                                if (msg.progress >= 100) {
-                                    buildDbBtn.disabled = false;
-                                    indexingWs.close();
-                                    refreshDiagnostics();
-                                }
-                            }
-                        } catch (_) {}
-                    };
-                } catch (_) {}
-
-                // 3. Start Vault Indexing
                 const response = await fetch('/api/sources/index', { method: 'POST' });
                 const data = await response.json();
 
-                if (data.status !== 'started') {
+                if (data.status !== 'started' && data.status !== 'busy') {
                     if (buildStatus) buildStatus.textContent = 'CSV Question Bank updated.';
                     if (buildProgress) {
                         buildProgress.classList.remove('progress-indeterminate');
                         buildProgress.style.width = '100%';
                     }
                     buildDbBtn.disabled = false;
-                    refreshDiagnostics();
+                    if (typeof window.refreshDiagnostics === 'function') {
+                        window.refreshDiagnostics();
+                    }
                 }
             } catch (err) {
                 console.error("Error building database:", err);
@@ -458,80 +478,79 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // =========================================================
-    // 6. SYSTEM DIAGNOSTICS (LM STUDIO, DB ROWS, SUMATRA, VENDOR CACHE)
+    // 6. FALLBACK LEGACY DIAGNOSTICS (Only if settings.js is not loaded)
     // =========================================================
-    const refreshDiagBtn = document.getElementById('btn-refresh-diagnostics') || document.getElementById('refresh-diag-btn');
+    if (typeof window.refreshDiagnostics !== 'function') {
+        const refreshDiagBtn = document.getElementById('refresh-diag-btn');
 
-    async function refreshDiagnostics() {
-        const diagLmStudio = document.getElementById('diag-lm-studio-status') || document.getElementById('diag-lm-studio');
-        const diagDbRows = document.getElementById('diag-db-status') || document.getElementById('diag-db-rows');
-        const diagSumatra = document.getElementById('diag-sumatra-status') || document.getElementById('diag-sumatra');
-        const diagVendor = document.getElementById('diag-vendor-status') || document.getElementById('diag-vendor-assets');
+        const legacyRefreshDiagnostics = async () => {
+            const diagLmStudio = document.getElementById('diag-lm-studio');
+            const diagDbRows = document.getElementById('diag-db-rows');
+            const diagSumatra = document.getElementById('diag-sumatra');
+            const diagVendor = document.getElementById('diag-vendor-assets');
 
-        [diagLmStudio, diagDbRows, diagSumatra, diagVendor].forEach(el => {
-            if (el) {
-                el.textContent = 'Checking...';
-                el.className = 'badge bg-warning';
-            }
-        });
-
-        try {
-            const [lmResp, dbResp, sumatraResp, vendorResp] = await Promise.all([
-                fetch('/api/models/diagnostics/lm_studio').catch(() => fetch('/api/search/diagnostics/lm_studio')).catch(() => ({ ok: false })),
-                fetch('/api/models/diagnostics/db').catch(() => fetch('/api/search/diagnostics/db')).catch(() => ({ ok: false })),
-                fetch('/api/models/diagnostics/sumatrapdf').catch(() => fetch('/api/search/diagnostics/sumatrapdf')).catch(() => ({ ok: false })),
-                fetch('/api/state/vendor_status').catch(() => ({ ok: false }))
-            ]);
-
-            if (lmResp && lmResp.ok && diagLmStudio) {
-                const lmData = await lmResp.json();
-                const isOk = lmData.status === 'ok' || lmData.status === 'success';
-                diagLmStudio.textContent = isOk ? 'Connected (Ready)' : 'Offline / Disconnected';
-                diagLmStudio.className = isOk ? 'badge bg-ok' : 'badge bg-warning';
-            }
-
-            if (dbResp && dbResp.ok && diagDbRows) {
-                const dbData = await dbResp.json();
-                if (dbData.status === 'ok') {
-                    const sqliteCnt = dbData.sqlite_row_count ?? dbData.row_count ?? 0;
-                    const lanceCnt = dbData.lancedb_row_count;
-                    diagDbRows.textContent = lanceCnt !== undefined
-                        ? `SQLite: ${sqliteCnt} | LanceDB: ${lanceCnt}`
-                        : `${sqliteCnt} rows`;
-                    diagDbRows.className = 'badge bg-ok';
-                } else {
-                    diagDbRows.textContent = 'Error';
-                    diagDbRows.className = 'badge bg-warning';
+            [diagLmStudio, diagDbRows, diagSumatra, diagVendor].forEach(el => {
+                if (el) {
+                    el.textContent = 'Checking...';
+                    el.className = 'badge bg-warning';
                 }
-            }
+            });
 
-            if (sumatraResp && sumatraResp.ok && diagSumatra) {
-                const sumatraData = await sumatraResp.json();
-                diagSumatra.textContent = sumatraData.available ? 'Available' : 'Not Found in PATH';
-                diagSumatra.className = sumatraData.available ? 'badge bg-ok' : 'badge bg-warning';
-            }
+            try {
+                const [lmResp, dbResp, sumatraResp, vendorResp] = await Promise.all([
+                    fetch('/api/search/diagnostics/lm_studio').catch(() => ({ ok: false })),
+                    fetch('/api/search/diagnostics/db').catch(() => ({ ok: false })),
+                    fetch('/api/search/diagnostics/sumatrapdf').catch(() => ({ ok: false })),
+                    fetch('/api/state/verify_vendor').catch(() => ({ ok: false }))
+                ]);
 
-            if (vendorResp && vendorResp.ok && diagVendor) {
-                const vData = await vendorResp.json();
-                if (vData.offline_ready) {
-                    diagVendor.textContent = '✅ All Cached Offline';
-                    diagVendor.className = 'badge bg-ok';
-                } else {
-                    const missing = Object.entries(vData.assets || {})
-                        .filter(([_, ok]) => !ok)
-                        .map(([k]) => k);
-                    diagVendor.textContent = `Missing (${missing.length}): Connect once`;
-                    diagVendor.className = 'badge bg-warning';
+                if (lmResp && lmResp.ok && diagLmStudio) {
+                    const lmData = await lmResp.json();
+                    const isOk = lmData.status === 'ok' || lmData.status === 'success' || lmData.online;
+                    diagLmStudio.textContent = isOk ? 'Connected (Ready)' : 'Offline / Disconnected';
+                    diagLmStudio.className = isOk ? 'badge bg-ok' : 'badge bg-warning';
                 }
+
+                if (dbResp && dbResp.ok && diagDbRows) {
+                    const dbData = await dbResp.json();
+                    if (dbData.status === 'ok') {
+                        const sqliteCnt = dbData.sqlite_row_count ?? dbData.row_count ?? 0;
+                        const lanceCnt = dbData.lancedb_row_count;
+                        diagDbRows.textContent = lanceCnt !== undefined
+                            ? `SQLite: ${sqliteCnt} | LanceDB: ${lanceCnt}`
+                            : `${sqliteCnt} rows`;
+                        diagDbRows.className = 'badge bg-ok';
+                    }
+                }
+
+                if (sumatraResp && sumatraResp.ok && diagSumatra) {
+                    const sumatraData = await sumatraResp.json();
+                    const isAvail = Boolean(sumatraData.available || sumatraData.installed);
+                    diagSumatra.textContent = isAvail ? 'Available' : 'Not Found in PATH';
+                    diagSumatra.className = isAvail ? 'badge bg-ok' : 'badge bg-warning';
+                }
+
+                if (vendorResp && vendorResp.ok && diagVendor) {
+                    const vData = await vendorResp.json();
+                    if (vData.offline_ready) {
+                        diagVendor.textContent = '✅ All Cached Offline';
+                        diagVendor.className = 'badge bg-ok';
+                    } else {
+                        const missing = Object.entries(vData.assets || {})
+                            .filter(([_, ok]) => !ok)
+                            .map(([k]) => k);
+                        diagVendor.textContent = `Missing (${missing.length}): Connect once`;
+                        diagVendor.className = 'badge bg-warning';
+                    }
+                }
+            } catch (err) {
+                console.error("Error fetching diagnostics:", err);
             }
-        } catch (err) {
-            console.error("Error fetching diagnostics:", err);
+        };
+
+        window.refreshDiagnostics = legacyRefreshDiagnostics;
+        if (refreshDiagBtn) {
+            refreshDiagBtn.addEventListener('click', legacyRefreshDiagnostics);
         }
-    }
-
-    window.refreshDiagnostics = refreshDiagnostics;
-
-    if (refreshDiagBtn) {
-        refreshDiagBtn.addEventListener('click', refreshDiagnostics);
     }
 });

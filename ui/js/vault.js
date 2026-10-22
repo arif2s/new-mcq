@@ -1,3 +1,5 @@
+// ui/js/vault.js
+
 document.addEventListener('DOMContentLoaded', () => {
   const sourcesList = document.getElementById('sources-list');
   const sourcesListEmpty = document.getElementById('sources-list-empty');
@@ -17,6 +19,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const indexingProgressText = document.getElementById('indexing-progress-text');
   const indexingProgressBar = document.getElementById('indexing-progress-bar');
 
+  if (!sourcesList) return;
+
+  const escapeHTML = window.escapeHTML || ((str) =>
+    String(str ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;')
+  );
 
   let sources = [];
   let isIndexing = false;
@@ -43,58 +55,57 @@ document.addEventListener('DOMContentLoaded', () => {
         renderSources();
         updateIndexingBtnState();
       })
-      .catch(() => {
-        sources = [
-          { id: '1', name: 'Clinical Surgery Vault', type: 'obsidian', path: './data/vaults/surgery', enabled: true, itemCount: 42, lastIndexed: '2026-09-28' },
-          { id: '2', name: 'Sabiston Surgery 21st Ed', type: 'pdf', path: './data/pdfs/sabiston.pdf', enabled: true, itemCount: 1200, lastIndexed: '2026-09-28', pdfEngine: 'fitz' },
-          { id: '3', name: 'Medical Wikipedia ZIM', type: 'zim', path: './data/zim/wikipedia_med.zim', enabled: false, itemCount: 15000, lastIndexed: 'Never' },
-        ];
+      .catch((err) => {
+        console.warn('Could not load sources from backend:', err);
         renderSources();
         updateIndexingBtnState();
       });
   }
+  window.fetchVaultSources = fetchSources;
 
   function renderSources() {
     sourcesList.innerHTML = '';
     if (sources.length === 0) {
-      sourcesListEmpty.classList.remove('hidden');
+      sourcesListEmpty?.classList.remove('hidden');
       sourcesList.classList.add('hidden');
     } else {
-      sourcesListEmpty.classList.add('hidden');
+      sourcesListEmpty?.classList.add('hidden');
       sourcesList.classList.remove('hidden');
 
       sources.forEach(src => {
+        const srcType = String(src.type || 'obsidian').toLowerCase();
         const bgClass = src.enabled ? 'glass-card' : 'glass-panel opacity-60';
         const toggleIcon = src.enabled ? icons.toggleOn : icons.toggleOff;
         const toggleColor = src.enabled ? 'text-success-500' : 'text-muted';
-        const typeBadge = src.type === 'pdf' && src.pdfEngine ? `${src.type} (${src.pdfEngine})` : src.type;
+        const typeBadge = srcType === 'pdf' && src.pdfEngine ? `${srcType} (${src.pdfEngine})` : srcType;
+        const countFormatted = Number(src.itemCount || 0).toLocaleString();
 
         const el = document.createElement('div');
         el.className = `p-4 rounded-xl border flex items-center justify-between transition-all ${bgClass}`;
         el.innerHTML = `
           <div class="flex items-center gap-4 min-w-0 flex-1">
             <div class="p-2.5 glass-panel rounded-xl text-brand-400">
-              ${icons[src.type]}
+              ${icons[srcType] || icons.obsidian}
             </div>
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
-                <p class="text-sm font-semibold">${window.escapeHTML(src.name)}</p>
+                <p class="text-sm font-semibold">${escapeHTML(src.name)}</p>
                 <span class="text-xs px-2 py-0.5 rounded glass-panel text-muted uppercase font-mono">
-                  ${typeBadge}
+                  ${escapeHTML(typeBadge)}
                 </span>
               </div>
-              <p class="text-xs font-mono text-muted truncate mt-0.5">${window.escapeHTML(src.path)}</p>
+              <p class="text-xs font-mono text-muted truncate mt-0.5">${escapeHTML(src.path)}</p>
             </div>
           </div>
           <div class="flex items-center gap-6">
             <div class="text-right hidden sm:block">
-              <p class="text-xs text-muted">${src.itemCount || 0} indexed items</p>
-              <p class="text-[10px] text-muted">Last: ${src.lastIndexed}</p>
+              <p class="text-xs text-muted">${countFormatted} indexed items</p>
+              <p class="text-[10px] text-muted">Last: ${escapeHTML(src.lastIndexed || 'Never')}</p>
             </div>
-            <button class="toggle-btn p-1 text-2xl transition-colors ${toggleColor} bg-transparent border-none cursor-pointer" data-id="${src.id}" title="${src.enabled ? 'Source Enabled' : 'Source Disabled'}">
+            <button type="button" class="toggle-btn p-1 text-2xl transition-colors ${toggleColor} bg-transparent border-none cursor-pointer" data-id="${escapeHTML(src.id)}" title="${src.enabled ? 'Source Enabled' : 'Source Disabled'}">
               ${toggleIcon}
             </button>
-            <button class="delete-btn p-2 text-muted hover:text-danger-500 hover:bg-danger-500/10 rounded-lg transition-colors bg-transparent border-none cursor-pointer" data-id="${src.id}">
+            <button type="button" class="delete-btn p-2 text-muted hover:text-danger-500 hover:bg-danger-500/10 rounded-lg transition-colors bg-transparent border-none cursor-pointer" data-id="${escapeHTML(src.id)}" title="Remove Source">
               ${icons.trash}
             </button>
           </div>
@@ -103,50 +114,51 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
-    // Attach event listeners to buttons
-    document.querySelectorAll('.toggle-btn').forEach(btn => {
+    // Attach event listeners scoped strictly to sourcesList
+    sourcesList.querySelectorAll('.toggle-btn').forEach(btn => {
       btn.addEventListener('click', () => handleToggle(btn.getAttribute('data-id')));
     });
-    document.querySelectorAll('.delete-btn').forEach(btn => {
+    sourcesList.querySelectorAll('.delete-btn').forEach(btn => {
       btn.addEventListener('click', () => handleDelete(btn.getAttribute('data-id')));
     });
   }
 
   function handleToggle(id) {
+    if (!id) return;
     sources = sources.map(s => s.id === id ? { ...s, enabled: !s.enabled } : s);
     renderSources();
     updateIndexingBtnState();
 
-    fetch(`/api/sources/${id}/toggle`, { method: 'POST' }).catch(() => {});
+    fetch(`/api/sources/${encodeURIComponent(id)}/toggle`, { method: 'POST' })
+      .then(() => fetchSources())
+      .catch(() => {});
   }
 
   function handleDelete(id) {
+    if (!id) return;
     sources = sources.filter(s => s.id !== id);
     renderSources();
     updateIndexingBtnState();
 
-    fetch(`/api/sources/${id}`, { method: 'DELETE' }).catch(() => {});
+    fetch(`/api/sources/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
   }
 
   function updateIndexingBtnState() {
+    if (!startIndexingBtn) return;
     const hasEnabled = sources.some(s => s.enabled);
-    if (isIndexing || !hasEnabled) {
-      startIndexingBtn.disabled = true;
-    } else {
-      startIndexingBtn.disabled = false;
-    }
+    startIndexingBtn.disabled = Boolean(isIndexing || !hasEnabled);
   }
 
   // --- Form Logic ---
-  newSourcePath.addEventListener('input', () => {
-    addSourceBtn.disabled = newSourcePath.value.trim() === '';
+  newSourcePath?.addEventListener('input', () => {
+    if (addSourceBtn) addSourceBtn.disabled = newSourcePath.value.trim() === '';
   });
 
-  newSourceType.addEventListener('change', () => {
+  newSourceType?.addEventListener('change', () => {
     if (newSourceType.value === 'pdf') {
-      pdfEngineContainer.classList.remove('hidden');
+      pdfEngineContainer?.classList.remove('hidden');
     } else {
-      pdfEngineContainer.classList.add('hidden');
+      pdfEngineContainer?.classList.add('hidden');
     }
   });
 
@@ -161,58 +173,101 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementsByName('pdfEngine').forEach(radio => {
     radio.addEventListener('change', () => {
       if (radio.value === 'fitz') {
-        pdfEngineFitzLabel.classList.add('bg-brand-600/10', 'border-brand-500');
-        pdfEngineFitzLabel.classList.remove('glass-panel');
+        pdfEngineFitzLabel?.classList.add('bg-brand-600/10', 'border-brand-500');
+        pdfEngineFitzLabel?.classList.remove('glass-panel');
 
-        pdfEngineDoclingLabel.classList.remove('bg-brand-600/10', 'border-brand-500');
-        pdfEngineDoclingLabel.classList.add('glass-panel');
+        pdfEngineDoclingLabel?.classList.remove('bg-brand-600/10', 'border-brand-500');
+        pdfEngineDoclingLabel?.classList.add('glass-panel');
       } else {
-        pdfEngineDoclingLabel.classList.add('bg-brand-600/10', 'border-brand-500');
-        pdfEngineDoclingLabel.classList.remove('glass-panel');
+        pdfEngineDoclingLabel?.classList.add('bg-brand-600/10', 'border-brand-500');
+        pdfEngineDoclingLabel?.classList.remove('glass-panel');
 
-        pdfEngineFitzLabel.classList.remove('bg-brand-600/10', 'border-brand-500');
-        pdfEngineFitzLabel.classList.add('glass-panel');
+        pdfEngineFitzLabel?.classList.remove('bg-brand-600/10', 'border-brand-500');
+        pdfEngineFitzLabel?.classList.add('glass-panel');
       }
     });
   });
 
-  addSourceBtn.addEventListener('click', () => {
-    const path = newSourcePath.value.trim();
-    if (!path) return;
-    const type = newSourceType.value;
+  addSourceBtn?.addEventListener('click', () => {
+    const rawPath = (newSourcePath?.value || '').trim();
+    if (!rawPath) return;
+    const type = (newSourceType?.value || 'obsidian').toLowerCase();
+
+    const trimmedPath = rawPath.replace(/[\\/]+$/, '');
+    const defaultName = trimmedPath.split(/[\\/]/).pop() || 'New Source';
 
     const sourceObj = {
       id: Date.now().toString(),
-      name: newSourceName.value.trim() || path.split('/').pop() || path.split('\\').pop() || 'New Source',
+      name: (newSourceName?.value || '').trim() || defaultName,
       type: type,
-      path: path,
+      path: rawPath,
       enabled: true,
       itemCount: 0,
       lastIndexed: 'Never',
-      pdfEngine: type === 'pdf' ? getSelectedPdfEngine() : undefined,
+      pdfEngine: type === 'pdf' ? getSelectedPdfEngine() : 'fitz',
     };
 
     sources.push(sourceObj);
     renderSources();
     updateIndexingBtnState();
 
-    newSourcePath.value = '';
-    newSourceName.value = '';
+    if (newSourcePath) newSourcePath.value = '';
+    if (newSourceName) newSourceName.value = '';
     addSourceBtn.disabled = true;
 
     fetch('/api/sources', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(sourceObj),
-    }).catch(() => {});
+    })
+      .then(() => fetchSources())
+      .catch(() => {});
   });
 
-  // --- Indexing Logic ---
+  // --- Indexing Logic & Real-Time WebSocket Progress ---
   function updateProgressUI(progress, msg) {
-    indexingProgressText.textContent = `${progress}%`;
-    indexingProgressBar.style.width = `${progress}%`;
-    indexingStatusMessage.textContent = msg;
+    const pct = Math.max(0, Math.min(100, Math.round(Number(progress || 0))));
+    if (indexingProgressText) indexingProgressText.textContent = `${pct}%`;
+    if (indexingProgressBar) indexingProgressBar.style.width = `${pct}%`;
+    if (indexingStatusMessage && msg) indexingStatusMessage.textContent = msg;
   }
+
+  function handleIndexingProgressPayload(data) {
+    if (!data) return;
+    const msgType = data.type || data.event || '';
+    if (msgType !== 'indexing_progress' && msgType !== 'INDEXING_PROGRESS') return;
+
+    if (fallbackTimer) {
+      clearInterval(fallbackTimer);
+      fallbackTimer = null;
+    }
+
+    if (!isIndexing) {
+      isIndexing = true;
+      updateIndexingBtnState();
+      if (indexingBtnText) indexingBtnText.textContent = 'Indexing Vault...';
+      indexingIconPlay?.classList.add('hidden');
+      indexingIconSpin?.classList.remove('hidden');
+      indexingProgressContainer?.classList.remove('hidden');
+    }
+
+    const pct = data.percent !== undefined ? data.percent : (data.progress !== undefined ? data.progress : 0);
+    updateProgressUI(pct, data.message || 'Indexing vault sources...');
+
+    const st = String(data.status || '').toLowerCase();
+    if (pct >= 100 || st === 'done' || st === 'error') {
+      if (ws) {
+        try { ws.close(); } catch (_) {}
+        ws = null;
+      }
+      finishIndexing();
+    }
+  }
+
+  // Listen to global WebSocket events dispatched by app.js (/ws) so zero frames are missed
+  document.addEventListener('ws:indexing_progress', (e) => {
+    handleIndexingProgressPayload(e.detail);
+  });
 
   function simulateFallbackIndexing() {
     if (fallbackTimer) clearInterval(fallbackTimer);
@@ -230,52 +285,59 @@ document.addEventListener('DOMContentLoaded', () => {
         fallbackTimer = null;
         finishIndexing();
       } else {
-         updateProgressUI(progress, indexingStatusMessage.textContent);
+        updateProgressUI(progress, indexingStatusMessage?.textContent || 'Indexing...');
       }
     }, 600);
   }
 
   function finishIndexing() {
-      setTimeout(() => {
-        isIndexing = false;
-        indexingBtnText.textContent = 'Build/Update Tantivy Index';
-        indexingIconPlay.classList.remove('hidden');
-        indexingIconSpin.classList.add('hidden');
-        indexingProgressContainer.classList.add('hidden');
-        updateIndexingBtnState();
-        fetchSources();
-      }, 1500);
+    setTimeout(() => {
+      isIndexing = false;
+      if (indexingBtnText) indexingBtnText.textContent = 'Build/Update Tantivy Index';
+      indexingIconPlay?.classList.remove('hidden');
+      indexingIconSpin?.classList.add('hidden');
+      indexingProgressContainer?.classList.add('hidden');
+      updateIndexingBtnState();
+      fetchSources();
+      if (typeof window.refreshDiagnostics === 'function') {
+        window.refreshDiagnostics();
+      }
+    }, 1500);
   }
 
-  startIndexingBtn.addEventListener('click', () => {
+  startIndexingBtn?.addEventListener('click', () => {
     isIndexing = true;
     updateIndexingBtnState();
 
-    indexingBtnText.textContent = 'Indexing Vault...';
-    indexingIconPlay.classList.add('hidden');
-    indexingIconSpin.classList.remove('hidden');
-    indexingProgressContainer.classList.remove('hidden');
+    if (indexingBtnText) indexingBtnText.textContent = 'Indexing Vault...';
+    indexingIconPlay?.classList.add('hidden');
+    indexingIconSpin?.classList.remove('hidden');
+    indexingProgressContainer?.classList.remove('hidden');
 
-    updateProgressUI(10, 'Scanning files in enabled folders...');
+    updateProgressUI(5, 'Starting hybrid vault indexing...');
+
+    // Open dedicated /ws/indexing listener BEFORE firing POST /api/sources/index so fast runs are never missed
+    if (!window.appWebSocket || window.appWebSocket.readyState !== WebSocket.OPEN) {
+      try {
+        const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+        ws = new WebSocket(`${protocol}${window.location.host}/ws/indexing`);
+        ws.onmessage = (event) => {
+          try {
+            handleIndexingProgressPayload(JSON.parse(event.data));
+          } catch (_) {}
+        };
+      } catch (_) {}
+    }
 
     fetch('/api/sources/index', { method: 'POST' })
       .then(res => {
         if (!res.ok) throw new Error('API Error');
-        const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-        ws = new WebSocket(`${protocol}${window.location.host}/ws/indexing`);
-
-        ws.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-          if (data.event === 'INDEXING_PROGRESS') {
-             updateProgressUI(data.progress, data.message);
-             if (data.progress >= 100) {
-                 ws.close();
-                 ws = null;
-                 finishIndexing();
-             }
-          }
-        };
-        ws.onerror = () => simulateFallbackIndexing();
+        return res.json();
+      })
+      .then(data => {
+        if (data && data.status === 'busy') {
+          updateProgressUI(50, data.message || 'Indexing is already running in background...');
+        }
       })
       .catch(() => {
         simulateFallbackIndexing();

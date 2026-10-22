@@ -10,6 +10,84 @@ window.escapeHTML = function(str) {
         .replace(/'/g, "&#039;");
 };
 
+const _PURIFY_ALLOWED_TAGS = [
+    'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'sup', 'sub',
+    'mark', 'details', 'summary', 'kbd', 'style', 'figure', 'figcaption',
+    'span', 'div', 'p', 'b', 'i', 'strong', 'em', 'code', 'pre', 'a',
+    'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'br'
+];
+
+const _PURIFY_ALLOWED_ATTRS = [
+    'target', 'class', 'style', 'src', 'href', 'alt', 'title', 'width', 'height',
+    'data-file', 'data-file-path', 'data-filepath', 'data-vault',
+    'data-page', 'data-article-id', 'data-title', 'data-source-type', 'data-anchor'
+];
+
+/**
+ * Converts a unified_article JSON string/object into clean clinical Markdown
+ * so raw JSON braces are never rendered into UI views.
+ */
+window.formatUnifiedArticleToMarkdown = function(unifiedRaw, fallbackExplanation = "", topicTitle = "") {
+    if (!unifiedRaw && fallbackExplanation) {
+        return String(fallbackExplanation);
+    }
+    if (!unifiedRaw) return "";
+
+    let parsed = unifiedRaw;
+    if (typeof unifiedRaw === 'string') {
+        const trimmed = unifiedRaw.trim();
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+            try {
+                parsed = JSON.parse(trimmed);
+            } catch (_) {
+                return trimmed;
+            }
+        } else {
+            return trimmed;
+        }
+    }
+
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const lines = [];
+        const heading = parsed.subtopic || topicTitle || parsed.section || 'Clinical Synthesis';
+        lines.push(`### ${heading}`);
+
+        if (parsed.conditional_context && String(parsed.conditional_context).trim()) {
+            lines.push(`\n**Clinical Context:** ${String(parsed.conditional_context).trim()}`);
+        }
+
+        const pts = Array.isArray(parsed.clinical_points) ? parsed.clinical_points : [];
+        if (pts.length > 0) {
+            lines.push('');
+            pts.forEach(pt => {
+                if (typeof pt === 'string' && pt.trim()) {
+                    lines.push(`- ${pt.trim()}`);
+                } else if (pt && typeof pt === 'object') {
+                    const text = pt.point || pt.text || pt.fact || pt.content || '';
+                    if (!text) return;
+                    const src = pt.source || pt.source_article || '';
+                    const pg = pt.page || pt.page_number || '';
+                    const refBadge = src ? ` *(Ref: ${src}${pg ? ` p.${pg}` : ''})*` : '';
+                    lines.push(`- ${text}${refBadge}`);
+                }
+            });
+        } else if (parsed.raw_text && String(parsed.raw_text).trim()) {
+            lines.push(`\n${String(parsed.raw_text).trim()}`);
+        } else if (fallbackExplanation && String(fallbackExplanation).trim()) {
+            lines.push(`\n${String(fallbackExplanation).trim()}`);
+        }
+
+        const disc = parsed.discrepancies || parsed.variance_audit || '';
+        if (disc && String(disc).trim() && !['none', 'n/a'].includes(String(disc).trim().toLowerCase())) {
+            lines.push(`\n#### Clinical Discrepancies & Staging Variances\n${String(disc).trim()}`);
+        }
+
+        return lines.join('\n').trim();
+    }
+
+    return String(fallbackExplanation || unifiedRaw || '');
+};
+
 /**
  * Renders Markdown (including tables | | and inline HTML), protects LaTeX math blocks
  * ($...$ and $$...$$) from markdown underscore mangling, sanitizes via DOMPurify,
@@ -47,8 +125,8 @@ window.renderMarkdownAndMath = function(rawText, containerEl = null) {
 
     if (window.DOMPurify) {
         html = window.DOMPurify.sanitize(html, {
-            ADD_TAGS: ['img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'sup', 'sub', 'mark', 'details', 'summary', 'kbd'],
-            ADD_ATTR: ['target', 'class', 'style', 'src', 'alt', 'width', 'height', 'data-file', 'data-vault', 'data-filepath', 'data-page', 'data-article-id']
+            ADD_TAGS: _PURIFY_ALLOWED_TAGS,
+            ADD_ATTR: _PURIFY_ALLOWED_ATTRS
         });
     }
 
@@ -63,7 +141,7 @@ window.renderMarkdownAndMath = function(rawText, containerEl = null) {
                 });
             } catch (_) {}
         }
-        html = html.replace(block.id, renderedMath);
+        html = html.replace(block.id, () => renderedMath);
     });
 
     if (containerEl) {
@@ -95,7 +173,6 @@ window.openInspector = function(title, htmlContent, forceOpen = true) {
 
     const isCollapsed = sidebar.classList.contains('collapsed');
 
-    // Only expand if explicitly requested or if it was already open
     if (forceOpen || !isCollapsed) {
         sidebar.classList.remove('collapsed');
         sidebar.style.width = '380px';
@@ -296,7 +373,11 @@ window.renderStudyTopicsInspector = async function(topicsList = null, forceOpen 
                 if (sRes.ok) {
                     const sData = await sRes.json();
                     if (expContainer) {
-                        let textToRender = sData.unified_article || sData.enhanced_explanation;
+                        let textToRender = window.formatUnifiedArticleToMarkdown(
+                            sData.unified_article,
+                            sData.enhanced_explanation,
+                            topic
+                        );
                         if (!textToRender) {
                             textToRender = `### ${topic}\n\nReferences resolved for **${topic}**.`;
                         }
@@ -322,7 +403,7 @@ window.renderStudyTopicsInspector = async function(topicsList = null, forceOpen 
 // =========================================================
 // Unified In-Browser Document Reader (Obsidian & ZIM)
 // =========================================================
-window.openDocumentReader = function({ title, sourceType, htmlContent, markdownContent, filePath }) {
+window.openDocumentReader = function({ title, sourceType, htmlContent, markdownContent, filePath, anchor }) {
     const viewerContainer = document.getElementById('zim-viewer-container');
     const contentArea = document.getElementById('zim-content-area');
     if (!viewerContainer || !contentArea) return;
@@ -342,13 +423,23 @@ window.openDocumentReader = function({ title, sourceType, htmlContent, markdownC
     } else if (htmlContent !== undefined && htmlContent !== null) {
         const safeHTML = window.DOMPurify
             ? window.DOMPurify.sanitize(htmlContent, {
-                ADD_TAGS: ['img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'style', 'figure', 'figcaption', 'span', 'div', 'p', 'b', 'i', 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote'],
-                ADD_ATTR: ['class', 'style', 'src', 'href', 'data-article-id', 'data-file', 'alt', 'title', 'width', 'height', 'target']
+                ADD_TAGS: _PURIFY_ALLOWED_TAGS,
+                ADD_ATTR: _PURIFY_ALLOWED_ATTRS
             })
             : htmlContent;
         wrapper.innerHTML = safeHTML;
         if (window.renderMathInElement) {
-            try { window.renderMathInElement(wrapper); } catch (_) {}
+            try {
+                window.renderMathInElement(wrapper, {
+                    delimiters: [
+                        { left: '$$', right: '$$', display: true },
+                        { left: '$', right: '$', display: false },
+                        { left: '\\(', right: '\\)', display: false },
+                        { left: '[', right: ']', display: true }
+                    ],
+                    throwOnError: false
+                });
+            } catch (_) {}
         }
     }
 
@@ -365,7 +456,7 @@ window.openDocumentReader = function({ title, sourceType, htmlContent, markdownC
                 fetch('/api/notes/open-obsidian', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ file_path: filePath })
+                    body: JSON.stringify({ file_path: filePath, anchor: anchor || '' })
                 }).catch(() => {
                     window.location.href = `obsidian://open?path=${encodeURIComponent(filePath)}`;
                 });
@@ -375,16 +466,36 @@ window.openDocumentReader = function({ title, sourceType, htmlContent, markdownC
 
     contentArea.appendChild(wrapper);
     viewerContainer.style.display = 'flex';
+
+    // Scroll to heading anchor if specified
+    if (anchor) {
+        setTimeout(() => {
+            const normAnchor = String(anchor).trim().toLowerCase();
+            const headings = wrapper.querySelectorAll('h1, h2, h3, h4, h5, h6');
+            for (const h of headings) {
+                if ((h.textContent || '').trim().toLowerCase().includes(normAnchor)) {
+                    h.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    break;
+                }
+            }
+        }, 60);
+    }
 };
 
 // Global helper for opening PDF / Obsidian / ZIM resources from anywhere
-window.openLocalResource = async function(type, pathOrId, extraPageOrTitle = 1) {
-    if (type === 'pdf') {
+window.openLocalResource = async function(type, pathOrId, extraPageOrTitle = 1, extraMeta = {}) {
+    if (!pathOrId) return;
+    const normType = String(type || '').toLowerCase();
+
+    if (normType === 'pdf') {
         try {
             const res = await fetch('/api/sources/open_pdf', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ file_path: pathOrId, page: parseInt(extraPageOrTitle) || 1 })
+                body: JSON.stringify({
+                    file_path: pathOrId,
+                    page: parseInt(extraPageOrTitle, 10) || 1
+                })
             });
             const data = await res.json();
             if (data.status !== 'success') console.error('SumatraPDF error:', data.message);
@@ -394,32 +505,40 @@ window.openLocalResource = async function(type, pathOrId, extraPageOrTitle = 1) 
         return;
     }
 
-    if (type === 'obsidian') {
+    if (normType === 'obsidian') {
         const mode = (window.AppState && window.AppState.get().obsidianOpenMode) || 'browser';
+        const anchor = extraMeta?.anchor || '';
         if (mode === 'app') {
             try {
                 const res = await fetch('/api/notes/open-obsidian', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ file_path: pathOrId })
+                    body: JSON.stringify({
+                        file_path: pathOrId,
+                        title: typeof extraPageOrTitle === 'string' ? extraPageOrTitle : '',
+                        anchor: anchor
+                    })
                 });
                 const data = await res.json();
-                if (data.status !== 'success') {
-                    window.location.href = `obsidian://open?path=${encodeURIComponent(pathOrId)}`;
+                if (data.status !== 'success' && data.uri) {
+                    window.location.href = data.uri;
                 }
             } catch (_) {
                 window.location.href = `obsidian://open?path=${encodeURIComponent(pathOrId)}`;
             }
         } else {
             try {
-                const res = await fetch(`/api/notes/obsidian-note?file_path=${encodeURIComponent(pathOrId)}`);
+                const qParams = new URLSearchParams({ file_path: pathOrId });
+                if (anchor) qParams.set('anchor', anchor);
+                const res = await fetch(`/api/notes/obsidian-note?${qParams.toString()}`);
                 const data = await res.json();
                 if (data.status === 'success') {
                     window.openDocumentReader({
                         title: data.title || extraPageOrTitle || 'Obsidian Note',
                         sourceType: 'obsidian',
                         markdownContent: data.markdown,
-                        filePath: data.file_path || pathOrId
+                        filePath: data.file_path || pathOrId,
+                        anchor: anchor
                     });
                 } else {
                     alert(data.message || 'Could not load Obsidian note.');
@@ -431,15 +550,18 @@ window.openLocalResource = async function(type, pathOrId, extraPageOrTitle = 1) 
         return;
     }
 
-    if (type === 'zim') {
+    if (normType === 'zim') {
         try {
-            const res = await fetch(`/api/notes/zim-article?article_id=${encodeURIComponent(pathOrId)}`);
+            const qParams = new URLSearchParams({ article_id: pathOrId });
+            if (extraMeta?.zimPath) qParams.set('zim_path', extraMeta.zimPath);
+            const res = await fetch(`/api/notes/zim-article?${qParams.toString()}`);
             const data = await res.json();
             if (data.status === 'success') {
                 window.openDocumentReader({
                     title: data.title || pathOrId,
                     sourceType: 'zim',
-                    htmlContent: data.html
+                    htmlContent: data.html,
+                    filePath: data.zim_path || extraMeta?.zimPath || ''
                 });
             } else {
                 alert(data.message || `ZIM article "${pathOrId}" not found.`);
@@ -450,13 +572,65 @@ window.openLocalResource = async function(type, pathOrId, extraPageOrTitle = 1) 
     }
 };
 
+// =========================================================
+// Global Live WebSocket Hub Client (Auto-Reconnecting)
+// =========================================================
+(function initGlobalWebSocket() {
+    let ws = null;
+    let reconnectTimer = null;
+
+    function connectWS() {
+        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+            return;
+        }
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${proto}//${window.location.host}/ws`;
+        try {
+            ws = new WebSocket(wsUrl);
+            window.appWebSocket = ws;
+
+            ws.onmessage = (event) => {
+                try {
+                    const payload = JSON.parse(event.data);
+                    const msgType = payload.type || payload.event || '';
+                    document.dispatchEvent(new CustomEvent('ws:message', { detail: payload }));
+
+                    if (msgType === 'task_update' || msgType === 'TASK_UPDATE') {
+                        document.dispatchEvent(new CustomEvent('ws:task_update', { detail: payload }));
+                    } else if (msgType === 'session_update' || msgType === 'SESSION_STATUS_UPDATE') {
+                        document.dispatchEvent(new CustomEvent('ws:session_update', { detail: payload }));
+                    } else if (msgType === 'indexing_progress' || msgType === 'INDEXING_PROGRESS') {
+                        document.dispatchEvent(new CustomEvent('ws:indexing_progress', { detail: payload }));
+                    }
+                } catch (_) {}
+            };
+
+            ws.onclose = () => {
+                if (reconnectTimer) clearTimeout(reconnectTimer);
+                reconnectTimer = setTimeout(connectWS, 3000);
+            };
+
+            ws.onerror = () => {
+                try { ws.close(); } catch (_) {}
+            };
+        } catch (_) {
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            reconnectTimer = setTimeout(connectWS, 5000);
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', connectWS);
+    } else {
+        connectWS();
+    }
+})();
+
 document.addEventListener('DOMContentLoaded', async () => {
-    // Ensure AppState is loaded first so opacity & wallpaper timers are active
     if (window.AppState && window.AppState.fetch) {
         await window.AppState.fetch();
     }
 
-    // Ensure Right Inspector starts collapsed cleanly
     window.closeInspector();
     document.getElementById('close-inspector-btn')?.addEventListener('click', () => {
         window.closeInspector();
@@ -479,7 +653,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const viewSections = document.querySelectorAll('.view-section');
 
     const switchTab = (targetId) => {
-        // 1. Clean up subview overlays and containers so tab content doesn't bleed
         if (typeof window.closeTopicCarousel === 'function') {
             window.closeTopicCarousel();
         } else {
@@ -502,14 +675,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             hubHeader.style.display = 'flex';
         }
 
-        // 2. Clear inline display overrides on all view-section elements & toggle active class
         viewSections.forEach(sec => {
             sec.style.display = '';
             sec.classList.toggle('active', sec.id === targetId);
         });
         navButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.target === targetId));
 
-        // 3. Manage contextual Right Sidebar Inspector content per active tab
         if (targetId === 'search-results-view') {
             if (typeof window.renderSearchFilterInspector === 'function') {
                 window.renderSearchFilterInspector();
@@ -524,21 +695,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                     window.updateInspectorForQuestion(window.currentQuiz.questions[window.currentIndex]);
                 }
             } else {
-                if (typeof window.closeInspector === 'function') {
-                    window.closeInspector();
-                }
+                window.closeInspector();
             }
         } else if (targetId === 'knowledge-hub-view') {
             if (typeof window.renderHubInspectorIfActive === 'function') {
                 window.renderHubInspectorIfActive();
-            } else if (typeof window.closeInspector === 'function') {
+            } else {
                 window.closeInspector();
             }
         } else {
-            // Tabs without sidebar content (settings-view, rag-vault-view, habit-tracker-view, expertise-view, queue-view)
-            if (typeof window.closeInspector === 'function') {
-                window.closeInspector();
-            }
+            window.closeInspector();
         }
     };
 
@@ -722,115 +888,119 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function extractAndApplyPalette(img, theme) {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        canvas.width = 64;
-        canvas.height = 64;
-        ctx.drawImage(img, 0, 0, 64, 64);
+        try {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            canvas.width = 64;
+            canvas.height = 64;
+            ctx.drawImage(img, 0, 0, 64, 64);
 
-        const regions = [
-            { x: 0, y: 0, w: 32, h: 32 },
-            { x: 32, y: 0, w: 32, h: 32 },
-            { x: 0, y: 32, w: 32, h: 32 },
-            { x: 32, y: 32, w: 32, h: 32 }
-        ];
+            const regions = [
+                { x: 0, y: 0, w: 32, h: 32 },
+                { x: 32, y: 0, w: 32, h: 32 },
+                { x: 0, y: 32, w: 32, h: 32 },
+                { x: 32, y: 32, w: 32, h: 32 }
+            ];
 
-        const filteredHues = [];
-        const quadrantDataList = [];
+            const filteredHues = [];
+            const quadrantDataList = [];
 
-        regions.forEach((region) => {
-            const imgData = ctx.getImageData(region.x, region.y, region.w, region.h).data;
-            let sumR = 0, sumG = 0, sumB = 0;
-            const totalPixels = imgData.length / 4;
-            const pixelsWithLum = [];
+            regions.forEach((region) => {
+                const imgData = ctx.getImageData(region.x, region.y, region.w, region.h).data;
+                let sumR = 0, sumG = 0, sumB = 0;
+                const totalPixels = imgData.length / 4;
+                const pixelsWithLum = [];
 
-            for (let p = 0; p < imgData.length; p += 4) {
-                const r = imgData[p], g = imgData[p + 1], b = imgData[p + 2];
-                sumR += r; sumG += g; sumB += b;
-                const [h, s, l] = rgbToHsl(r, g, b);
-                pixelsWithLum.push({ r, g, b, l, h, s });
-                if (l >= 0.08 && l <= 0.92 && s >= 0.12) filteredHues.push(h);
-            }
+                for (let p = 0; p < imgData.length; p += 4) {
+                    const r = imgData[p], g = imgData[p + 1], b = imgData[p + 2];
+                    sumR += r; sumG += g; sumB += b;
+                    const [h, s, l] = rgbToHsl(r, g, b);
+                    pixelsWithLum.push({ r, g, b, l, h, s });
+                    if (l >= 0.08 && l <= 0.92 && s >= 0.12) filteredHues.push(h);
+                }
 
-            pixelsWithLum.sort((a, b) => a.l - b.l);
-            const tenthIndex = Math.max(1, Math.floor(totalPixels * 0.10));
+                pixelsWithLum.sort((a, b) => a.l - b.l);
+                const tenthIndex = Math.max(1, Math.floor(totalPixels * 0.10));
 
-            let darkSumR = 0, darkSumG = 0, darkSumB = 0;
-            for (let k = 0; k < tenthIndex; k++) {
-                darkSumR += pixelsWithLum[k].r; darkSumG += pixelsWithLum[k].g; darkSumB += pixelsWithLum[k].b;
-            }
+                let darkSumR = 0, darkSumG = 0, darkSumB = 0;
+                for (let k = 0; k < tenthIndex; k++) {
+                    darkSumR += pixelsWithLum[k].r; darkSumG += pixelsWithLum[k].g; darkSumB += pixelsWithLum[k].b;
+                }
 
-            let brightSumR = 0, brightSumG = 0, brightSumB = 0;
-            for (let k = totalPixels - tenthIndex; k < totalPixels; k++) {
-                brightSumR += pixelsWithLum[k].r; brightSumG += pixelsWithLum[k].g; brightSumB += pixelsWithLum[k].b;
-            }
+                let brightSumR = 0, brightSumG = 0, brightSumB = 0;
+                for (let k = totalPixels - tenthIndex; k < totalPixels; k++) {
+                    brightSumR += pixelsWithLum[k].r; brightSumG += pixelsWithLum[k].g; brightSumB += pixelsWithLum[k].b;
+                }
 
-            quadrantDataList.push({
-                avgBg: [Math.round(sumR / totalPixels), Math.round(sumG / totalPixels), Math.round(sumB / totalPixels)],
-                darkBg: [Math.round(darkSumR / tenthIndex), Math.round(darkSumG / tenthIndex), Math.round(darkSumB / tenthIndex)],
-                brightBg: [Math.round(brightSumR / tenthIndex), Math.round(brightSumG / tenthIndex), Math.round(brightSumB / tenthIndex)]
+                quadrantDataList.push({
+                    avgBg: [Math.round(sumR / totalPixels), Math.round(sumG / totalPixels), Math.round(sumB / totalPixels)],
+                    darkBg: [Math.round(darkSumR / tenthIndex), Math.round(darkSumG / tenthIndex), Math.round(darkSumB / tenthIndex)],
+                    brightBg: [Math.round(brightSumR / tenthIndex), Math.round(brightSumG / tenthIndex), Math.round(brightSumB / tenthIndex)]
+                });
             });
-        });
 
-        let domHue = 220;
-        if (filteredHues.length > 0) {
-            let sinSum = 0, cosSum = 0;
-            filteredHues.forEach(h => {
-                const rad = (h * Math.PI) / 180;
-                sinSum += Math.sin(rad);
-                cosSum += Math.cos(rad);
+            let domHue = 220;
+            if (filteredHues.length > 0) {
+                let sinSum = 0, cosSum = 0;
+                filteredHues.forEach(h => {
+                    const rad = (h * Math.PI) / 180;
+                    sinSum += Math.sin(rad);
+                    cosSum += Math.cos(rad);
+                });
+                let avgRad = Math.atan2(sinSum, cosSum);
+                if (avgRad < 0) avgRad += 2 * Math.PI;
+                domHue = (avgRad * 180) / Math.PI;
+            }
+
+            const hueShifts = [0, 15, -15, 30];
+            const alpha = (window.AppState && typeof window.AppState.get().cardOpacity === 'number')
+                ? window.AppState.get().cardOpacity
+                : 0.78;
+
+            quadrantDataList.forEach((qData, i) => {
+                const h = (domHue + hueShifts[i] + 360) % 360;
+                const s = (theme === 'dark') ? 0.35 : 0.30;
+                const l = (theme === 'dark') ? 0.17 : 0.87;
+
+                const [rCard, gCard, bCard] = hslToRgb(h, s, l);
+                document.documentElement.style.setProperty(`--card-color-${i + 1}`, `${rCard}, ${gCard}, ${bCard}`);
+
+                const blend = (cardC, bgC) => Math.round(alpha * cardC + (1 - alpha) * bgC);
+                const effAvg = [blend(rCard, qData.avgBg[0]), blend(gCard, qData.avgBg[1]), blend(bCard, qData.avgBg[2])];
+                const effDark = [blend(rCard, qData.darkBg[0]), blend(gCard, qData.darkBg[1]), blend(bCard, qData.darkBg[2])];
+                const effBright = [blend(rCard, qData.brightBg[0]), blend(gCard, qData.brightBg[1]), blend(bCard, qData.brightBg[2])];
+
+                const lumAvg = getRelativeLuminance(...effAvg);
+                const lumDark = getRelativeLuminance(...effDark);
+                const lumBright = getRelativeLuminance(...effBright);
+
+                const darkTextLum = getRelativeLuminance(15, 23, 42);
+                const lightTextLum = getRelativeLuminance(248, 250, 252);
+
+                const minCrDarkText = Math.min(
+                    getContrastRatio(darkTextLum, lumAvg),
+                    getContrastRatio(darkTextLum, lumDark),
+                    getContrastRatio(darkTextLum, lumBright)
+                );
+                const minCrLightText = Math.min(
+                    getContrastRatio(lightTextLum, lumAvg),
+                    getContrastRatio(lightTextLum, lumDark),
+                    getContrastRatio(lightTextLum, lumBright)
+                );
+
+                if (minCrLightText >= minCrDarkText) {
+                    document.documentElement.style.setProperty(`--text-on-card-${i + 1}`, '#F8FAFC');
+                    document.documentElement.style.setProperty(`--text-muted-on-card-${i + 1}`, '#CBD5E1');
+                    document.documentElement.style.setProperty(`--card-text-shadow-${i + 1}`, '0 1px 2px rgba(0, 0, 0, 0.35)');
+                } else {
+                    document.documentElement.style.setProperty(`--text-on-card-${i + 1}`, '#0F172A');
+                    document.documentElement.style.setProperty(`--text-muted-on-card-${i + 1}`, '#334155');
+                    document.documentElement.style.setProperty(`--card-text-shadow-${i + 1}`, '0 1px 1px rgba(255, 255, 255, 0.5)');
+                }
             });
-            let avgRad = Math.atan2(sinSum, cosSum);
-            if (avgRad < 0) avgRad += 2 * Math.PI;
-            domHue = (avgRad * 180) / Math.PI;
+        } catch (err) {
+            console.debug('Palette extraction skipped:', err);
         }
-
-        const hueShifts = [0, 15, -15, 30];
-        const alpha = (window.AppState && typeof window.AppState.get().cardOpacity === 'number')
-            ? window.AppState.get().cardOpacity
-            : 0.78;
-
-        quadrantDataList.forEach((qData, i) => {
-            const h = (domHue + hueShifts[i] + 360) % 360;
-            const s = (theme === 'dark') ? 0.35 : 0.30;
-            const l = (theme === 'dark') ? 0.17 : 0.87;
-
-            const [rCard, gCard, bCard] = hslToRgb(h, s, l);
-            document.documentElement.style.setProperty(`--card-color-${i + 1}`, `${rCard}, ${gCard}, ${bCard}`);
-
-            const blend = (cardC, bgC) => Math.round(alpha * cardC + (1 - alpha) * bgC);
-            const effAvg = [blend(rCard, qData.avgBg[0]), blend(gCard, qData.avgBg[1]), blend(bCard, qData.avgBg[2])];
-            const effDark = [blend(rCard, qData.darkBg[0]), blend(gCard, qData.darkBg[1]), blend(bCard, qData.darkBg[2])];
-            const effBright = [blend(rCard, qData.brightBg[0]), blend(gCard, qData.brightBg[1]), blend(bCard, qData.brightBg[2])];
-
-            const lumAvg = getRelativeLuminance(...effAvg);
-            const lumDark = getRelativeLuminance(...effDark);
-            const lumBright = getRelativeLuminance(...effBright);
-
-            const darkTextLum = getRelativeLuminance(15, 23, 42);
-            const lightTextLum = getRelativeLuminance(248, 250, 252);
-
-            const minCrDarkText = Math.min(
-                getContrastRatio(darkTextLum, lumAvg),
-                getContrastRatio(darkTextLum, lumDark),
-                getContrastRatio(darkTextLum, lumBright)
-            );
-            const minCrLightText = Math.min(
-                getContrastRatio(lightTextLum, lumAvg),
-                getContrastRatio(lightTextLum, lumDark),
-                getContrastRatio(lightTextLum, lumBright)
-            );
-
-            if (minCrLightText >= minCrDarkText) {
-                document.documentElement.style.setProperty(`--text-on-card-${i + 1}`, '#F8FAFC');
-                document.documentElement.style.setProperty(`--text-muted-on-card-${i + 1}`, '#CBD5E1');
-                document.documentElement.style.setProperty(`--card-text-shadow-${i + 1}`, '0 1px 2px rgba(0, 0, 0, 0.35)');
-            } else {
-                document.documentElement.style.setProperty(`--text-on-card-${i + 1}`, '#0F172A');
-                document.documentElement.style.setProperty(`--text-muted-on-card-${i + 1}`, '#334155');
-                document.documentElement.style.setProperty(`--card-text-shadow-${i + 1}`, '0 1px 1px rgba(255, 255, 255, 0.5)');
-            }
-        });
     }
 
     // =========================================================
@@ -857,31 +1027,39 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // Global Click Delegation for PDF, Obsidian, and ZIM Citations
+    // Unified Document-Level Click Delegation for PDF, Obsidian, and ZIM Citations
     document.addEventListener('click', async (e) => {
         const target = e.target;
+        if (!target || typeof target.closest !== 'function') return;
 
-        const pdfBtn = target.closest('.citation-pdf');
-        if (pdfBtn) {
+        const citeEl = target.closest('.citation-link, .citation-pdf, .citation-obsidian, .citation-zim');
+        if (citeEl) {
             e.preventDefault();
-            await window.openLocalResource('pdf', pdfBtn.dataset.filepath, pdfBtn.dataset.page || 1);
-            return;
-        }
+            const ds = citeEl.dataset || {};
+            const sourceType = (
+                ds.sourceType ||
+                (citeEl.classList.contains('citation-pdf') ? 'pdf' : '') ||
+                (citeEl.classList.contains('citation-obsidian') ? 'obsidian' : '') ||
+                (citeEl.classList.contains('citation-zim') ? 'zim' : '')
+            ).toLowerCase();
 
-        const obsBtn = target.closest('.citation-obsidian');
-        if (obsBtn) {
-            e.preventDefault();
-            const filePath = obsBtn.dataset.filepath || obsBtn.dataset.file;
-            await window.openLocalResource('obsidian', filePath, obsBtn.textContent);
-            return;
-        }
+            const resolvedPath = ds.filePath || ds.filepath || ds.file || '';
+            const pageNum = parseInt(ds.page || '1', 10) || 1;
+            const anchor = ds.anchor || '';
+            const articleId = ds.articleId || ds.title || citeEl.textContent.trim();
 
-        const zimBtn = target.closest('.citation-zim');
-        if (zimBtn) {
-            e.preventDefault();
-            const articleId = zimBtn.dataset.articleId || zimBtn.textContent.trim();
-            await window.openLocalResource('zim', articleId);
-            return;
+            if (sourceType === 'pdf') {
+                await window.openLocalResource('pdf', resolvedPath, pageNum);
+                return;
+            }
+            if (sourceType === 'obsidian') {
+                await window.openLocalResource('obsidian', resolvedPath || articleId, citeEl.textContent.trim(), { anchor });
+                return;
+            }
+            if (sourceType === 'zim') {
+                await window.openLocalResource('zim', articleId || resolvedPath, 1, { zimPath: resolvedPath });
+                return;
+            }
         }
 
         const closeZimBtn = target.closest('#close-zim-viewer-btn');

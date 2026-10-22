@@ -9,6 +9,12 @@ let carouselInterval = null;
 let currentTopicIndex = 0;
 let hubSocket = null;
 
+function _toMs(ts) {
+    const n = Number(ts || 0);
+    if (!n) return 0;
+    return n < 1e11 ? n * 1000 : n;
+}
+
 // Expose globally so app.js and quiz.js can refresh the Hub after saving or confirming topics
 window.loadSessions = loadSessions;
 window.clearActiveInspectorSession = function() {
@@ -166,11 +172,15 @@ function renderHub() {
 
         const cardHeading = session.custom_title || session.subject_name || 'Clinical Question Set';
         const subBadge = session.subject_name || 'General';
-        const dateLabel = session.last_attempted && session.last_attempted > 0
-            ? `Attempted ${new Date(session.last_attempted).toLocaleDateString()}`
-            : `Created ${new Date(session.timestamp || Date.now()).toLocaleDateString()}`;
+        const lastAttMs = _toMs(session.last_attempted);
+        const createdMs = _toMs(session.timestamp) || Date.now();
+        const dateLabel = lastAttMs > 0
+            ? `Attempted ${new Date(lastAttMs).toLocaleDateString()}`
+            : `Created ${new Date(createdMs).toLocaleDateString()}`;
 
-        const topics = Array.isArray(session.topics) ? session.topics.filter(t => t && t !== 'General Medical Concept') : [];
+        const topics = Array.isArray(session.topics)
+            ? session.topics.filter(t => t && t !== 'General Medical Concept')
+            : [];
 
         const cardNode = document.createElement('div');
         cardNode.className = `hub-card glass-card rounded-2xl transition-all flex flex-col h-full overflow-hidden shadow-lg relative cursor-pointer ${
@@ -178,7 +188,6 @@ function renderHub() {
         }`;
         cardNode.dataset.sessionId = session.id;
 
-        // Topic section: 2 lines clamped if reviewed, or "Review & Confirm Topics" button if unreviewed
         let topicsHtml = '';
         if (reviewed) {
             if (topics.length > 0) {
@@ -202,7 +211,7 @@ function renderHub() {
             topicsHtml = `
                 <div class="mb-4 h-[46px] flex items-center justify-between glass-panel px-3 py-2 rounded-xl border border-warning/30">
                     <span class="text-xs text-muted truncate pr-2">Topics not confirmed yet</span>
-                    <button type="button" class="btn-review-topics secondary-btn px-2.5 py-1 text-xs font-semibold text-brand-300 shrink-0">
+                    <button type="button" class="btn-review-topics secondary-btn px-2.5 py-1 text-xs font-semibold text-brand-300 shrink-0 cursor-pointer">
                         🩺 Review Topics
                     </button>
                 </div>
@@ -232,7 +241,7 @@ function renderHub() {
                     ${renderStatusCirclesHTML(session)}
                 </div>
 
-                <!-- Card Heading (CSV Subject/Topic or Custom Search Topic) -->
+                <!-- Card Heading -->
                 <h3 class="hub-card-title text-lg font-bold mb-1 truncate" title="${window.escapeHTML(cardHeading)}">
                     ${window.escapeHTML(cardHeading)}
                 </h3>
@@ -278,7 +287,6 @@ function renderHub() {
             </div>
         `;
 
-        // Edit Mode Checkbox Selection
         const cb = cardNode.querySelector('.hub-select-cb');
         if (isEditing && cb) {
             cb.addEventListener('change', (e) => {
@@ -290,7 +298,6 @@ function renderHub() {
             });
         }
 
-        // Card Body Click -> Open 3rd-Column Right Inspector (or toggle checkbox if editing)
         cardNode.querySelector('.hub-card-body')?.addEventListener('click', (e) => {
             if (e.target.closest('.btn-review-topics') || e.target.closest('.hub-circle-1')) return;
             if (isEditing && cb) {
@@ -303,7 +310,6 @@ function renderHub() {
             openHubCardInspector(session);
         });
 
-        // Review Topics button or clicking Circle 1 when unreviewed -> Reopen Topic Verification Popup
         const triggerTopicPopup = async (e) => {
             e.stopPropagation();
             await reopenTopicVerificationForSession(session);
@@ -313,7 +319,6 @@ function renderHub() {
             cardNode.querySelector('.hub-circle-1')?.addEventListener('click', triggerTopicPopup);
         }
 
-        // Footer Buttons
         cardNode.querySelector('.btn-study')?.addEventListener('click', (e) => {
             e.stopPropagation();
             openTopicCarousel(session.id);
@@ -353,6 +358,18 @@ async function reopenTopicVerificationForSession(session) {
         let savedTopicList = session.topic_list || [];
         if (typeof savedTopicList === 'string') {
             try { savedTopicList = JSON.parse(savedTopicList); } catch (_) { savedTopicList = []; }
+        }
+
+        if ((!savedTopicList || savedTopicList.length === 0) && session.id) {
+            try {
+                const draftRes = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/extract_draft_topics`);
+                if (draftRes.ok) {
+                    const draftData = await draftRes.json();
+                    if (Array.isArray(draftData.topic_list) && draftData.topic_list.length > 0) {
+                        savedTopicList = draftData.topic_list;
+                    }
+                }
+            } catch (_) {}
         }
 
         if (typeof window.openTopicVerificationModal === 'function') {
@@ -406,7 +423,13 @@ async function openHubCardInspector(session, forceOpen = true) {
     const expertiseMap = state.topicExpertise || {};
     const topics = Array.isArray(session.topics) ? session.topics : [];
 
-    const queueInfo = inspectorData?.queue_info || session.queue_info || { in_queue: false, position: 0, total_pending: 0, failed_count: 0, completed_count: 0 };
+    const queueInfo = inspectorData?.queue_info || session.queue_info || {
+        in_queue: false,
+        position: 0,
+        total_pending: 0,
+        failed_count: 0,
+        completed_count: 0
+    };
     const llmStatus = (inspectorData?.llm_status || session.llm_status || 'none').toLowerCase();
     const failedCnt = queueInfo?.failed_count || 0;
     const completedCnt = queueInfo?.completed_count || 0;
@@ -426,8 +449,9 @@ async function openHubCardInspector(session, forceOpen = true) {
     const nowMs = Date.now();
     const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
     const staleTopics = inspectorData?.stale_topics || topicProficiency.filter(tp => {
-        if (!tp.last_attempted) return true;
-        const tsMs = tp.last_attempted < 1e11 ? tp.last_attempted * 1000 : tp.last_attempted;
+        const tsRaw = tp.last_practiced_ts || tp.last_attempted || 0;
+        if (!tsRaw) return true;
+        const tsMs = _toMs(tsRaw);
         return (nowMs - tsMs) > sevenDaysMs;
     });
 
@@ -436,9 +460,11 @@ async function openHubCardInspector(session, forceOpen = true) {
         ? Number(session.completed_questions)
         : Number((session.correct_answers || 0) + (session.wrong_answers || 0));
 
-    const lastAttemptStr = session.last_attempted && session.last_attempted > 0
-        ? new Date(session.last_attempted < 1e11 ? session.last_attempted * 1000 : session.last_attempted).toLocaleString()
-        : (completedQ > 0 ? new Date(session.timestamp).toLocaleString() : 'Not attempted yet');
+    const lastAttMs = _toMs(session.last_attempted);
+    const createdMs = _toMs(session.timestamp);
+    const lastAttemptStr = lastAttMs > 0
+        ? new Date(lastAttMs).toLocaleString()
+        : (completedQ > 0 && createdMs > 0 ? new Date(createdMs).toLocaleString() : 'Not attempted yet');
 
     let html = `<div class="space-y-5 text-xs pb-8">`;
 
@@ -511,12 +537,12 @@ async function openHubCardInspector(session, forceOpen = true) {
         `;
     }
 
-    // 3. Frequently Wrong / Weak Topics + One-Click Question Set Creator
+    // 4. Frequently Wrong / Weak Topics + One-Click Question Set Creator
     html += `
         <div class="glass-card p-4 rounded-xl border border-gray-700/50">
             <h4 class="font-bold text-danger-400 uppercase text-[11px] mb-2">🎯 Focus Areas (Frequently Wrong Topics)</h4>
             ${weakTopics.length === 0
-                ? '<p class="text-muted text-[11px]">No weak topics (<60% accuracy) detected in this set yet.</p>'
+                ? '<p class="text-muted text-[11px]">No weak topics (&lt;60% accuracy) detected in this set yet.</p>'
                 : `<div class="space-y-2">
                     ${weakTopics.map(wt => {
                         const tName = wt.topic || wt.name || wt;
@@ -527,7 +553,7 @@ async function openHubCardInspector(session, forceOpen = true) {
                                     <p class="font-semibold truncate text-xs">${window.escapeHTML(tName)}</p>
                                     <p class="text-[10px] text-danger-400">Accuracy: ${acc}</p>
                                 </div>
-                                <button type="button" class="insp-create-set-btn secondary-btn px-2.5 py-1 text-[11px] shrink-0"
+                                <button type="button" class="insp-create-set-btn secondary-btn px-2.5 py-1 text-[11px] shrink-0 cursor-pointer"
                                         data-topic="${window.escapeHTML(tName)}">
                                     🎯 Create Set
                                 </button>
@@ -539,7 +565,7 @@ async function openHubCardInspector(session, forceOpen = true) {
         </div>
     `;
 
-    // 4. Stale Revision Alerts (> 7 days since last attempt)
+    // 5. Stale Revision Alerts (> 7 days since last attempt)
     if (staleTopics.length > 0) {
         html += `
             <div class="glass-card p-4 rounded-xl border border-warning/30">
@@ -560,7 +586,7 @@ async function openHubCardInspector(session, forceOpen = true) {
         `;
     }
 
-    // 5. Topic Proficiency Breakdown
+    // 6. Topic Proficiency Breakdown
     html += `
         <div class="glass-card p-4 rounded-xl border border-gray-700/50">
             <h4 class="font-bold uppercase text-[11px] text-muted mb-3">📈 Topic Proficiency in This Set</h4>
@@ -628,7 +654,7 @@ async function openHubCardInspector(session, forceOpen = true) {
             });
             if (res.ok) {
                 btn.textContent = '✓ Moved to Top of Queue (#1)';
-                setTimeout(() => openHubCardInspector(session), 800);
+                setTimeout(() => openHubCardInspector(session, false), 800);
             }
         } catch (err) {
             console.error("Failed to prioritize session:", err);
@@ -811,7 +837,6 @@ function renderSessionReview(questions) {
             optsContainer.appendChild(optDiv);
         });
 
-        // Dual Explanations: CSV Baseline Explanation + LM Studio Detailed MCQ Breakdown
         const expContainer = card.querySelector('.review-explanation-container');
         const expContent = card.querySelector('.review-explanation');
         const hasCsvExp = Boolean(q.explanation && q.explanation !== 'No explanation provided.');
@@ -881,9 +906,27 @@ function appendReferences(container, refsStr, highlightTopic) {
     try {
         const refs = typeof refsStr === 'string' ? JSON.parse(refsStr) : refsStr;
         const allRefs = [];
-        if (refs.pdf) allRefs.push(...refs.pdf.map(r => ({ ...r, type: 'pdf' })));
-        if (refs.obsidian) allRefs.push(...refs.obsidian.map(r => ({ ...r, type: 'obsidian' })));
-        if (refs.zim) allRefs.push(...refs.zim.map(r => ({ ...r, type: 'zim' })));
+
+        const pushItem = (r, fallbackType = '') => {
+            if (!r || typeof r !== 'object') return;
+            const src = String(r.type || r.source || r.source_type || fallbackType).toLowerCase();
+            const fp = String(r.file_path || r.path || '').toLowerCase();
+            let resolvedType = src;
+            if (src === 'pdf' || fp.endsWith('.pdf')) resolvedType = 'pdf';
+            else if (src === 'obsidian' || fp.endsWith('.md')) resolvedType = 'obsidian';
+            else if (src === 'zim' || fp.endsWith('.zim')) resolvedType = 'zim';
+            if (['pdf', 'obsidian', 'zim'].includes(resolvedType)) {
+                allRefs.push({ ...r, type: resolvedType });
+            }
+        };
+
+        if (Array.isArray(refs)) {
+            refs.forEach(r => pushItem(r));
+        } else if (refs && typeof refs === 'object') {
+            if (Array.isArray(refs.pdf)) refs.pdf.forEach(r => pushItem(r, 'pdf'));
+            if (Array.isArray(refs.obsidian)) refs.obsidian.forEach(r => pushItem(r, 'obsidian'));
+            if (Array.isArray(refs.zim)) refs.zim.forEach(r => pushItem(r, 'zim'));
+        }
 
         if (allRefs.length === 0) return 0;
 
@@ -899,19 +942,26 @@ function appendReferences(container, refsStr, highlightTopic) {
             }
 
             if (ref.type === 'pdf') {
-                a.className = "citation-pdf";
+                const pageNum = ref.page || ref.page_number || 1;
+                a.className = "citation-link citation-pdf";
+                a.dataset.sourceType = 'pdf';
+                a.dataset.filePath = ref.file_path || '';
                 a.dataset.filepath = ref.file_path || '';
-                a.dataset.page = ref.page || 1;
-                a.textContent = `📕 ${ref.title || 'PDF'} (Pg ${ref.page || 1})`;
+                a.dataset.page = String(pageNum);
+                a.textContent = `📕 ${ref.title || 'PDF'} (Pg ${pageNum})`;
             } else if (ref.type === 'obsidian') {
-                a.className = "citation-obsidian";
-                a.dataset.filepath = ref.file_path || '';
+                a.className = "citation-link citation-obsidian";
+                a.dataset.sourceType = 'obsidian';
+                a.dataset.filePath = ref.file_path || ref.title || '';
+                a.dataset.filepath = ref.file_path || ref.title || '';
                 a.dataset.file = ref.title || '';
                 a.textContent = `🟣 ${ref.title || 'Obsidian Note'}`;
             } else if (ref.type === 'zim') {
-                a.className = "citation-zim";
-                // Always pass the article title/ID (not the .zim file path) so ZIM HTML lookup succeeds
+                a.className = "citation-link citation-zim";
+                a.dataset.sourceType = 'zim';
                 a.dataset.articleId = ref.article_id || ref.title || '';
+                a.dataset.filePath = ref.file_path || '';
+                a.dataset.filepath = ref.file_path || '';
                 a.textContent = `🌐 ${ref.title || 'ZIM Article'}`;
             }
             container.appendChild(a);
@@ -966,8 +1016,19 @@ async function openTopicCarousel(sessionId) {
 
 window.openTopicCarouselForQuiz = async function(topicsArray, initialTopic) {
     carouselOriginMode = 'quiz';
+
+    // Ensure knowledge-hub-view is visible so #hub-carousel-container can be seen
+    const quizView = document.getElementById('quiz-view');
+    const hubView = document.getElementById('knowledge-hub-view');
+    if (quizView) quizView.classList.remove('active');
+    if (hubView) hubView.classList.add('active');
+
     const hubHeader = document.querySelector('#knowledge-hub-view .view-header');
     if (hubHeader) hubHeader.style.display = 'none';
+    const hubMain = document.getElementById('hub-main-container');
+    if (hubMain) hubMain.style.display = 'none';
+    const hubRev = document.getElementById('hub-review-container');
+    if (hubRev) hubRev.style.display = 'none';
 
     document.getElementById('hub-carousel-container').style.display = 'flex';
 
@@ -995,6 +1056,7 @@ window.openTopicCarouselForQuiz = async function(topicsArray, initialTopic) {
                     display_title: data.display_title || topicName,
                     unified_article: data.unified_article || null,
                     enhanced_explanation: data.enhanced_explanation || null,
+                    variance_audit: data.variance_audit || null,
                     top_references: data.references ? JSON.stringify(data.references) : null,
                     llm_status: data.unified_article ? 'completed' : 'none'
                 };
@@ -1007,6 +1069,7 @@ window.openTopicCarouselForQuiz = async function(topicsArray, initialTopic) {
             display_title: topicName,
             unified_article: null,
             enhanced_explanation: null,
+            variance_audit: null,
             top_references: null,
             llm_status: 'none'
         };
@@ -1105,33 +1168,52 @@ function renderCurrentTopic() {
                 pSec.innerHTML = `<strong>Section:</strong> ${window.escapeHTML(parsedArticle.section)}`;
                 contentEl.appendChild(pSec);
             }
-            if (parsedArticle.conditional_context) {
+            if (parsedArticle.conditional_context && !parsedArticle.conditional_context.includes('No local reference files found') && !parsedArticle.conditional_context.includes('LM Studio processing skipped')) {
                 const pCtx = document.createElement('p');
+                pCtx.className = "mt-1 text-sm text-muted";
                 pCtx.innerHTML = `<strong>Context:</strong> ${window.escapeHTML(parsedArticle.conditional_context)}`;
                 contentEl.appendChild(pCtx);
             }
 
-            const ul = document.createElement('ul');
-            ul.className = "list-disc pl-5 mt-4 space-y-2";
-            (parsedArticle.clinical_points || []).forEach(pt => {
-                const li = document.createElement('li');
-                li.textContent = (pt.point || '') + ' ';
-                if (pt.source) {
-                    const badge = document.createElement('span');
-                    badge.className = "text-xs glass-panel text-brand-300 px-2 py-0.5 rounded-full ml-2 font-mono";
-                    badge.title = `Source: ${pt.source} (Page ${pt.page || 1})`;
-                    badge.textContent = `[Ref: ${pt.source}${pt.page ? ` p.${pt.page}` : ''}]`;
-                    li.appendChild(badge);
-                }
-                ul.appendChild(li);
-            });
-            contentEl.appendChild(ul);
+            const pts = Array.isArray(parsedArticle.clinical_points) ? parsedArticle.clinical_points : [];
+            if (pts.length > 0) {
+                const ul = document.createElement('ul');
+                ul.className = "list-disc pl-5 mt-4 space-y-2";
+                pts.forEach(pt => {
+                    const li = document.createElement('li');
+                    if (typeof pt === 'string') {
+                        li.textContent = pt;
+                    } else if (pt && typeof pt === 'object') {
+                        li.textContent = (pt.point || pt.text || '') + ' ';
+                        if (pt.source) {
+                            const badge = document.createElement('span');
+                            badge.className = "text-xs glass-panel text-brand-300 px-2 py-0.5 rounded-full ml-2 font-mono";
+                            badge.title = `Source: ${pt.source} (Page ${pt.page || 1})`;
+                            badge.textContent = `[Ref: ${pt.source}${pt.page ? ` p.${pt.page}` : ''}]`;
+                            li.appendChild(badge);
+                        }
+                    }
+                    ul.appendChild(li);
+                });
+                contentEl.appendChild(ul);
+            } else if (parsedArticle.raw_text) {
+                const rawDiv = document.createElement('div');
+                rawDiv.className = "mt-4 prose prose-sm max-w-none";
+                window.renderMarkdownAndMath(parsedArticle.raw_text, rawDiv);
+                contentEl.appendChild(rawDiv);
+            } else if (topic.enhanced_explanation) {
+                const expDiv = document.createElement('div');
+                expDiv.className = "mt-4 prose prose-sm max-w-none";
+                window.renderMarkdownAndMath(topic.enhanced_explanation, expDiv);
+                contentEl.appendChild(expDiv);
+            }
 
-            if (parsedArticle.discrepancies) {
+            const varianceText = parsedArticle.discrepancies || topic.variance_audit || '';
+            if (varianceText && !['none', 'n/a'].includes(String(varianceText).trim().toLowerCase())) {
                 const disc = document.createElement('div');
                 disc.className = "mt-6 bg-danger-500/10 border border-danger-500/30 p-4 rounded-lg";
                 disc.innerHTML = `<strong class="text-danger-400 block mb-1">⚠️ Clinical Discrepancies &amp; Staging Variances:</strong>
-                                  <div class="whitespace-pre-wrap text-xs">${window.escapeHTML(parsedArticle.discrepancies)}</div>`;
+                                  <div class="whitespace-pre-wrap text-xs">${window.escapeHTML(varianceText)}</div>`;
                 contentEl.appendChild(disc);
             }
         } else {
@@ -1169,35 +1251,59 @@ function renderCurrentTopic() {
 // Live WebSocket Listener for 1-2-3 Status Circle Transitions
 // =========================================================
 
+function _handleSessionWsEvent(data) {
+    if (!data || !data.session_id) return;
+    const target = hubSessions.find(s => s.id === data.session_id);
+    if (target) {
+        if (data.topics_reviewed !== undefined) {
+            target.topics_reviewed = Boolean(data.topics_reviewed);
+        }
+        if (data.refs_status) target.refs_status = data.refs_status;
+        if (data.llm_status) target.llm_status = data.llm_status;
+        renderHub();
+        if (activeInspectorSessionId === data.session_id) {
+            openHubCardInspector(target, false);
+        }
+    } else {
+        loadSessions(true);
+    }
+}
+
+function _handleTaskWsEvent(data) {
+    if (!data) return;
+    const st = String(data.status || '').toLowerCase();
+    if (st === 'completed' || st === 'failed') {
+        loadSessions(true);
+    }
+}
+
 function initHubWebSocket() {
+    // 1. Bind to global WebSocket events dispatched by app.js (/ws)
+    document.addEventListener('ws:session_update', (e) => _handleSessionWsEvent(e.detail));
+    document.addEventListener('ws:task_update', (e) => _handleTaskWsEvent(e.detail));
+
+    // 2. Fallback standalone socket on /ws if app.js global socket is not active
+    if (window.appWebSocket) return;
     const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-    const wsUrl = `${protocol}${window.location.host}/ws/tasks`;
+    const wsUrl = `${protocol}${window.location.host}/ws`;
 
     try {
         hubSocket = new WebSocket(wsUrl);
         hubSocket.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
-                if (data.event === 'SESSION_STATUS_UPDATE' && data.session_id) {
-                    const target = hubSessions.find(s => s.id === data.session_id);
-                    if (target) {
-                        target.topics_reviewed = data.topics_reviewed ? 1 : 0;
-                        target.refs_status = data.refs_status || target.refs_status;
-                        target.llm_status = data.llm_status || target.llm_status;
-                        renderHub();
-                        if (activeInspectorSessionId === data.session_id) {
-                            openHubCardInspector(target, false);
-                        }
-                    } else {
-                        loadSessions(true);
-                    }
-                } else if (data.event === 'TASK_UPDATE' && data.status === 'COMPLETED') {
-                    loadSessions(true);
+                const msgType = data.type || data.event || '';
+                if (msgType === 'session_update' || msgType === 'SESSION_STATUS_UPDATE') {
+                    _handleSessionWsEvent(data);
+                } else if (msgType === 'task_update' || msgType === 'TASK_UPDATE') {
+                    _handleTaskWsEvent(data);
                 }
             } catch (_) {}
         };
         hubSocket.onclose = () => {
-            setTimeout(initHubWebSocket, 6000);
+            setTimeout(() => {
+                if (!window.appWebSocket) initHubWebSocket();
+            }, 6000);
         };
     } catch (_) {}
 }
@@ -1241,10 +1347,18 @@ document.addEventListener('DOMContentLoaded', () => {
             carouselInterval = null;
         }
         if (carouselOriginMode === 'quiz') {
+            const hubView = document.getElementById('knowledge-hub-view');
             const quizView = document.getElementById('quiz-view');
-            if (quizView) quizView.style.display = '';
-            const quizNav = document.querySelector('.nav-btn[data-target="quiz-view"]');
-            if (quizNav) quizNav.click();
+            if (hubView) hubView.classList.remove('active');
+            if (quizView) {
+                quizView.style.display = '';
+                quizView.classList.add('active');
+            }
+            if (window.currentQuiz && Array.isArray(window.currentQuiz.questions) && window.currentQuiz.questions[window.currentIndex]) {
+                if (typeof window.updateInspectorForQuestion === 'function') {
+                    window.updateInspectorForQuestion(window.currentQuiz.questions[window.currentIndex]);
+                }
+            }
         } else {
             const hubHeader = document.querySelector('#knowledge-hub-view .view-header');
             if (hubHeader) hubHeader.style.display = 'flex';

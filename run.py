@@ -1,136 +1,101 @@
+import logging
 import os
+import socket
 import sys
-from pathlib import Path
+import threading
+import time
+import webbrowser
 
-# 1. Disable CUDA/GPU access for the FastAPI process to reserve 100% of 6GB VRAM for LM Studio
+# 1. Enforce Invariant 1: Zero VRAM for Backend (reserve 100% of 6GB VRAM for LM Studio)
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 from config import (
+    APP_TITLE,
+    HF_CACHE_DIR,
+    MIN_VENDOR_ASSET_BYTES,
     SERVER_HOST,
     SERVER_PORT,
-    APP_TITLE,
-    CSV_DIR,
-    MCQS_DIR,
-    VAULTS_DIR,
-    PDFS_DIR,
-    ZIM_DIR,
-    MODELS_DIR,
-    HF_CACHE_DIR,
-    FLASHRANK_CACHE_DIR,
-    INDEX_PATH,
-    LANCEDB_PATH,
-    REPORTS_DIR,
-    HIGHLIGHTED_DIR,
-    RESULTS_DIR,
-    VENDOR_DIR,
     VENDOR_ASSETS,
+    VENDOR_DIR,
+    ensure_directories,
+    ensure_offline_vendor_assets,
 )
 
 # Pin HuggingFace cache to local project directory for strict offline portability
 os.environ["HF_HOME"] = str(HF_CACHE_DIR)
 os.environ["HF_HUB_CACHE"] = str(HF_CACHE_DIR)
+os.environ["HUGGINGFACE_HUB_CACHE"] = str(HF_CACHE_DIR)
 
-import time
-import threading
-import webbrowser
-import urllib.request
-import logging
+# 2. Enforce Invariant 2: Main-thread DLL pre-warming on Windows to prevent Access Violations
+for _native_mod in ("onnxruntime", "lancedb", "tantivy"):
+    try:
+        __import__(_native_mod)
+    except Exception:
+        pass
+
 import uvicorn
 from core.database import initialize_database
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("bootstrap")
 
 
-def ensure_directories():
-    """Creates all required data, index, storage, and vendor directories on startup."""
-    required_dirs = [
-        CSV_DIR,
-        MCQS_DIR,
-        VAULTS_DIR,
-        PDFS_DIR,
-        ZIM_DIR,
-        MODELS_DIR,
-        HF_CACHE_DIR,
-        FLASHRANK_CACHE_DIR,
-        INDEX_PATH,
-        LANCEDB_PATH,
-        REPORTS_DIR,
-        HIGHLIGHTED_DIR,
-        RESULTS_DIR,
-        VENDOR_DIR,
-    ]
-    for directory in required_dirs:
-        os.makedirs(directory, exist_ok=True)
+def open_browser(url: str) -> None:
+    """Waits for the Uvicorn socket to accept connections before launching the default browser."""
+    connect_host = "127.0.0.1" if SERVER_HOST in ("0.0.0.0", "::") else SERVER_HOST
+    deadline = time.monotonic() + 15.0
 
-
-def ensure_offline_vendor_assets() -> dict:
-    """
-    Downloads UI CDN dependencies (Tailwind, Marked, DOMPurify, KaTeX) into ui/vendor/
-    on the first online boot so the application runs 100% offline thereafter.
-    Never raises an exception if offline.
-    """
-    status = {}
-    for filename, url in VENDOR_ASSETS.items():
-        target_path = VENDOR_DIR / filename
-        if target_path.exists() and target_path.stat().st_size > 128:
-            status[filename] = "cached"
-            continue
-
+    while time.monotonic() < deadline:
         try:
-            logger.info(f"Caching UI dependency for offline use: {filename} ...")
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            )
-            with urllib.request.urlopen(req, timeout=6.0) as resp:
-                content = resp.read()
-                if content and len(content) > 128:
-                    temp_path = target_path.with_suffix(".tmp")
-                    temp_path.write_bytes(content)
-                    os.replace(temp_path, target_path)
-                    status[filename] = "downloaded"
-                else:
-                    status[filename] = "missing"
-        except Exception as e:
-            logger.warning(
-                f"Offline mode or network unreachable while fetching {filename} ({e}). "
-                f"Fallback handling active."
-            )
-            status[filename] = "missing"
-    return status
+            with socket.create_connection((connect_host, SERVER_PORT), timeout=0.5):
+                break
+        except OSError:
+            time.sleep(0.25)
 
-
-def open_browser(url: str):
-    time.sleep(1.5)
     try:
         webbrowser.open(url)
-    except Exception as e:
-        logger.warning(f"Could not auto-launch browser: {e}")
+    except Exception as exc:
+        logger.warning("Could not auto-launch browser: %s", exc)
 
 
-def main():
+def main() -> None:
+    """Application entry point: sets environment, caches vendor assets, initializes DB, and boots server."""
     ensure_directories()
-    vendor_status = ensure_offline_vendor_assets()
-    missing_assets = [k for k, v in vendor_status.items() if v == "missing"]
+    ensure_offline_vendor_assets()
+
+    missing_assets = [
+        filename
+        for filename in VENDOR_ASSETS
+        if not (VENDOR_DIR / filename).exists()
+        or (VENDOR_DIR / filename).stat().st_size <= MIN_VENDOR_ASSET_BYTES
+    ]
     if missing_assets:
         logger.warning(
-            f"Missing vendor assets (connect to internet once to cache): {', '.join(missing_assets)}"
+            "Missing vendor assets (connect to internet once to cache): %s",
+            ", ".join(missing_assets),
         )
     else:
         logger.info("All UI vendor libraries are cached locally for 100% offline execution.")
 
     initialize_database()
 
-    url = f"http://{SERVER_HOST}:{SERVER_PORT}/"
+    browser_host = "127.0.0.1" if SERVER_HOST in ("0.0.0.0", "::") else SERVER_HOST
+    url = f"http://{browser_host}:{SERVER_PORT}/"
     print(f"Starting {APP_TITLE} server at {url}")
     print("Automatically opening the application in your default browser.")
 
     threading.Thread(target=open_browser, args=(url,), daemon=True).start()
-    uvicorn.run("server.app:app", host=SERVER_HOST, port=SERVER_PORT, log_level="warning", reload=False)
+    uvicorn.run(
+        "server.app:app",
+        host=SERVER_HOST,
+        port=SERVER_PORT,
+        log_level="warning",
+        reload=False,
+    )
 
 
 if __name__ == "__main__":

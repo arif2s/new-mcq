@@ -3,8 +3,8 @@
  *
  * Manages:
  * 1. App appearance, glassmorphic opacities, and wallpaper rotation timers.
- * 2. LLM synthesis toggles and Obsidian viewer/native launcher preferences.
- * 3. CPU embedding & FlashRank cross-encoder offline downloads.
+ * 2. LLM synthesis toggles, PDF parser, extractor strategy, and Obsidian viewer/native launcher preferences.
+ * 3. CPU embedding & FlashRank cross-encoder offline downloads and active model switching.
  * 4. SciSpaCy biomedical NER pipeline selector, installer, and progress tracking.
  * 5. Offline ontology linkers (UMLS, MeSH, RxNorm, HPO, GO) detection & streaming SQLite indexer.
  * 6. System diagnostics (LM Studio, SQLite WAL, SumatraPDF, Tantivy, Vendor Cache).
@@ -16,6 +16,7 @@
   // Polling Intervals
   let _scispacyPollTimer = null;
   let _indexerPollTimer = null;
+  let _eventsBound = false;
 
   // DOM Helper
   const $ = (id) => document.getElementById(id);
@@ -33,28 +34,128 @@
    * 1. State Synchronization & General Settings
    * ========================================================================= */
 
-  function initGeneralSettings() {
-    const state = window.AppState ? window.AppState.get() : {};
+  function syncGeneralSettingsUI() {
+    const state = window.AppState && window.AppState.get ? window.AppState.get() : {};
+
+    const llmToggle = $("setting-llm-enabled");
+    if (llmToggle) {
+      llmToggle.checked = state.llmEnabled !== false && !state.skipLMStudio;
+    }
+
+    const obsidianSelect = $("setting-obsidian-mode");
+    if (obsidianSelect) {
+      obsidianSelect.value = state.obsidianOpenMode || "browser";
+    }
+
+    const pdfParserSelect = $("setting-pdf-parser");
+    if (pdfParserSelect && state.pdfParser) {
+      pdfParserSelect.value = state.pdfParser;
+    }
+
+    const extractorSelect = $("setting-extractor-strategy");
+    if (extractorSelect && (state.extractorStrategy || state.extractor_strategy)) {
+      extractorSelect.value = state.extractorStrategy || state.extractor_strategy;
+    }
+
+    const queueLimitInput = $("setting-queue-limit");
+    if (queueLimitInput && state.processingQueueHardLimit) {
+      queueLimitInput.value = state.processingQueueHardLimit;
+    }
+
+    const panelSlider = $("setting-panel-alpha");
+    const panelVal = $("setting-panel-alpha-val");
+    if (panelSlider) {
+      const alpha =
+        state.panelOpacity !== undefined
+          ? state.panelOpacity
+          : state.panelAlpha !== undefined
+          ? state.panelAlpha
+          : 0.78;
+      panelSlider.value = alpha;
+      if (panelVal) panelVal.textContent = Math.round(alpha * 100) + "%";
+    }
+
+    const cardSlider = $("setting-card-alpha");
+    const cardVal = $("setting-card-alpha-val");
+    if (cardSlider) {
+      const alpha =
+        state.cardOpacity !== undefined
+          ? state.cardOpacity
+          : state.cardAlpha !== undefined
+          ? state.cardAlpha
+          : 0.82;
+      cardSlider.value = alpha;
+      if (cardVal) cardVal.textContent = Math.round(alpha * 100) + "%";
+    }
+
+    const wpTimerSelect = $("setting-wallpaper-timer");
+    if (wpTimerSelect) {
+      wpTimerSelect.value = String(
+        state.wallpaperIntervalMinutes !== undefined ? state.wallpaperIntervalMinutes : 30
+      );
+    }
+  }
+
+  function bindGeneralSettingsEvents() {
+    if (_eventsBound) return;
+    _eventsBound = true;
 
     // LLM Synthesis Toggle
     const llmToggle = $("setting-llm-enabled");
     if (llmToggle) {
-      llmToggle.checked = state.llmEnabled !== false && !state.skipLMStudio;
       llmToggle.addEventListener("change", (e) => {
-        const enabled = e.target.checked;
-        window.AppState.update({
-          llmEnabled: enabled,
-          skipLMStudio: !enabled,
-        });
+        const enabled = Boolean(e.target.checked);
+        if (window.AppState && window.AppState.update) {
+          window.AppState.update({
+            llmEnabled: enabled,
+            skipLMStudio: !enabled,
+          });
+        }
       });
     }
 
     // Obsidian Open Mode (In-Browser Reader vs obsidian:// Protocol)
     const obsidianSelect = $("setting-obsidian-mode");
     if (obsidianSelect) {
-      obsidianSelect.value = state.obsidianOpenMode || "browser";
       obsidianSelect.addEventListener("change", (e) => {
-        window.AppState.update({ obsidianOpenMode: e.target.value });
+        if (window.AppState && window.AppState.update) {
+          window.AppState.update({ obsidianOpenMode: e.target.value });
+        }
+      });
+    }
+
+    // PDF Parser Engine (fitz vs docling)
+    const pdfParserSelect = $("setting-pdf-parser");
+    if (pdfParserSelect) {
+      pdfParserSelect.addEventListener("change", (e) => {
+        if (window.AppState && window.AppState.update) {
+          window.AppState.update({ pdfParser: e.target.value });
+        }
+      });
+    }
+
+    // Topic Extractor Strategy
+    const extractorSelect = $("setting-extractor-strategy");
+    if (extractorSelect) {
+      extractorSelect.addEventListener("change", (e) => {
+        if (window.AppState && window.AppState.update) {
+          window.AppState.update({
+            extractorStrategy: e.target.value,
+            extractor_strategy: e.target.value,
+          });
+        }
+      });
+    }
+
+    // Queue Hard Limit
+    const queueLimitInput = $("setting-queue-limit");
+    if (queueLimitInput) {
+      queueLimitInput.addEventListener("change", (e) => {
+        const val = Math.max(10, Math.min(500, parseInt(e.target.value, 10) || 100));
+        e.target.value = val;
+        if (window.AppState && window.AppState.update) {
+          window.AppState.update({ processingQueueHardLimit: val });
+        }
       });
     }
 
@@ -62,20 +163,22 @@
     const panelSlider = $("setting-panel-alpha");
     const panelVal = $("setting-panel-alpha-val");
     if (panelSlider) {
-      const alpha = state.panelOpacity !== undefined ? state.panelOpacity : (state.panelAlpha !== undefined ? state.panelAlpha : 0.78);
-      panelSlider.value = alpha;
-      if (panelVal) panelVal.textContent = Math.round(alpha * 100) + "%";
-
       panelSlider.addEventListener("input", (e) => {
         const val = parseFloat(e.target.value);
         if (panelVal) panelVal.textContent = Math.round(val * 100) + "%";
         if (window.AppState && window.AppState.applyAppearance) {
-          window.AppState.applyAppearance({ ...window.AppState.get(), panelOpacity: val, panelAlpha: val });
+          window.AppState.applyAppearance({
+            ...window.AppState.get(),
+            panelOpacity: val,
+            panelAlpha: val,
+          });
         }
       });
       panelSlider.addEventListener("change", (e) => {
         const val = parseFloat(e.target.value);
-        window.AppState.update({ panelOpacity: val, panelAlpha: val });
+        if (window.AppState && window.AppState.update) {
+          window.AppState.update({ panelOpacity: val, panelAlpha: val });
+        }
       });
     }
 
@@ -83,31 +186,34 @@
     const cardSlider = $("setting-card-alpha");
     const cardVal = $("setting-card-alpha-val");
     if (cardSlider) {
-      const alpha = state.cardOpacity !== undefined ? state.cardOpacity : (state.cardAlpha !== undefined ? state.cardAlpha : 0.82);
-      cardSlider.value = alpha;
-      if (cardVal) cardVal.textContent = Math.round(alpha * 100) + "%";
-
       cardSlider.addEventListener("input", (e) => {
         const val = parseFloat(e.target.value);
         if (cardVal) cardVal.textContent = Math.round(val * 100) + "%";
         if (window.AppState && window.AppState.applyAppearance) {
-          window.AppState.applyAppearance({ ...window.AppState.get(), cardOpacity: val, cardAlpha: val });
+          window.AppState.applyAppearance({
+            ...window.AppState.get(),
+            cardOpacity: val,
+            cardAlpha: val,
+          });
         }
       });
       cardSlider.addEventListener("change", (e) => {
         const val = parseFloat(e.target.value);
-        window.AppState.update({ cardOpacity: val, cardAlpha: val });
+        if (window.AppState && window.AppState.update) {
+          window.AppState.update({ cardOpacity: val, cardAlpha: val });
+        }
       });
     }
 
     // Wallpaper Timer Interval
     const wpTimerSelect = $("setting-wallpaper-timer");
     if (wpTimerSelect) {
-      wpTimerSelect.value = state.wallpaperIntervalMinutes || "30";
       wpTimerSelect.addEventListener("change", (e) => {
-        window.AppState.update({
-          wallpaperIntervalMinutes: parseInt(e.target.value, 10),
-        });
+        if (window.AppState && window.AppState.update) {
+          window.AppState.update({
+            wallpaperIntervalMinutes: parseInt(e.target.value, 10),
+          });
+        }
       });
     }
 
@@ -134,23 +240,34 @@
       const res = await fetch("/api/models/cpu_embedding_models");
       if (!res.ok) throw new Error("Failed to load embedding models");
       const data = await res.json();
+      const activeModel = data.active || "";
 
       container.innerHTML = (data.models || [])
         .map((m) => {
-          const isDownloaded = m.downloaded;
+          const isDownloaded = Boolean(m.downloaded);
+          const isActive =
+            activeModel && m.id.toLowerCase() === activeModel.toLowerCase();
           return `
           <div class="flex items-center justify-between p-3.5 rounded-xl border border-gray-700/50 glass-panel mb-2.5 transition-all">
             <div class="flex-1 pr-4">
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
                 <span class="font-semibold text-sm text-neutral-100">${escapeHTML(m.name)}</span>
-                ${m.default ? '<span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">Default</span>' : ""}
+                ${
+                  isActive
+                    ? '<span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Active</span>'
+                    : m.default
+                    ? '<span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">Default</span>'
+                    : ""
+                }
               </div>
               <p class="text-xs text-neutral-400 mt-0.5">Dim: ${m.dimension}d | Size: ~${m.size_mb} MB</p>
             </div>
-            <div>
+            <div class="flex items-center gap-2">
               ${
                 isDownloaded
-                  ? '<span class="inline-flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg font-medium"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Ready Offline</span>'
+                  ? isActive
+                    ? '<span class="inline-flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg font-medium"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Active Offline</span>'
+                    : `<button data-id="${escapeHTML(m.id)}" data-type="embedding" class="btn-activate-model text-xs px-3 py-1.5 rounded-lg font-medium bg-blue-600/80 hover:bg-blue-500 text-white transition-colors">Set Active</button>`
                   : `<button data-id="${escapeHTML(m.id)}" data-type="embedding" class="btn-download-model text-xs px-3.5 py-1.5 rounded-lg font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center gap-1.5 shadow-sm">
                       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                       Download
@@ -163,6 +280,7 @@
         .join("");
 
       _bindDownloadButtons(container, loadEmbeddingModels);
+      _bindActivateButtons(container, "embedding", loadEmbeddingModels);
     } catch (err) {
       container.innerHTML = `<div class="text-xs text-rose-400 p-2">Error loading embedding models: ${escapeHTML(err.message)}</div>`;
     }
@@ -176,23 +294,34 @@
       const res = await fetch("/api/models/flashrank_models");
       if (!res.ok) throw new Error("Failed to load FlashRank models");
       const data = await res.json();
+      const activeModel = data.active || "";
 
       container.innerHTML = (data.models || [])
         .map((m) => {
-          const isDownloaded = m.downloaded;
+          const isDownloaded = Boolean(m.downloaded);
+          const isActive =
+            activeModel && m.id.toLowerCase() === activeModel.toLowerCase();
           return `
           <div class="flex items-center justify-between p-3.5 rounded-xl border border-gray-700/50 bg-white/5 backdrop-blur-md mb-2.5 transition-all">
             <div class="flex-1 pr-4">
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
                 <span class="font-semibold text-sm text-neutral-100">${escapeHTML(m.name)}</span>
-                ${m.default ? '<span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">Default</span>' : ""}
+                ${
+                  isActive
+                    ? '<span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Active</span>'
+                    : m.default
+                    ? '<span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">Default</span>'
+                    : ""
+                }
               </div>
               <p class="text-xs text-neutral-400 mt-0.5">Size: ~${m.size_mb} MB</p>
             </div>
-            <div>
+            <div class="flex items-center gap-2">
               ${
                 isDownloaded
-                  ? '<span class="inline-flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg font-medium"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Ready Offline</span>'
+                  ? isActive
+                    ? '<span class="inline-flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg font-medium"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Active Offline</span>'
+                    : `<button data-id="${escapeHTML(m.id)}" data-type="flashrank" class="btn-activate-model text-xs px-3 py-1.5 rounded-lg font-medium bg-blue-600/80 hover:bg-blue-500 text-white transition-colors">Set Active</button>`
                   : `<button data-id="${escapeHTML(m.id)}" data-type="flashrank" class="btn-download-model text-xs px-3.5 py-1.5 rounded-lg font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center gap-1.5 shadow-sm">
                       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                       Download
@@ -205,9 +334,34 @@
         .join("");
 
       _bindDownloadButtons(container, loadFlashrankModels);
+      _bindActivateButtons(container, "flashrank", loadFlashrankModels);
     } catch (err) {
       container.innerHTML = `<div class="text-xs text-rose-400 p-2">Error loading FlashRank models: ${escapeHTML(err.message)}</div>`;
     }
+  }
+
+  function _bindActivateButtons(container, modelType, refreshFn) {
+    container.querySelectorAll(".btn-activate-model").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const modelId = btn.getAttribute("data-id");
+        if (!modelId) return;
+        const patch =
+          modelType === "embedding"
+            ? { embeddingModel: modelId, embedding_model: modelId }
+            : { flashrankModel: modelId, flashrank_model: modelId };
+
+        if (window.AppState && window.AppState.update) {
+          await window.AppState.update(patch);
+        } else {
+          await fetch("/api/state/app_persistence", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(patch),
+          });
+        }
+        refreshFn();
+      });
+    });
   }
 
   function _bindDownloadButtons(container, refreshFn) {
@@ -246,8 +400,6 @@
   async function loadScispacyModels() {
     const selectEl = $("select-scispacy-model");
     const detailsEl = $("scispacy-model-details");
-    const statusBadge = $("scispacy-model-status-badge");
-    const downloadBtn = $("btn-download-scispacy");
 
     if (!selectEl) return;
 
@@ -256,8 +408,8 @@
       if (!res.ok) throw new Error("Failed to query SciSpaCy models");
       const data = await res.json();
       _scispacyModelsCache = data.models || [];
+      const activeId = data.active || "";
 
-      // Populate Select Dropdown
       const previousVal = selectEl.value;
       selectEl.innerHTML = _scispacyModelsCache
         .map((m) => {
@@ -267,7 +419,9 @@
         })
         .join("");
 
-      if (previousVal && _scispacyModelsCache.some((m) => m.id === previousVal)) {
+      if (activeId && _scispacyModelsCache.some((m) => m.id === activeId)) {
+        selectEl.value = activeId;
+      } else if (previousVal && _scispacyModelsCache.some((m) => m.id === previousVal)) {
         selectEl.value = previousVal;
       } else {
         const rec = _scispacyModelsCache.find((m) => m.recommended);
@@ -338,16 +492,27 @@
 
   function initScispacyEvents() {
     const selectEl = $("select-scispacy-model");
-    if (selectEl) {
-      selectEl.addEventListener("change", renderSelectedScispacyModel);
+    if (selectEl && !selectEl.dataset.bound) {
+      selectEl.dataset.bound = "1";
+      selectEl.addEventListener("change", () => {
+        renderSelectedScispacyModel();
+        const chosenId = selectEl.value;
+        if (window.AppState && window.AppState.update) {
+          window.AppState.update({
+            scispacyModel: chosenId,
+            scispacy_model: chosenId,
+          });
+        }
+      });
     }
 
     const downloadBtn = $("btn-download-scispacy");
-    if (downloadBtn) {
+    if (downloadBtn && !downloadBtn.dataset.bound) {
+      downloadBtn.dataset.bound = "1";
       downloadBtn.addEventListener("click", async () => {
-        const selectEl = $("select-scispacy-model");
-        if (!selectEl) return;
-        const modelId = selectEl.value;
+        const sel = $("select-scispacy-model");
+        if (!sel) return;
+        const modelId = sel.value;
 
         downloadBtn.disabled = true;
         downloadBtn.innerHTML = `<svg class="animate-spin w-4 h-4 text-white inline mr-1" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg> Starting...`;
@@ -382,7 +547,9 @@
 
     _scispacyPollTimer = setInterval(async () => {
       try {
-        const res = await fetch(`/api/models/scispacy/download_status?model_name=${encodeURIComponent(modelId)}`);
+        const res = await fetch(
+          `/api/models/scispacy/download_status?model_name=${encodeURIComponent(modelId)}`
+        );
         if (!res.ok) return;
         const data = await res.json();
 
@@ -394,6 +561,9 @@
         if (data.status === "completed") {
           clearInterval(_scispacyPollTimer);
           _scispacyPollTimer = null;
+          if (window.AppState && window.AppState.update) {
+            window.AppState.update({ scispacyModel: modelId, scispacy_model: modelId });
+          }
           await loadScispacyModels();
         } else if (data.status === "failed") {
           clearInterval(_scispacyPollTimer);
@@ -426,7 +596,6 @@
       const ontologies = data.ontologies || {};
       const kbs = ["umls", "mesh", "rxnorm", "hpo", "go"];
 
-      // Render Detected Ontologies Cards with Checkboxes
       listContainer.innerHTML = kbs
         .map((key) => {
           const info = ontologies[key] || {};
@@ -436,28 +605,42 @@
           const hasSparse = Boolean(info.has_sparse_matrix);
 
           return `
-          <div class="p-3 rounded-xl border ${detected ? "border-gray-700/50 glass-panel" : "border-rose-500/20 bg-rose-500/5"} flex flex-col justify-between">
+          <div class="p-3 rounded-xl border ${
+            detected ? "border-gray-700/50 glass-panel" : "border-rose-500/20 bg-rose-500/5"
+          } flex flex-col justify-between">
             <div>
               <div class="flex items-center justify-between mb-2">
                 <label class="inline-flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" class="ontology-kb-checkbox rounded glass-input text-emerald-500 focus:ring-0" value="${key}" ${detected ? "checked" : "disabled"}>
+                  <input type="checkbox" class="ontology-kb-checkbox rounded glass-input text-emerald-500 focus:ring-0" value="${key}" ${
+            detected ? "checked" : "disabled"
+          }>
                   <span class="font-bold text-sm text-neutral-100 uppercase tracking-wide">${key}</span>
                 </label>
-                <span class="text-[10px] font-semibold px-2 py-0.5 rounded ${detected ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" : "glass-panel text-neutral-500 border border-gray-700/50"}">
-                  ${detected ? `${info.size_mb} MB` : "Missing"}
+                <span class="text-[10px] font-semibold px-2 py-0.5 rounded ${
+                  detected
+                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                    : "glass-panel text-neutral-500 border border-gray-700/50"
+                }">
+                  ${detected ? `${info.size_mb || 0} MB` : "Missing"}
                 </span>
               </div>
               <div class="space-y-1 text-[11px] text-neutral-400">
                 <div class="flex items-center gap-1.5">
-                  <span class="${hasAliases ? "text-emerald-400" : "text-neutral-500"}">${hasAliases ? "✓" : "✗"}</span>
+                  <span class="${hasAliases ? "text-emerald-400" : "text-neutral-500"}">${
+            hasAliases ? "✓" : "✗"
+          }</span>
                   <span>concept_aliases.json</span>
                 </div>
                 <div class="flex items-center gap-1.5">
-                  <span class="${hasJsonl ? "text-emerald-400" : "text-neutral-500"}">${hasJsonl ? "✓" : "✗"}</span>
+                  <span class="${hasJsonl ? "text-emerald-400" : "text-neutral-500"}">${
+            hasJsonl ? "✓" : "✗"
+          }</span>
                   <span>Definitions (.jsonl)</span>
                 </div>
                 <div class="flex items-center gap-1.5">
-                  <span class="${hasSparse ? "text-emerald-400" : "text-neutral-500"}">${hasSparse ? "✓" : "✗"}</span>
+                  <span class="${hasSparse ? "text-emerald-400" : "text-neutral-500"}">${
+            hasSparse ? "✓" : "✗"
+          }</span>
                   <span>TF-IDF Vectors (.npz)</span>
                 </div>
               </div>
@@ -467,17 +650,17 @@
         })
         .join("");
 
-      // Render Semantic Type Tree Status
       const tuiInfo = ontologies.semantic_type_tree || {};
       const tuiBadge = $("tui-tree-status-badge");
       if (tuiBadge) {
         tuiBadge.className = tuiInfo.detected
           ? "text-[11px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20"
           : "text-[11px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20";
-        tuiBadge.textContent = tuiInfo.detected ? "✓ TUI Filter Tree Present" : "⚠️ TUI Tree Missing";
+        tuiBadge.textContent = tuiInfo.detected
+          ? "✓ TUI Filter Tree Present"
+          : "⚠️ TUI Tree Missing";
       }
 
-      // Render Compiled SQLite Status
       const db = data.database || {};
       if (dbCard) {
         if (db.exists && db.concepts_count > 0) {
@@ -490,8 +673,12 @@
               <span class="text-neutral-400 font-mono text-[11px]">${db.size_mb} MB</span>
             </div>
             <div class="flex items-center gap-4 text-[11px] text-neutral-400 font-mono">
-              <span>Concepts: <b class="text-neutral-200">${db.concepts_count.toLocaleString()}</b></span>
-              <span>Aliases: <b class="text-neutral-200">${db.aliases_count.toLocaleString()}</b></span>
+              <span>Concepts: <b class="text-neutral-200">${Number(
+                db.concepts_count || 0
+              ).toLocaleString()}</b></span>
+              <span>Aliases: <b class="text-neutral-200">${Number(
+                db.aliases_count || 0
+              ).toLocaleString()}</b></span>
             </div>
           `;
         } else {
@@ -507,14 +694,17 @@
       }
     } catch (err) {
       if (listContainer) {
-        listContainer.innerHTML = `<div class="text-xs text-rose-400 col-span-3">Failed to inspect linker folders: ${escapeHTML(err.message)}</div>`;
+        listContainer.innerHTML = `<div class="text-xs text-rose-400 col-span-3">Failed to inspect linker folders: ${escapeHTML(
+          err.message
+        )}</div>`;
       }
     }
   }
 
   function initLinkersEvents() {
     const buildBtn = $("btn-build-ontology-index");
-    if (!buildBtn) return;
+    if (!buildBtn || buildBtn.dataset.bound) return;
+    buildBtn.dataset.bound = "1";
 
     buildBtn.addEventListener("click", async () => {
       const selectedKbs = [];
@@ -528,7 +718,12 @@
       }
 
       const forceRebuild = Boolean($("checkbox-force-rebuild-ontology")?.checked);
-      if (forceRebuild && !confirm("Rebuilding from scratch will re-stream all JSONL and alias files. Proceed?")) {
+      if (
+        forceRebuild &&
+        !confirm(
+          "Rebuilding from scratch will re-stream all JSONL and alias files. Proceed?"
+        )
+      ) {
         return;
       }
 
@@ -575,7 +770,9 @@
         if (progressBar) progressBar.style.width = pct + "%";
         if (progressLabel) progressLabel.textContent = pct + "%";
         if (stageLabel) stageLabel.textContent = data.current_stage || "Processing...";
-        if (msgLabel) msgLabel.textContent = data.message || "Streaming concepts into SQLite...";
+        if (msgLabel) {
+          msgLabel.textContent = data.message || "Streaming concepts into SQLite...";
+        }
 
         if (data.status === "completed") {
           clearInterval(_indexerPollTimer);
@@ -622,7 +819,9 @@
       if (lmEl) {
         const lm = data.lm_studio || {};
         if (lm.online) {
-          const modelName = lm.active_model ? escapeHTML(lm.active_model) : "No Model Loaded";
+          const modelName = lm.active_model
+            ? escapeHTML(lm.active_model)
+            : "No Model Loaded";
           lmEl.innerHTML = `
             <div class="flex items-center gap-2">
               <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -653,7 +852,11 @@
               <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
               <span class="font-semibold text-emerald-300">WAL Active (${db.size_mb} MB)</span>
             </div>
-            <div class="text-[11px] text-neutral-400 mt-1">Questions: <b class="text-neutral-200">${qs.toLocaleString()}</b> | Sessions: <b class="text-neutral-200">${sess.toLocaleString()}</b></div>
+            <div class="text-[11px] text-neutral-400 mt-1">Questions: <b class="text-neutral-200">${Number(
+              qs
+            ).toLocaleString()}</b> | Sessions: <b class="text-neutral-200">${Number(
+            sess
+          ).toLocaleString()}</b></div>
           `;
         } else {
           dbEl.innerHTML = `<span class="text-rose-400 text-xs font-semibold">Database Error</span>`;
@@ -670,7 +873,9 @@
               <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
               <span class="font-semibold text-emerald-300">Installed</span>
             </div>
-            <div class="text-[11px] text-neutral-400 mt-1 truncate" title="${escapeHTML(sumatra.path)}">${escapeHTML(sumatra.path)}</div>
+            <div class="text-[11px] text-neutral-400 mt-1 truncate" title="${escapeHTML(
+              sumatra.path
+            )}">${escapeHTML(sumatra.path)}</div>
           `;
         } else {
           sumatraEl.innerHTML = `
@@ -693,7 +898,9 @@
               <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
               <span class="font-semibold text-emerald-300">Indexed (${tantivy.size_mb} MB)</span>
             </div>
-            <div class="text-[11px] text-neutral-400 mt-1">Indexed Documents: <b class="text-neutral-200">${(tantivy.doc_count || 0).toLocaleString()}</b></div>
+            <div class="text-[11px] text-neutral-400 mt-1">Indexed Documents: <b class="text-neutral-200">${Number(
+              tantivy.doc_count || 0
+            ).toLocaleString()}</b></div>
           `;
         } else {
           tantivyEl.innerHTML = `
@@ -707,7 +914,7 @@
       }
 
       // 5. Vendor Assets Offline Readiness Check
-      const vendorRes = await fetch("/api/state/vendor_status");
+      const vendorRes = await fetch("/api/state/verify_vendor");
       if (vendorRes.ok) {
         const vData = await vendorRes.json();
         const vendorEl = $("diag-vendor-status");
@@ -722,12 +929,24 @@
             `;
           } else {
             vendorEl.innerHTML = `
-              <div class="flex items-center gap-2">
-                <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
-                <span class="font-semibold text-amber-300">Partial Cache</span>
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+                  <span class="font-semibold text-amber-300">Partial Cache</span>
+                </div>
+                <button id="btn-repair-vendor-cache" class="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/30">Cache Now</button>
               </div>
               <div class="text-[11px] text-neutral-400 mt-1">Some vendor libraries loading from CDN</div>
             `;
+            const repairBtn = $("btn-repair-vendor-cache");
+            if (repairBtn) {
+              repairBtn.addEventListener("click", async () => {
+                repairBtn.disabled = true;
+                repairBtn.textContent = "Caching...";
+                await fetch("/api/state/vendor_download", { method: "POST" });
+                loadDiagnostics();
+              });
+            }
           }
         }
       }
@@ -749,7 +968,8 @@
    * ========================================================================= */
 
   function initSettings() {
-    initGeneralSettings();
+    bindGeneralSettingsEvents();
+    syncGeneralSettingsUI();
     loadEmbeddingModels();
     loadFlashrankModels();
     loadScispacyModels();
@@ -759,20 +979,20 @@
     loadDiagnostics();
 
     const refreshDiagBtn = $("btn-refresh-diagnostics");
-    if (refreshDiagBtn) {
+    if (refreshDiagBtn && !refreshDiagBtn.dataset.bound) {
+      refreshDiagBtn.dataset.bound = "1";
       refreshDiagBtn.addEventListener("click", loadDiagnostics);
     }
   }
 
-  // Hook into DOM ready or tab switches
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", initSettings);
   } else {
     initSettings();
   }
 
-  // Re-sync UI inputs when AppState updates externally
+  // Re-sync UI inputs without re-binding duplicate event listeners
   document.addEventListener("stateUpdated", () => {
-    initGeneralSettings();
+    syncGeneralSettingsUI();
   });
 })();

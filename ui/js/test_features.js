@@ -8,14 +8,22 @@
 
     let currentFeature = null;
 
+    const escapeHTML = (str) =>
+        window.escapeHTML
+            ? window.escapeHTML(str)
+            : String(str ?? '')
+                  .replace(/&/g, '&amp;')
+                  .replace(/</g, '&lt;')
+                  .replace(/>/g, '&gt;')
+                  .replace(/"/g, '&quot;')
+                  .replace(/'/g, '&#039;');
+
     function initTestFeatures() {
         const grid = document.getElementById('test-features-grid');
-        const detailContainer = document.getElementById('test-feature-detail-container');
         const backBtn = document.getElementById('test-feature-back-btn');
 
         if (!grid) return;
 
-        // Attach click handlers to feature cards
         grid.querySelectorAll('.card[data-feature]').forEach(card => {
             card.removeEventListener('click', handleCardClick);
             card.addEventListener('click', handleCardClick);
@@ -100,7 +108,7 @@
                     </div>
                     <div>
                         <label for="pdf-custom-path" class="text-xs font-bold text-muted mb-1 block">Or Custom File Path</label>
-                        <input type="text" id="pdf-custom-path" class="glass-input text-xs w-full py-2" placeholder="e.g. data/sample.pdf" />
+                        <input type="text" id="pdf-custom-path" class="glass-input text-xs w-full py-2" placeholder="e.g. data/pdfs/sample.pdf" />
                     </div>
                     <div>
                         <label for="pdf-page-num" class="text-xs font-bold text-muted mb-1 block">Page Number</label>
@@ -115,8 +123,8 @@
                         </select>
                     </div>
                 </div>
-                <div class="mt-4 flex justify-end">
-                    <button type="button" id="run-pdf-extract-btn" class="primary-btn text-xs px-6 py-2">
+                <div class="mt-4 flex justify-end gap-2">
+                    <button type="button" id="run-pdf-extract-btn" class="primary-btn text-xs px-6 py-2 cursor-pointer">
                         Extract &amp; Compare Page
                     </button>
                 </div>
@@ -149,7 +157,13 @@
                     <textarea id="pdf-output-raw" class="glass-input text-xs font-mono w-full h-80 hidden" readonly></textarea>
                 </div>
             </div>
+
+            <div id="qa-mount-point" class="mt-6"></div>
         `;
+
+        if (typeof window.initPdfParsingQA === 'function') {
+            window.initPdfParsingQA(document.getElementById('qa-mount-point'));
+        }
 
         const pdfSelect = document.getElementById('pdf-select');
         const customPath = document.getElementById('pdf-custom-path');
@@ -176,7 +190,6 @@
             outputRendered.classList.add('hidden');
         };
 
-        // Fetch initial list of PDFs
         async function loadPdfOptions() {
             try {
                 const res = await fetch('/api/sources/test_pdf_extract', {
@@ -187,7 +200,7 @@
                 const data = await res.json();
                 if (data.available_pdfs && data.available_pdfs.length > 0) {
                     pdfSelect.innerHTML = data.available_pdfs.map(p =>
-                        `<option value="${window.escapeHTML(p.path)}">${window.escapeHTML(p.name)} (${window.escapeHTML(p.path)})</option>`
+                        `<option value="${escapeHTML(p.path)}">${escapeHTML(p.name)} (${escapeHTML(p.path)})</option>`
                     ).join('');
                 } else {
                     pdfSelect.innerHTML = '<option value="">No PDF sources found in database</option>';
@@ -217,13 +230,19 @@
                 if (data.status === 'success') {
                     metaBox.innerHTML = `
                         <div class="space-y-1.5">
-                            <p><strong class="text-brand-300">File Name:</strong> ${window.escapeHTML(data.file_name)}</p>
-                            <p><strong class="text-brand-300">File Path:</strong> <code class="text-xs bg-gray-800 px-1 py-0.5 rounded">${window.escapeHTML(data.file_path)}</code></p>
+                            <p><strong class="text-brand-300">File Name:</strong> ${escapeHTML(data.file_name)}</p>
+                            <p><strong class="text-brand-300">File Path:</strong> <code class="text-xs bg-gray-800 px-1 py-0.5 rounded">${escapeHTML(data.file_path)}</code></p>
                             <p><strong class="text-brand-300">Page:</strong> ${data.page_number} / ${data.total_pages}</p>
-                            <p><strong class="text-brand-300">Engine Selected:</strong> ${window.escapeHTML(data.engine.toUpperCase())}</p>
-                            ${data.heading_path ? `<p><strong class="text-brand-300">Detected Heading Path:</strong> <span class="text-emerald-400 font-mono">${window.escapeHTML(data.heading_path)}</span></p>` : ''}
-                            ${data.subheading ? `<p><strong class="text-brand-300">Subheading:</strong> ${window.escapeHTML(data.subheading)}</p>` : ''}
+                            <p><strong class="text-brand-300">Engine Selected:</strong> ${escapeHTML(String(data.engine || '').toUpperCase())}</p>
+                            ${data.heading_path ? `<p><strong class="text-brand-300">Detected Heading Path:</strong> <span class="text-emerald-400 font-mono">${escapeHTML(data.heading_path)}</span></p>` : ''}
+                            ${data.subheading ? `<p><strong class="text-brand-300">Subheading:</strong> ${escapeHTML(data.subheading)}</p>` : ''}
                             <p><strong class="text-brand-300">Character Count:</strong> ${(data.extracted_text || '').length} chars</p>
+                            <div class="pt-2">
+                                <a href="#" class="citation-link citation-pdf secondary-btn px-3 py-1.5 rounded-lg text-xs inline-flex items-center gap-1 no-underline"
+                                   data-source-type="pdf" data-file-path="${escapeHTML(data.file_path)}" data-filepath="${escapeHTML(data.file_path)}" data-page="${data.page_number}">
+                                    📕 Open Page ${data.page_number} in SumatraPDF ↗
+                                </a>
+                            </div>
                         </div>
                     `;
 
@@ -233,13 +252,22 @@
                     } else {
                         outputRendered.textContent = data.extracted_text;
                     }
+
+                    // Populate QA engine pane automatically if mounted
+                    const qaOrig = document.getElementById('qa-original-text');
+                    const qaParsed = document.getElementById('qa-parsed-text');
+                    if (engine === 'fitz' && qaOrig && !qaOrig.value) {
+                        qaOrig.value = data.extracted_text || '';
+                    } else if (qaParsed) {
+                        qaParsed.value = data.extracted_text || '';
+                    }
                 } else {
-                    metaBox.innerHTML = `<p class="text-danger-300 font-semibold">${window.escapeHTML(data.message || 'Extraction error')}</p>`;
+                    metaBox.innerHTML = `<p class="text-danger-300 font-semibold">${escapeHTML(data.message || 'Extraction error')}</p>`;
                     outputRendered.innerHTML = '<p class="text-danger-300">Failed to extract text.</p>';
                     outputRaw.value = '';
                 }
             } catch (err) {
-                metaBox.innerHTML = `<p class="text-danger-300">Network or server error: ${window.escapeHTML(err.message)}</p>`;
+                metaBox.innerHTML = `<p class="text-danger-300">Network or server error: ${escapeHTML(err.message)}</p>`;
             } finally {
                 runBtn.disabled = false;
                 runBtn.textContent = 'Extract & Compare Page';
@@ -266,12 +294,13 @@
                         <select id="db-target-select" class="glass-input text-xs w-full py-2">
                             <option value="all">Hybrid Search (LanceDB + Tantivy + ZIM)</option>
                             <option value="lancedb">LanceDB Vector &amp; FTS</option>
-                            <option value="tantivy">Tantivy BM25 Lexical</option>
+                            <option value="pdf">PDF Textbooks Only</option>
+                            <option value="obsidian">Obsidian Vaults Only</option>
                             <option value="zim">ZIM Wikipedia B-Tree Archive</option>
                         </select>
                     </div>
                     <div>
-                        <button type="button" id="run-db-search-btn" class="primary-btn text-xs py-2 w-full">
+                        <button type="button" id="run-db-search-btn" class="primary-btn text-xs py-2 w-full cursor-pointer">
                             Search Database
                         </button>
                     </div>
@@ -304,41 +333,58 @@
             statsEl.textContent = 'Executing query...';
             resultsContainer.innerHTML = '<p class="text-xs text-brand-300 animate-pulse">Querying database indexes...</p>';
 
-            const target = targetSelect.value;
-            let sourceTypes = ['pdf', 'obsidian', 'zim'];
-            if (target === 'zim') sourceTypes = ['zim'];
-
+            const target = targetSelect.value || 'all';
             const t0 = performance.now();
             try {
                 const res = await fetch('/api/search', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query: q, source_types: sourceTypes, top_k: 10 })
+                    body: JSON.stringify({
+                        query: q,
+                        source_type: target,
+                        limit: 15,
+                        enable_rerank: true
+                    })
                 });
                 const t1 = performance.now();
                 const latency = Math.round(t1 - t0);
                 const data = await res.json();
-                const docs = data.documents || [];
 
-                statsEl.textContent = `Found ${docs.length} records in ${latency} ms`;
+                let docs = data.candidates || data.documents || [];
+                if (target === 'lancedb' && data.all_results && Array.isArray(data.all_results.lancedb) && data.all_results.lancedb.length > 0) {
+                    docs = data.all_results.lancedb;
+                }
+
+                const aliasesStr = Array.isArray(data.aliases) && data.aliases.length > 1
+                    ? ` | Aliases: ${data.aliases.slice(0, 4).join(', ')}`
+                    : '';
+                statsEl.textContent = `Found ${docs.length} records in ${latency} ms${aliasesStr}`;
 
                 if (docs.length === 0) {
                     resultsContainer.innerHTML = '<p class="text-xs text-muted py-4">No matching records found for query.</p>';
                 } else {
-                    resultsContainer.innerHTML = docs.map((doc, idx) => `
-                        <div class="p-3 rounded-xl bg-gray-900/40 border border-gray-700/50 space-y-1 text-xs">
-                            <div class="flex justify-between items-center text-brand-300 font-bold">
-                                <span>#${idx + 1} ${window.escapeHTML(doc.title || doc.heading_path || doc.source_article || 'Record')}</span>
-                                <span class="text-emerald-400 font-mono">Score: ${typeof doc.rerank_score === 'number' ? doc.rerank_score.toFixed(4) : (doc.score || 'N/A')}</span>
+                    resultsContainer.innerHTML = docs.map((doc, idx) => {
+                        const scoreVal = typeof doc.rerank_score === 'number'
+                            ? doc.rerank_score.toFixed(4)
+                            : (typeof doc.score === 'number' ? doc.score.toFixed(4) : 'N/A');
+                        const srcType = String(doc.source || 'obsidian').toLowerCase();
+                        const fp = doc.file_path || doc.source_article || '';
+                        const pg = doc.page || doc.page_number || 1;
+                        return `
+                        <div class="p-3.5 rounded-xl bg-gray-900/40 border border-gray-700/50 space-y-1.5 text-xs">
+                            <div class="flex justify-between items-center text-brand-300 font-bold gap-2">
+                                <span class="truncate">#${idx + 1} [${escapeHTML(srcType.toUpperCase())}] ${escapeHTML(doc.title || doc.heading_path || doc.source_article || 'Record')}</span>
+                                <span class="text-emerald-400 font-mono shrink-0">Score: ${scoreVal}</span>
                             </div>
-                            <p class="text-muted font-mono break-all text-[11px]">Source: ${window.escapeHTML(doc.file_path || doc.source || 'N/A')}</p>
-                            <p class="text-gray-200 mt-2 line-clamp-3">${window.escapeHTML(doc.child_content || doc.snippet || doc.parent_content || '')}</p>
+                            <p class="text-muted font-mono break-all text-[11px]">Path: ${escapeHTML(fp || 'N/A')} ${srcType === 'pdf' ? `(Page ${pg})` : ''}</p>
+                            <p class="text-gray-200 mt-2 line-clamp-3">${escapeHTML(doc.snippet || doc.child_content || doc.text || doc.parent_content || '')}</p>
                         </div>
-                    `).join('');
+                        `;
+                    }).join('');
                 }
             } catch (err) {
                 statsEl.textContent = 'Search failed';
-                resultsContainer.innerHTML = `<p class="text-xs text-danger-300">Error executing query: ${window.escapeHTML(err.message)}</p>`;
+                resultsContainer.innerHTML = `<p class="text-xs text-danger-300">Error executing query: ${escapeHTML(err.message)}</p>`;
             } finally {
                 searchBtn.disabled = false;
                 searchBtn.textContent = 'Search Database';
@@ -355,14 +401,14 @@
                 <label for="mcq-text" class="text-xs font-bold text-muted mb-2 block">Clinical Text / MCQ Input Stem</label>
                 <textarea id="mcq-text" class="glass-input large-textarea" aria-label="MCQ stem and options text" placeholder="Enter MCQ stem and options here...">A 68-year-old patient presents with dyspnea and amyloidosis of the heart, but no asthma. They were prescribed amoxicillin after a heart attack.</textarea>
                 <div class="action-bar mt-3 flex justify-end">
-                    <button type="button" id="extract-btn" class="primary-btn text-xs px-6 py-2 pulse-on-hover">Extract Clinical Entities</button>
+                    <button type="button" id="extract-btn" class="primary-btn text-xs px-6 py-2 pulse-on-hover cursor-pointer">Extract Clinical Entities</button>
                 </div>
             </div>
 
             <div class="card glass-card topics-section mb-6">
                 <h3 class="text-sm font-bold text-brand-300 mb-1">Extracted Verified Clinical Entities</h3>
                 <p class="text-xs text-muted mb-3">Green underlined chips are verified clinical entities. Click any chip to load its synthesized topic dossier.</p>
-                <div id="topics-container" class="chip-container flex wrap gap-2 min-h-12 items-center">
+                <div id="topics-container" class="chip-container flex flex-wrap gap-2 min-h-12 items-center">
                     <span class="text-xs text-muted italic">Click "Extract Clinical Entities" above to extract medical terms.</span>
                 </div>
             </div>
@@ -375,7 +421,6 @@
             </div>
         `;
 
-        // Attach standalone extraction logic
         const extractBtn = document.getElementById('extract-btn');
         if (extractBtn) {
             extractBtn.addEventListener('click', async () => {
@@ -395,31 +440,48 @@
                     const data = await res.json();
                     const details = data.topic_details || (data.topics || []).map(t => ({ name: t, verified: true }));
 
+                    if (typeof window.renderStudyTopicsInspector === 'function' && details.length > 0) {
+                        window.renderStudyTopicsInspector(details, false);
+                    }
+
                     if (chipsContainer) {
-                        chipsContainer.innerHTML = details.map(d => `
-                            <span class="topic-chip ${d.verified ? 'border-success-500 underline decoration-success-500 font-semibold' : 'opacity-60'} text-xs px-3 py-1 rounded-lg bg-emerald-500/10 text-emerald-300 cursor-pointer border border-emerald-500/30 hover:bg-emerald-500/20"
-                                  data-topic="${window.escapeHTML(d.name)}"
-                                  title="${d.verified ? 'Verified Medical Topic (Click to view synthesis)' : 'Unverified Topic'}">
-                                ${window.escapeHTML(d.name)}
-                            </span>
-                        `).join('');
+                        if (details.length === 0) {
+                            chipsContainer.innerHTML = '<span class="text-xs text-muted">No clinical entities extracted from input text.</span>';
+                        } else {
+                            chipsContainer.innerHTML = details.map(d => {
+                                const tName = d.name || d.topic_name || '';
+                                return `
+                                <span class="topic-chip ${d.verified ? 'border-success-500 underline decoration-success-500 font-semibold' : 'opacity-60'} text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-300 cursor-pointer border border-emerald-500/30 hover:bg-emerald-500/20"
+                                      data-topic="${escapeHTML(tName)}"
+                                      title="${d.verified ? 'Verified Medical Topic (Click to view synthesis)' : 'Candidate Topic'}">
+                                    ${escapeHTML(tName)}
+                                </span>
+                                `;
+                            }).join('');
+                        }
 
                         chipsContainer.querySelectorAll('.topic-chip').forEach(chip => {
                             chip.addEventListener('click', async () => {
                                 const topic = chip.dataset.topic;
                                 if (!topic) return;
+                                if (expContainer) {
+                                    expContainer.classList.remove('content-placeholder');
+                                    expContainer.innerHTML = `<p class="text-brand-300 animate-pulse">Loading synthesis &amp; references for ${escapeHTML(topic)}...</p>`;
+                                }
                                 const sRes = await fetch(`/api/mcq/synthesis?topic=${encodeURIComponent(topic)}`);
                                 if (sRes.ok) {
                                     const sData = await sRes.json();
                                     if (expContainer) {
-                                        expContainer.classList.remove('content-placeholder');
+                                        const formattedMd = window.formatUnifiedArticleToMarkdown
+                                            ? window.formatUnifiedArticleToMarkdown(sData.unified_article, sData.enhanced_explanation, topic)
+                                            : (sData.enhanced_explanation || `### ${topic}\n\nReferences resolved for **${topic}**.`);
                                         if (window.renderMarkdownAndMath) {
                                             window.renderMarkdownAndMath(
-                                                sData.unified_article || sData.enhanced_explanation || `Dossier resolved for **${topic}**.`,
+                                                formattedMd || `### ${topic}\n\nReferences resolved for **${topic}**.`,
                                                 expContainer
                                             );
                                         } else {
-                                            expContainer.textContent = sData.unified_article || sData.enhanced_explanation;
+                                            expContainer.textContent = formattedMd;
                                         }
                                     }
                                 }
@@ -444,19 +506,19 @@
             <div id="diag-summary-grid" class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <div class="card glass-card text-center p-3">
                     <p class="text-xs text-muted mb-1">LM Studio Connectivity</p>
-                    <p id="diag-lm-status" class="text-sm font-bold text-amber-400">Checking...</p>
+                    <p id="diag-test-lm-status" class="text-sm font-bold text-amber-400">Checking...</p>
                 </div>
                 <div class="card glass-card text-center p-3">
                     <p class="text-xs text-muted mb-1">Vector/Lexical DB Rows</p>
-                    <p id="diag-db-rows" class="text-sm font-bold text-purple-400">Checking...</p>
+                    <p id="diag-test-db-rows" class="text-sm font-bold text-purple-400">Checking...</p>
                 </div>
                 <div class="card glass-card text-center p-3">
                     <p class="text-xs text-muted mb-1">SumatraPDF Executable</p>
-                    <p id="diag-sumatra-status" class="text-sm font-bold text-blue-400">Checking...</p>
+                    <p id="diag-test-sumatra-status" class="text-sm font-bold text-blue-400">Checking...</p>
                 </div>
                 <div class="card glass-card text-center p-3">
                     <p class="text-xs text-muted mb-1">GPU VRAM Overhead</p>
-                    <p id="diag-vram-status" class="text-sm font-bold text-emerald-400">0.0 MB (Strict CPU)</p>
+                    <p id="diag-test-vram-status" class="text-sm font-bold text-emerald-400">0.0 MB (Strict CPU)</p>
                 </div>
             </div>
 
@@ -465,11 +527,11 @@
                 <!-- MiniLM Embedding Tester -->
                 <div class="card glass-card">
                     <h4 class="text-sm font-bold text-brand-300 mb-2 flex items-center gap-2">
-                        <span>🧠</span> CPU MiniLM Embedding Generator Test
+                        <span>🧠</span> CPU Embedding Generator Test
                     </h4>
-                    <p class="text-xs text-muted mb-3">Generates 384-dimensional dense vector embeddings entirely on CPU using ONNX runtime.</p>
+                    <p class="text-xs text-muted mb-3">Generates dense vector embeddings entirely on CPU using ONNX Runtime.</p>
                     <textarea id="embed-test-input" class="glass-input text-xs w-full h-20 mb-3" placeholder="Enter text to compute vector...">Myocardial infarction presenting with ST elevation</textarea>
-                    <button type="button" id="run-embed-test-btn" class="primary-btn text-xs py-2 w-full mb-3">Compute 384d Embedding Vector</button>
+                    <button type="button" id="run-embed-test-btn" class="primary-btn text-xs py-2 w-full mb-3 cursor-pointer">Compute Embedding Vector</button>
                     <div id="embed-test-output" class="text-xs p-3 rounded-lg bg-gray-900/40 border border-gray-700/50 text-muted font-mono min-h-20">
                         Result will appear here.
                     </div>
@@ -485,7 +547,7 @@
                     <textarea id="rerank-test-passages" class="glass-input text-xs w-full h-16 mb-3" placeholder="Passages separated by newlines...">Amoxicillin is a penicillin-class antibiotic for bacterial infections.
 Acute myocardial infarction requires emergency aspirin and thrombolysis.
 Renal failure requires monitoring serum creatinine and hemodialysis.</textarea>
-                    <button type="button" id="run-rerank-test-btn" class="primary-btn text-xs py-2 w-full mb-3">Rerank Passages</button>
+                    <button type="button" id="run-rerank-test-btn" class="primary-btn text-xs py-2 w-full mb-3 cursor-pointer">Rerank Passages</button>
                     <div id="rerank-test-output" class="text-xs p-3 rounded-lg bg-gray-900/40 border border-gray-700/50 text-muted font-mono min-h-20">
                         Reranking output will appear here.
                     </div>
@@ -493,23 +555,32 @@ Renal failure requires monitoring serum creatinine and hemodialysis.</textarea>
             </div>
         `;
 
-        // Fetch overall health
         try {
             const res = await fetch('/api/models/diagnostics/all');
             const data = await res.json();
 
-            const lmStatus = document.getElementById('diag-lm-status');
-            const dbRows = document.getElementById('diag-db-rows');
-            const sumatraStatus = document.getElementById('diag-sumatra-status');
+            const lmStatus = document.getElementById('diag-test-lm-status');
+            const dbRows = document.getElementById('diag-test-db-rows');
+            const sumatraStatus = document.getElementById('diag-test-sumatra-status');
 
-            if (lmStatus) lmStatus.textContent = data.lm_studio?.status === 'ok' ? 'Connected (Port 1234)' : 'Offline / Standard Fallback';
-            if (dbRows) dbRows.textContent = `${data.tantivy?.doc_count || 0} Tantivy docs`;
-            if (sumatraStatus) sumatraStatus.textContent = data.sumatrapdf?.exists ? 'Available (Reuse Instance)' : 'Not Found';
+            if (lmStatus) {
+                lmStatus.textContent = (data.lm_studio?.status === 'ok' || data.lm_studio?.online)
+                    ? `Connected (${data.lm_studio?.latency_ms || 0}ms)`
+                    : 'Offline / Standard Fallback';
+            }
+            if (dbRows) {
+                const tDocs = data.tantivy?.doc_count || 0;
+                const qRows = data.database?.row_counts?.csv_questions || 0;
+                dbRows.textContent = `${tDocs.toLocaleString()} Tantivy | ${qRows.toLocaleString()} MCQs`;
+            }
+            if (sumatraStatus) {
+                const isSumatraOk = Boolean(data.sumatrapdf?.installed || data.sumatrapdf?.available || data.sumatrapdf?.exists);
+                sumatraStatus.textContent = isSumatraOk ? 'Available (Reuse Instance)' : 'Not Found';
+            }
         } catch (e) {
             console.error('Failed to load diagnostics:', e);
         }
 
-        // MiniLM Embed Tester
         const embedBtn = document.getElementById('run-embed-test-btn');
         const embedInput = document.getElementById('embed-test-input');
         const embedOutput = document.getElementById('embed-test-output');
@@ -519,7 +590,7 @@ Renal failure requires monitoring serum creatinine and hemodialysis.</textarea>
             if (!txt) return;
 
             embedBtn.disabled = true;
-            embedOutput.textContent = 'Computing 384d embedding...';
+            embedOutput.textContent = 'Computing CPU embedding...';
 
             try {
                 const res = await fetch('/api/models/test_embed', {
@@ -529,11 +600,11 @@ Renal failure requires monitoring serum creatinine and hemodialysis.</textarea>
                 });
                 const data = await res.json();
                 embedOutput.innerHTML = `
-                    <p class="text-emerald-400 font-bold">Status: ${data.status}</p>
+                    <p class="text-emerald-400 font-bold">Status: ${escapeHTML(data.status)}</p>
                     <p>Vector Dimension: <span class="text-brand-300 font-bold">${data.dimension}</span></p>
                     <p>CPU Execution Time: <span class="text-brand-300 font-bold">${data.latency_ms} ms</span></p>
                     <p>VRAM Allocated: <span class="text-emerald-400 font-bold">0.0 MB</span></p>
-                    <p class="mt-2 text-gray-400">Sample Vector Float Head: [${(data.sample_vector || []).map(n => n.toFixed(4)).join(', ')}...]</p>
+                    <p class="mt-2 text-gray-400">Sample Vector Float Head: [${(data.sample_vector || []).map(n => Number(n).toFixed(4)).join(', ')}...]</p>
                 `;
             } catch (err) {
                 embedOutput.textContent = `Error: ${err.message}`;
@@ -542,7 +613,6 @@ Renal failure requires monitoring serum creatinine and hemodialysis.</textarea>
             }
         };
 
-        // Reranker Tester
         const rerankBtn = document.getElementById('run-rerank-test-btn');
         const rerankQuery = document.getElementById('rerank-test-query');
         const rerankPassages = document.getElementById('rerank-test-passages');
@@ -568,8 +638,8 @@ Renal failure requires monitoring serum creatinine and hemodialysis.</textarea>
                     <div class="mt-2 space-y-2">
                         ${(data.results || []).map((r, i) => `
                             <div class="p-2 rounded bg-gray-800/60 border border-gray-700/50">
-                                <span class="text-brand-300 font-bold">Rank #${i + 1} (Rerank Score: ${r.rerank_score ? r.rerank_score.toFixed(4) : 'N/A'})</span>
-                                <p class="text-gray-300 mt-1">${window.escapeHTML(r.child_content || '')}</p>
+                                <span class="text-brand-300 font-bold">Rank #${i + 1} (Rerank Score:${typeof r.rerank_score === 'number' ? r.rerank_score.toFixed(4) : 'N/A'})</span>
+                                <p class="text-gray-300 mt-1">${escapeHTML(r.text || r.child_content || '')}</p>
                             </div>
                         `).join('')}
                     </div>
@@ -603,9 +673,9 @@ $$\\text{Cardiac Output} = \\text{Stroke Volume} \\times \\text{Heart Rate}$$
 
 When $E = mc^2$, the clinical relevance of $\\alpha + \\beta = \\gamma$ is preserved.
 
-- Bullet item 1
+- Bullet item 1 [Ref: Harrison p.42]
 - Bullet item 2</textarea>
-                    <button type="button" id="run-ui-test-render-btn" class="primary-btn text-xs py-2 w-full mb-3">Render Markdown &amp; Math</button>
+                    <button type="button" id="run-ui-test-render-btn" class="primary-btn text-xs py-2 w-full mb-3 cursor-pointer">Render Markdown &amp; Math</button>
                     <div id="ui-test-rendered-box" class="prose max-w-none text-xs p-4 rounded-xl bg-gray-900/40 border border-gray-700/50 min-h-32">
                         Rendered output will appear here.
                     </div>
@@ -621,24 +691,24 @@ When $E = mc^2$, the clinical relevance of $\\alpha + \\beta = \\gamma$ is prese
                     <div class="space-y-4">
                         <div class="p-3 rounded-xl bg-gray-900/30 border border-gray-700/50">
                             <p class="text-xs font-bold text-blue-300 mb-2">1. PDF SumatraPDF Deep Link Citation</p>
-                            <span class="citation-pdf cursor-pointer px-3 py-1.5 rounded-lg bg-blue-500/20 text-blue-300 border border-blue-500/40 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-blue-500/30"
-                                  data-file="data/sample.pdf" data-page="1">
+                            <span class="citation-link citation-pdf cursor-pointer px-3 py-1.5 rounded-lg bg-blue-500/20 text-blue-300 border border-blue-500/40 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-blue-500/30"
+                                  data-source-type="pdf" data-file-path="data/pdfs/sample.pdf" data-filepath="data/pdfs/sample.pdf" data-page="1">
                                 📄 [PDF: Sample Document p.1]
                             </span>
                         </div>
 
                         <div class="p-3 rounded-xl bg-gray-900/30 border border-gray-700/50">
-                            <p class="text-xs font-bold text-purple-300 mb-2">2. Native Obsidian URI Citation</p>
-                            <span class="citation-obsidian cursor-pointer px-3 py-1.5 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/40 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-purple-500/30"
-                                  data-file="Cardiology/Amyloidosis.md">
-                                📓 [[Obsidian: Cardiology Notes]]
+                            <p class="text-xs font-bold text-purple-300 mb-2">2. Native Obsidian URI / Reader Citation</p>
+                            <span class="citation-link citation-obsidian cursor-pointer px-3 py-1.5 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/40 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-purple-500/30"
+                                  data-source-type="obsidian" data-file-path="Amyloidosis.md" data-file="Amyloidosis">
+                                📓 [[Obsidian: Amyloidosis]]
                             </span>
                         </div>
 
                         <div class="p-3 rounded-xl bg-gray-900/30 border border-gray-700/50">
                             <p class="text-xs font-bold text-amber-300 mb-2">3. ZIM Wikipedia Reader Citation</p>
-                            <span class="citation-zim cursor-pointer px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-amber-500/30"
-                                  data-article="Amyloidosis">
+                            <span class="citation-link citation-zim cursor-pointer px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-amber-500/30"
+                                  data-source-type="zim" data-article-id="Amyloidosis">
                                 🌐 [ZIM: Medical Wiki - Amyloidosis]
                             </span>
                         </div>
@@ -675,7 +745,7 @@ When $E = mc^2$, the clinical relevance of $\\alpha + \\beta = \\gamma$ is prese
                         <label for="pipeline-topic-input" class="text-xs font-bold text-muted mb-1 block">Topic for Synthesis Pipeline Step Trace</label>
                         <input type="text" id="pipeline-topic-input" class="glass-input text-xs w-full py-2" value="Amyloidosis" placeholder="Enter clinical topic..." />
                     </div>
-                    <button type="button" id="run-pipeline-trace-btn" class="primary-btn text-xs py-2 px-6">Trace All Steps</button>
+                    <button type="button" id="run-pipeline-trace-btn" class="primary-btn text-xs py-2 px-6 cursor-pointer">Trace All Steps</button>
                 </div>
             </div>
 
@@ -737,54 +807,59 @@ When $E = mc^2$, the clinical relevance of $\\alpha + \\beta = \\gamma$ is prese
             step1Box.innerHTML = '<p class="text-brand-300 animate-pulse">Querying LanceDB + Tantivy + ZIM...</p>';
 
             try {
-                // Step 1: Retrieval
                 const t0 = performance.now();
                 const res = await fetch(`/api/mcq/synthesis?topic=${encodeURIComponent(topic)}`);
                 const t1 = performance.now();
                 const data = await res.json();
 
+                const refs = data.references || {};
+                const obsCnt = Array.isArray(refs.obsidian) ? refs.obsidian.length : 0;
+                const pdfCnt = Array.isArray(refs.pdf) ? refs.pdf.length : 0;
+                const zimCnt = Array.isArray(refs.zim) ? refs.zim.length : 0;
+
                 step1Status.textContent = `Done (${Math.round(t1 - t0)}ms)`;
                 step1Status.className = 'text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold';
                 step1Box.innerHTML = `
-                    <p class="text-emerald-400 font-bold">Resolved Chunks for ${window.escapeHTML(topic)}</p>
-                    <p class="mt-1">Article Title: ${window.escapeHTML(data.title || topic)}</p>
-                    <p>Status: ${data.unified_article ? 'Synthesized' : 'Raw Fallback'}</p>
+                    <p class="text-emerald-400 font-bold">Resolved Chunks for ${escapeHTML(topic)}</p>
+                    <p class="mt-1">Display Title: ${escapeHTML(data.display_title || topic)}</p>
+                    <p class="mt-1 font-mono text-[11px]">PDF: ${pdfCnt} | Obsidian: ${obsCnt} | ZIM: ${zimCnt}</p>
+                    <p class="mt-1">Status: ${data.unified_article ? 'Synthesized' : 'References Resolved'}</p>
                 `;
 
-                // Step 2: Prompt Assembly
                 step2Status.textContent = 'Done';
                 step2Status.className = 'text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold';
                 step2Box.innerHTML = `
                     <p class="text-emerald-400 font-bold">Context-Augmented Prompt Constructed</p>
-                    <p class="mt-1 text-gray-300 font-mono text-[10px] break-all border p-1 rounded bg-gray-800">
-                        System: "You are an expert clinical pathologist..."<br/>
-                        Topic: "${window.escapeHTML(topic)}"
+                    <p class="mt-1 text-gray-300 font-mono text-[10px] break-all border p-1.5 rounded bg-gray-800">
+                        Pass 1: Strict Clinical Extraction (JSON)<br/>
+                        Pass 2: Staging &amp; Classification Variance Audit<br/>
+                        Topic: "${escapeHTML(topic)}"
                     </p>
                 `;
 
-                // Step 3: Synthesis Output
                 step3Status.textContent = 'Done';
                 step3Status.className = 'text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold';
+                const formattedMd = window.formatUnifiedArticleToMarkdown
+                    ? window.formatUnifiedArticleToMarkdown(data.unified_article, data.enhanced_explanation, topic)
+                    : (data.enhanced_explanation || 'No synthesized content yet.');
                 if (window.renderMarkdownAndMath) {
-                    window.renderMarkdownAndMath(data.unified_article || data.enhanced_explanation || 'No content', step3Box);
+                    window.renderMarkdownAndMath(formattedMd || 'No synthesized content yet.', step3Box);
                 } else {
-                    step3Box.textContent = data.unified_article || data.enhanced_explanation;
+                    step3Box.textContent = formattedMd;
                 }
             } catch (err) {
                 step1Status.textContent = 'Failed';
                 step1Status.className = 'text-[10px] px-2 py-0.5 rounded bg-danger-500/20 text-danger-300 font-bold';
-                step1Box.innerHTML = `<p class="text-danger-300">Error: ${window.escapeHTML(err.message)}</p>`;
+                step1Box.innerHTML = `<p class="text-danger-300">Error: ${escapeHTML(err.message)}</p>`;
             } finally {
                 traceBtn.disabled = false;
             }
         };
     }
 
-    // Export globally
     window.initTestFeatures = initTestFeatures;
     window.openFeatureDetail = openFeatureDetail;
 
-    // Auto init on DOM ready
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initTestFeatures);
     } else {

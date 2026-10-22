@@ -7,28 +7,48 @@ const LEVEL_CONFIG = {
     expert: { color: 'text-success-500', bg: 'bg-success-500/10', border: 'border-success-500/30', emoji: '👑' }
 };
 
-
 function initExpertiseMap() {
-    const state = window.AppState.get();
+    if (!window.AppState || typeof window.AppState.get !== 'function') return;
+    const state = window.AppState.get() || {};
     const topicExpertise = state.topicExpertise || {};
-    const subjects = state.subjects || [];
+    const escapeHTML = window.escapeHTML || ((s) => String(s ?? ''));
 
     const groups = {};
     const counts = { beginner: 0, intermediate: 0, advanced: 0, expert: 0 };
     const recs = [];
 
-    const expertiseVals = Object.values(topicExpertise);
+    const expertiseVals = Object.values(topicExpertise).filter(exp => exp && typeof exp === 'object');
     const totalTopics = expertiseVals.length;
 
-    expertiseVals.forEach(exp => {
-        if (!groups[exp.subject]) groups[exp.subject] = [];
-        groups[exp.subject].push(exp);
+    expertiseVals.forEach(rawExp => {
+        const subject = rawExp.subject || 'General';
+        const topic = rawExp.topic || 'General';
+        const rawLevel = String(rawExp.level || 'beginner').toLowerCase();
+        const level = LEVEL_CONFIG[rawLevel] ? rawLevel : 'beginner';
+        const attempted = Number(rawExp.attempted || 0);
+        const correct = Number(rawExp.correct || 0);
+        const totalQuestions = Math.max(Number(rawExp.totalQuestions || 20), attempted, 1);
+        const accuracy = rawExp.accuracy !== undefined && rawExp.accuracy !== null
+            ? Number(rawExp.accuracy)
+            : (attempted > 0 ? (correct / attempted) * 100 : 0);
 
-        if (counts[exp.level] !== undefined) {
-            counts[exp.level]++;
-        }
+        const exp = {
+            ...rawExp,
+            subject,
+            topic,
+            level,
+            attempted,
+            correct,
+            totalQuestions,
+            accuracy
+        };
 
-        if (exp.level === 'beginner' || exp.level === 'intermediate') {
+        if (!groups[subject]) groups[subject] = [];
+        groups[subject].push(exp);
+
+        counts[level]++;
+
+        if (level === 'beginner' || level === 'intermediate') {
             recs.push(exp);
         }
     });
@@ -37,7 +57,7 @@ function initExpertiseMap() {
         groups[subject].sort((a, b) => b.accuracy - a.accuracy);
     }
 
-    recs.sort((a, b) => a.accuracy - b.accuracy);
+    recs.sort((a, b) => a.accuracy - b.accuracy || b.attempted - a.attempted);
     const topRecs = recs.slice(0, 5);
 
     const emptyContainer = document.getElementById('expertise-empty');
@@ -56,13 +76,13 @@ function initExpertiseMap() {
     const distGrid = document.getElementById('expertise-distribution-grid');
     if (distGrid) {
         distGrid.innerHTML = Object.entries(counts).map(([level, count]) => {
-            const config = LEVEL_CONFIG[level];
+            const config = LEVEL_CONFIG[level] || LEVEL_CONFIG.beginner;
             const pct = totalTopics > 0 ? (count / totalTopics) * 100 : 0;
             return `
                 <div class="${config.bg} ${config.border} border rounded-xl p-4 text-center">
                     <span class="text-2xl">${config.emoji}</span>
                     <p class="text-2xl font-bold mt-1 ${config.color}">${count}</p>
-                    <p class="text-xs text-muted capitalize">${window.escapeHTML(level)}</p>
+                    <p class="text-xs text-muted capitalize">${escapeHTML(level)}</p>
                     <p class="text-xs text-muted">${pct.toFixed(0)}%</p>
                 </div>
             `;
@@ -80,35 +100,41 @@ function initExpertiseMap() {
         `;
     }
 
-    // 3. Render Recommendations
+    // 3. Render Recommendations (with 1-click Practice launcher)
     const recsContainer = document.getElementById('expertise-recommendations');
     if (recsContainer) {
         if (topRecs.length === 0) {
             recsContainer.innerHTML = '<p class="text-muted text-sm">All topics are at advanced level or above! 🎉</p>';
         } else {
-            recsContainer.innerHTML = topRecs.map(exp => `
-                <div class="flex items-center justify-between glass-panel rounded-lg p-3">
-                  <div>
-                    <span class="text-sm font-medium">${window.escapeHTML(exp.topic)}</span>
-                    <span class="text-xs text-muted ml-2">(${window.escapeHTML(exp.subject)})</span>
+            recsContainer.innerHTML = topRecs.map(exp => {
+                const cfg = LEVEL_CONFIG[exp.level] || LEVEL_CONFIG.beginner;
+                return `
+                <div class="flex items-center justify-between glass-panel rounded-lg p-3 gap-2">
+                  <div class="min-w-0 flex-1">
+                    <span class="text-sm font-medium">${escapeHTML(exp.topic)}</span>
+                    <span class="text-xs text-muted ml-2">(${escapeHTML(exp.subject)})</span>
                   </div>
-                  <div class="flex items-center gap-2">
-                    <span class="text-xs px-2 py-0.5 rounded-full ${LEVEL_CONFIG[exp.level].bg} ${LEVEL_CONFIG[exp.level].color}">
+                  <div class="flex items-center gap-2 shrink-0">
+                    <span class="text-xs px-2 py-0.5 rounded-full ${cfg.bg} ${cfg.color} font-mono">
                       ${exp.accuracy.toFixed(0)}%
                     </span>
-                    <span class="text-xs text-muted">→ Practice more</span>
+                    <button type="button" class="exp-practice-btn secondary-btn text-xs px-2.5 py-1 rounded-lg cursor-pointer hover:text-brand-300 transition-colors"
+                            data-topic="${escapeHTML(exp.topic)}">
+                      → Practice more
+                    </button>
                   </div>
                 </div>
-            `).join('');
+                `;
+            }).join('');
         }
     }
 
-    // 4. Render Subjects
+    // 4. Render Subjects & Topic Cards
     const subjectsContainer = document.getElementById('expertise-subjects-container');
     if (subjectsContainer) {
         subjectsContainer.innerHTML = Object.entries(groups).map(([subject, topics]) => {
-            const subjectInfo = subjects.find(s => s.name === subject);
-            const avgAccuracy = topics.reduce((acc, t) => acc + t.accuracy, 0) / topics.length;
+            const avgAccuracy = topics.reduce((acc, t) => acc + t.accuracy, 0) / Math.max(topics.length, 1);
+            const totalAttemptedInSubject = topics.reduce((acc, t) => acc + t.attempted, 0);
             const avgClass = avgAccuracy >= 70 ? 'text-success-500' : avgAccuracy >= 50 ? 'text-warning-500' : 'text-danger-500';
 
             const topicsHtml = topics.map(exp => {
@@ -123,24 +149,26 @@ function initExpertiseMap() {
                 }
 
                 return `
-                    <div class="${config.bg} ${config.border} border rounded-lg p-4 transition-all hover:scale-[1.02]">
-                        <div class="flex items-start justify-between mb-2">
-                          <div>
-                            <p class="text-sm font-medium">${window.escapeHTML(exp.topic)}</p>
+                    <div class="exp-topic-card ${config.bg} ${config.border} border rounded-lg p-4 transition-all hover:scale-[1.02] cursor-pointer"
+                         data-topic="${escapeHTML(exp.topic)}"
+                         title="Click to practice questions on ${escapeHTML(exp.topic)}">
+                        <div class="flex items-start justify-between mb-2 gap-2">
+                          <div class="min-w-0 flex-1">
+                            <p class="text-sm font-medium truncate">${escapeHTML(exp.topic)}</p>
                             <p class="text-xs capitalize ${config.color}">
-                              ${config.emoji} ${window.escapeHTML(exp.level)}
+                              ${config.emoji} ${escapeHTML(exp.level)}
                             </p>
                           </div>
-                          <div class="flex items-center gap-1">
+                          <div class="flex items-center gap-1 shrink-0">
                             ${trendIcon}
                           </div>
                         </div>
 
                         <div class="flex items-center gap-2 mb-2">
-                          <div class="flex-1 glass-panel rounded-full h-2">
-                            <div class="h-2 rounded-full ${accBg}" style="width: ${exp.accuracy}%"></div>
+                          <div class="flex-1 glass-panel rounded-full h-2 overflow-hidden">
+                            <div class="h-2 rounded-full ${accBg}" style="width: ${Math.min(100, Math.max(0, exp.accuracy))}%"></div>
                           </div>
-                          <span class="text-xs text-muted w-10 text-right">${exp.accuracy.toFixed(0)}%</span>
+                          <span class="text-xs text-muted w-10 text-right font-mono">${exp.accuracy.toFixed(0)}%</span>
                         </div>
 
                         <div class="flex justify-between text-xs text-muted">
@@ -153,10 +181,10 @@ function initExpertiseMap() {
 
             return `
                 <div class="glass-card rounded-xl p-6 mb-6">
-                    <div class="flex items-center justify-between mb-4">
-                      <h3 class="text-lg font-semibold">📚 ${window.escapeHTML(subject)}</h3>
+                    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+                      <h3 class="text-lg font-semibold">📚 ${escapeHTML(subject)}</h3>
                       <div class="flex items-center gap-3 text-sm">
-                        <span class="text-muted">${subjectInfo?.questions?.length || 0} total questions</span>
+                        <span class="text-muted">${topics.length} topic${topics.length === 1 ? '' : 's'} • ${totalAttemptedInSubject} attempted</span>
                         <span class="font-medium ${avgClass}">Avg: ${avgAccuracy.toFixed(1)}%</span>
                       </div>
                     </div>
@@ -167,15 +195,30 @@ function initExpertiseMap() {
             `;
         }).join('');
     }
+
+    // Bind interactive practice triggers
+    if (contentContainer) {
+        contentContainer.querySelectorAll('.exp-practice-btn, .exp-topic-card').forEach(el => {
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const topic = el.dataset.topic;
+                if (topic && typeof window.startCustomTopicQuiz === 'function') {
+                    window.startCustomTopicQuiz(topic);
+                }
+            });
+        });
+    }
 }
+
+window.initExpertiseMap = initExpertiseMap;
 
 document.addEventListener('stateUpdated', initExpertiseMap);
 document.addEventListener('DOMContentLoaded', () => {
-    // Navigation listener specifically for Expertise tab triggers map re-render
+    initExpertiseMap();
     const navBtns = document.querySelectorAll('.nav-btn');
     navBtns.forEach(btn => {
         btn.addEventListener('click', (e) => {
-            if (e.target.getAttribute('data-target') === 'expertise-view') {
+            if (e.currentTarget.getAttribute('data-target') === 'expertise-view') {
                 initExpertiseMap();
             }
         });

@@ -19,6 +19,19 @@ let times = { start: null, questionStart: null };
 let isPaused = false;
 let scores = { correct: 0, wrong: 0 };
 
+// Sync globals with window so app.js tab switching can inspect active quiz state
+function _syncQuizGlobals() {
+    window.currentQuiz = currentQuiz;
+    window.currentIndex = currentIndex;
+}
+
+function _getLocalDateString(dateObj = new Date()) {
+    const year = dateObj.getFullYear();
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
 // State for the Topic Verification Popup
 let activeVerificationSession = null;
 
@@ -65,9 +78,12 @@ async function initQuizSetup() {
 
     let subjects = [], topics = [];
     try {
+        const topicUrl = quizConfig.subject && quizConfig.subject !== 'all'
+            ? `/api/mcq/topics?subject=${encodeURIComponent(quizConfig.subject)}`
+            : '/api/mcq/topics';
         const [subRes, topRes] = await Promise.all([
             fetch('/api/mcq/subjects'),
-            fetch('/api/mcq/topics')
+            fetch(topicUrl)
         ]);
         if (subRes.ok) subjects = await subRes.json();
         if (topRes.ok) topics = await topRes.json();
@@ -82,7 +98,7 @@ async function initQuizSetup() {
                     <h1 class="text-3xl font-bold mb-2 flex items-center gap-3">⚙️ Quiz Configuration &amp; Set Curator</h1>
                     <p class="subtitle">Curate question sets by CSV subject, topic, or custom keyword search.</p>
                 </div>
-                <button id="toggle-inspector-btn" class="secondary-btn px-4 py-2 flex items-center gap-2">
+                <button id="toggle-inspector-btn" class="secondary-btn px-4 py-2 flex items-center gap-2 cursor-pointer">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="15" y1="3" x2="15" y2="21"></line></svg>
                     Toggle Inspector
                 </button>
@@ -115,9 +131,9 @@ async function initQuizSetup() {
 
                     <label class="block text-xs text-muted mb-1">Study Mode</label>
                     <div class="flex gap-2 mb-4">
-                        <button id="mode-test" class="flex-1 py-2 rounded-lg text-sm font-medium border border-gray-700/50 transition-colors ${quizConfig.mode === 'test' ? 'primary-btn' : 'secondary-btn'}">📝 Test</button>
-                        <button id="mode-learn" class="flex-1 py-2 rounded-lg text-sm font-medium border border-gray-700/50 transition-colors ${quizConfig.mode === 'learn' ? 'primary-btn' : 'secondary-btn'}">📖 Learn</button>
-                        <button id="mode-target" class="flex-1 py-2 rounded-lg text-sm font-medium border border-gray-700/50 transition-colors ${quizConfig.mode === 'target' ? 'primary-btn' : 'secondary-btn'}">🎯 Target</button>
+                        <button id="mode-test" class="flex-1 py-2 rounded-lg text-sm font-medium border border-gray-700/50 transition-colors cursor-pointer ${quizConfig.mode === 'test' ? 'primary-btn' : 'secondary-btn'}">📝 Test</button>
+                        <button id="mode-learn" class="flex-1 py-2 rounded-lg text-sm font-medium border border-gray-700/50 transition-colors cursor-pointer ${quizConfig.mode === 'learn' ? 'primary-btn' : 'secondary-btn'}">📖 Learn</button>
+                        <button id="mode-target" class="flex-1 py-2 rounded-lg text-sm font-medium border border-gray-700/50 transition-colors cursor-pointer ${quizConfig.mode === 'target' ? 'primary-btn' : 'secondary-btn'}">🎯 Target</button>
                     </div>
 
                     <div class="flex items-center justify-between mb-1">
@@ -145,10 +161,10 @@ async function initQuizSetup() {
                 <p class="text-muted text-sm mb-6">Matching Questions Available</p>
 
                 <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
-                    <button id="btn-start-quiz-now" class="secondary-btn px-8 py-4 font-bold rounded-xl transition-all hover:scale-105 disabled:opacity-40 w-full sm:w-auto text-base flex items-center justify-center gap-2">
+                    <button id="btn-start-quiz-now" class="secondary-btn px-8 py-4 font-bold rounded-xl transition-all hover:scale-105 disabled:opacity-40 w-full sm:w-auto text-base flex items-center justify-center gap-2 cursor-pointer">
                         ⚡ Start Quiz Now
                     </button>
-                    <button id="btn-confirm-launch" class="primary-btn px-10 py-4 font-bold rounded-xl transition-all hover:scale-105 disabled:opacity-40 w-full sm:w-auto text-base flex items-center justify-center gap-2">
+                    <button id="btn-confirm-launch" class="primary-btn px-10 py-4 font-bold rounded-xl transition-all hover:scale-105 disabled:opacity-40 w-full sm:w-auto text-base flex items-center justify-center gap-2 cursor-pointer">
                         🔍 Confirm &amp; Launch (Review Topics)
                     </button>
                 </div>
@@ -175,7 +191,7 @@ async function initQuizSetup() {
             const data = await res.json();
             const count = data.count || 0;
             const matchEl = document.getElementById('setup-match-count');
-            if (matchEl) matchEl.textContent = count;
+            if (matchEl) matchEl.textContent = count.toLocaleString();
 
             const startNowBtn = document.getElementById('btn-start-quiz-now');
             const confirmBtn = document.getElementById('btn-confirm-launch');
@@ -185,11 +201,12 @@ async function initQuizSetup() {
             const countSlider = document.getElementById('cfg-count');
             if (countSlider) {
                 if (quizConfig.mode !== 'target') {
-                    countSlider.max = Math.max(count, 1);
-                    if (parseInt(countSlider.value) > count && count > 0) {
-                        countSlider.value = count;
-                        quizConfig.count = count;
-                        document.getElementById('cfg-count-val').textContent = count;
+                    countSlider.max = Math.min(100, Math.max(count, 1));
+                    if (parseInt(countSlider.value, 10) > count && count > 0) {
+                        countSlider.value = Math.min(100, count);
+                        quizConfig.count = parseInt(countSlider.value, 10);
+                        const cv = document.getElementById('cfg-count-val');
+                        if (cv) cv.textContent = quizConfig.count;
                     }
                 } else {
                     countSlider.max = 100;
@@ -204,12 +221,32 @@ async function initQuizSetup() {
         const el = document.getElementById(id);
         if (!el) return;
         el.addEventListener(el.tagName === 'INPUT' && el.type === 'range' ? 'input' : 'change', (e) => {
-            quizConfig[key] = isInt ? parseInt(e.target.value) : e.target.value;
+            quizConfig[key] = isInt ? parseInt(e.target.value, 10) : e.target.value;
             if (callback) callback(e);
         });
     };
 
-    bindInput('cfg-subject', 'subject', false, updateMatchCount);
+    bindInput('cfg-subject', 'subject', false, async () => {
+        try {
+            const topicUrl = quizConfig.subject && quizConfig.subject !== 'all'
+                ? `/api/mcq/topics?subject=${encodeURIComponent(quizConfig.subject)}`
+                : '/api/mcq/topics';
+            const topRes = await fetch(topicUrl);
+            if (topRes.ok) {
+                const newTopics = await topRes.json();
+                const topSel = document.getElementById('cfg-topic');
+                if (topSel) {
+                    if (!newTopics.some(t => t.topic === quizConfig.topic)) {
+                        quizConfig.topic = 'all';
+                    }
+                    topSel.innerHTML = `<option value="all">All Topics</option>` +
+                        newTopics.map(t => `<option value="${window.escapeHTML(t.topic)}" ${quizConfig.topic === t.topic ? 'selected' : ''}>${window.escapeHTML(t.topic)} (${t.count})</option>`).join('');
+                }
+            }
+        } catch (_) {}
+        updateMatchCount();
+    });
+
     bindInput('cfg-topic', 'topic', false, updateMatchCount);
 
     let debounce;
@@ -220,10 +257,12 @@ async function initQuizSetup() {
     });
 
     bindInput('cfg-count', 'count', true, (e) => {
-        document.getElementById('cfg-count-val').textContent = e.target.value;
+        const el = document.getElementById('cfg-count-val');
+        if (el) el.textContent = e.target.value;
     });
     bindInput('cfg-time', 'timeLimit', true, (e) => {
-        document.getElementById('cfg-time-val').textContent = e.target.value === '0' ? 'Unlimited' : e.target.value;
+        const el = document.getElementById('cfg-time-val');
+        if (el) el.textContent = e.target.value === '0' ? 'Unlimited' : e.target.value;
     });
 
     document.getElementById('cfg-sr')?.addEventListener('change', (e) => {
@@ -243,6 +282,7 @@ async function initQuizSetup() {
 
     updateMatchCount();
 }
+window.initQuizSetup = initQuizSetup;
 
 async function fetchCuratedQuestions() {
     const payload = {
@@ -285,7 +325,6 @@ async function handleLaunchCuratedSet(openTopicReviewPopup = false) {
             : (questions[0].subject_name || customTitle);
 
         if (!openTopicReviewPopup) {
-            // "Start Quiz Now": Create session in Hub with Circle 1 active (topics_reviewed = false)
             currentQuiz = {
                 sessionId,
                 customTitle,
@@ -295,6 +334,7 @@ async function handleLaunchCuratedSet(openTopicReviewPopup = false) {
                 questions,
                 config: { ...quizConfig }
             };
+            _syncQuizGlobals();
             await persistSessionToBackend({
                 sessionId,
                 subjectName,
@@ -308,7 +348,6 @@ async function handleLaunchCuratedSet(openTopicReviewPopup = false) {
             });
             beginQuizRunner();
         } else {
-            // "Confirm & Launch": Extract medical topics and open the Topic Verification Popup
             await openTopicVerificationModal({
                 sessionId,
                 subjectName,
@@ -328,7 +367,6 @@ async function handleLaunchCuratedSet(openTopicReviewPopup = false) {
     }
 }
 
-// Global helper so Knowledge Hub Inspector's "Create Question Set" on a weak topic works in 1 click
 window.startCustomTopicQuiz = async function(topicName) {
     quizConfig.subject = 'all';
     quizConfig.topic = 'all';
@@ -343,7 +381,7 @@ window.startCustomTopicQuiz = async function(topicName) {
 };
 
 // =========================================================
-// 2. TOPIC VERIFICATION POPUP (Black vs Grey, Green Outline, Double-Click Ignore, Auto-Save Outside Click)
+// 2. TOPIC VERIFICATION POPUP
 // =========================================================
 
 async function extractSessionTopicsFromBackend(questions) {
@@ -353,6 +391,7 @@ async function extractSessionTopicsFromBackend(questions) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 questions: questions.map(q => ({
+                    id: String(q.id || q.question_id || ''),
                     question: q.question || q.question_text || '',
                     topic_name: q.topic_name || q.topic || 'General',
                     option_a: q.option_a || q.opt_a || '',
@@ -377,7 +416,6 @@ async function extractSessionTopicsFromBackend(questions) {
             if (Array.isArray(data.session_topics) && data.session_topics.length > 0) {
                 return data.session_topics;
             }
-            // Consolidate from per-question details or topics array
             const topicMap = new Map();
             (data.questions || []).forEach(qItem => {
                 const details = qItem.topic_details || (qItem.topics || []).map(t => ({
@@ -435,19 +473,17 @@ window.openTopicVerificationModal = async function(sessionContext) {
         `;
     }
 
-    // Use saved draft topic list if reopening an unconfirmed Hub card; otherwise extract fresh
     let topicList = [];
     if (Array.isArray(sessionContext.existingTopicList) && sessionContext.existingTopicList.length > 0) {
         topicList = sessionContext.existingTopicList.map(item => (
             typeof item === 'string'
                 ? { name: item, verified: true, selected: true }
-                : { name: item.name, verified: Boolean(item.verified), selected: Boolean(item.selected) }
+                : { name: item.name || item.topic_name, verified: Boolean(item.verified), selected: Boolean(item.selected) }
         ));
     } else {
         topicList = await extractSessionTopicsFromBackend(activeVerificationSession.questions);
     }
 
-    // Check which topics already have synthesized notes in SQLite
     try {
         const statusRes = await fetch('/api/mcq/topics_status', {
             method: 'POST',
@@ -458,7 +494,7 @@ window.openTopicVerificationModal = async function(sessionContext) {
             const stData = await statusRes.json();
             (stData.existing_topics || []).forEach(t => activeVerificationSession.existingNotesSet.add(t.toLowerCase()));
             const ignoredLower = new Set((stData.ignored_topics || []).map(t => t.toLowerCase()));
-            topicList = topicList.filter(t => !ignoredLower.has(t.name.toLowerCase()));
+            topicList = topicList.filter(t => t.name && !ignoredLower.has(t.name.toLowerCase()));
         }
     } catch (_) {}
 
@@ -511,9 +547,9 @@ function renderTopicVerificationModalDOM() {
                     </span>
                 </div>
                 <div class="flex gap-2">
-                    <button type="button" id="tp-select-verified-btn" class="secondary-btn px-2.5 py-1 text-xs">Select Verified Only</button>
-                    <button type="button" id="tp-select-all-btn" class="secondary-btn px-2.5 py-1 text-xs">Select All</button>
-                    <button type="button" id="tp-deselect-all-btn" class="secondary-btn px-2.5 py-1 text-xs">Clear Selection</button>
+                    <button type="button" id="tp-select-verified-btn" class="secondary-btn px-2.5 py-1 text-xs cursor-pointer">Select Verified Only</button>
+                    <button type="button" id="tp-select-all-btn" class="secondary-btn px-2.5 py-1 text-xs cursor-pointer">Select All</button>
+                    <button type="button" id="tp-deselect-all-btn" class="secondary-btn px-2.5 py-1 text-xs cursor-pointer">Clear Selection</button>
                 </div>
             </div>
 
@@ -523,9 +559,7 @@ function renderTopicVerificationModalDOM() {
                     ? '<p class="text-sm text-muted m-auto">No medical topics extracted. Add a custom topic below.</p>'
                     : session.topicList.map((t, idx) => {
                         const hasNote = session.existingNotesSet.has(t.name.toLowerCase());
-                        // Normal/Black text for verified vs Grey muted text for doubtful
                         const textClass = t.verified ? 'font-semibold text-gray-100' : 'opacity-60 text-muted font-normal';
-                        // Green outline and green underline when selected
                         const selectedClass = t.selected
                             ? 'border-2 border-success-500 underline decoration-success-500 decoration-2 bg-success-500/15 shadow-sm'
                             : 'border border-gray-700 glass-panel';
@@ -546,7 +580,7 @@ function renderTopicVerificationModalDOM() {
                 <span class="text-sm font-medium whitespace-nowrap">➕ Add or Correct Topic:</span>
                 <div class="flex flex-1 gap-2">
                     <input type="text" id="custom-topic-input" class="glass-input flex-1 py-2 px-3 text-sm" placeholder="e.g., Cardiac amyloidosis, Acute appendicitis...">
-                    <button type="button" id="add-custom-topic-btn" class="secondary-btn py-2 px-4 text-sm whitespace-nowrap">
+                    <button type="button" id="add-custom-topic-btn" class="secondary-btn py-2 px-4 text-sm whitespace-nowrap cursor-pointer">
                         + Add Topic
                     </button>
                 </div>
@@ -568,7 +602,6 @@ function renderTopicVerificationModalDOM() {
         </div>
     `;
 
-    // Wire single-click (toggle green outline/underline) vs double-click (permanent ignore list)
     modalCard.querySelectorAll('.topic-verify-chip').forEach(chipEl => {
         let clickTimer = null;
         const idx = parseInt(chipEl.dataset.idx, 10);
@@ -608,7 +641,6 @@ function renderTopicVerificationModalDOM() {
         });
     });
 
-    // Wire inline Edit (✎) button
     modalCard.querySelectorAll('.chip-edit-btn').forEach(editBtn => {
         editBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -626,7 +658,6 @@ function renderTopicVerificationModalDOM() {
         });
     });
 
-    // Bulk selection buttons
     document.getElementById('tp-select-verified-btn')?.addEventListener('click', () => {
         session.topicList.forEach(t => { t.selected = Boolean(t.verified); });
         renderTopicVerificationModalDOM();
@@ -640,7 +671,6 @@ function renderTopicVerificationModalDOM() {
         renderTopicVerificationModalDOM();
     });
 
-    // Add custom topic
     const addCustomTopic = () => {
         const input = document.getElementById('custom-topic-input');
         const val = (input?.value || '').trim();
@@ -669,22 +699,18 @@ function renderTopicVerificationModalDOM() {
         newContent.scrollTop = prevScrollTop;
     }
 
-    // Close button -> Auto-save draft to Hub
     document.getElementById('close-topic-editor-btn')?.addEventListener('click', () => {
         finalizeTopicModalAction('save_draft');
     });
 
-    // Confirm & Add to Hub
     document.getElementById('confirm-add-hub-btn')?.addEventListener('click', () => {
         finalizeTopicModalAction('confirm_hub');
     });
 
-    // Confirm & Start Quiz
     document.getElementById('confirm-start-quiz-btn')?.addEventListener('click', () => {
         finalizeTopicModalAction('confirm_start');
     });
 
-    // Backdrop Click (Click outside popup) -> Auto-saves draft to Knowledge Hub!
     modal.onclick = (e) => {
         if (e.target === modal) {
             finalizeTopicModalAction('save_draft');
@@ -703,7 +729,6 @@ async function finalizeTopicModalAction(actionMode) {
     const isConfirmed = (actionMode === 'confirm_hub' || actionMode === 'confirm_start');
 
     if (session.isExistingHubSession) {
-        // Updating topics on an existing Knowledge Hub card
         try {
             await fetch(`/api/sessions/${encodeURIComponent(session.sessionId)}/update_topics`, {
                 method: 'POST',
@@ -728,6 +753,7 @@ async function finalizeTopicModalAction(actionMode) {
                 questions: session.questions,
                 config: session.config || { ...quizConfig }
             };
+            _syncQuizGlobals();
             const navBtn = document.querySelector('.nav-btn[data-target="quiz-view"]');
             if (navBtn) navBtn.click();
             beginQuizRunner();
@@ -740,7 +766,6 @@ async function finalizeTopicModalAction(actionMode) {
         return;
     }
 
-    // New session created from Quiz Configuration
     await persistSessionToBackend({
         sessionId: session.sessionId,
         subjectName: session.subjectName,
@@ -763,6 +788,7 @@ async function finalizeTopicModalAction(actionMode) {
             questions: session.questions,
             config: session.config || { ...quizConfig }
         };
+        _syncQuizGlobals();
         beginQuizRunner();
     } else if (actionMode === 'confirm_hub') {
         showToast("Set added to Knowledge Hub! Generating references & notes.");
@@ -770,7 +796,6 @@ async function finalizeTopicModalAction(actionMode) {
         if (hubNav) hubNav.click();
         if (typeof window.loadSessions === 'function') window.loadSessions();
     } else {
-        // Click outside popup -> saved draft to Hub
         showToast("Topic draft saved to Knowledge Hub (Circle ①). You can refine it anytime from the Hub.");
         if (typeof window.loadSessions === 'function') window.loadSessions();
     }
@@ -797,7 +822,7 @@ async function persistSessionToBackend({
         id: sessionId,
         subjectName: subjectName || 'Mixed Topics',
         customTitle: customTitle || subjectName || 'Study Set',
-        date: new Date().toISOString().split('T')[0],
+        date: _getLocalDateString(new Date()),
         timestamp: Date.now(),
         lastAttempted: answers.length > 0 ? Date.now() : 0,
         totalQuestions: totalQ,
@@ -843,17 +868,25 @@ window.launchPreparedQuiz = function(preparedQuizData) {
         questions: preparedQuizData.questions || [],
         config: { ...quizConfig, ...(preparedQuizData.config || {}) }
     };
+    _syncQuizGlobals();
     const navBtn = document.querySelector('.nav-btn[data-target="quiz-view"]');
     if (navBtn) navBtn.click();
     beginQuizRunner();
 };
 
 function beginQuizRunner() {
+    if (currentQuiz && Array.isArray(currentQuiz.questions)) {
+        currentQuiz.questions.forEach((q, idx) => {
+            q.id = String(q.id || q.question_id || `q_${idx}`);
+            q.question = q.question || q.question_text || '';
+        });
+    }
     currentIndex = 0;
     quizAnswers = {};
     scores = { correct: 0, wrong: 0 };
     isPaused = false;
     times.start = Date.now();
+    _syncQuizGlobals();
 
     clearInterval(timers.overall);
     if (quizConfig.timeLimit > 0) {
@@ -873,6 +906,7 @@ function beginQuizRunner() {
 }
 
 function renderQuestion() {
+    _syncQuizGlobals();
     const container = document.getElementById('quiz-view');
     if (!container || !currentQuiz || !currentQuiz.questions.length) return;
 
@@ -910,7 +944,7 @@ function renderQuestion() {
                     </div>
                 </div>
                 <div class="flex items-center gap-3">
-                    <button id="toggle-inspector-active" class="secondary-btn px-3 py-2 text-xs flex items-center gap-1.5" title="Show/Hide Reference Inspector">
+                    <button id="toggle-inspector-active" class="secondary-btn px-3 py-2 text-xs flex items-center gap-1.5 cursor-pointer" title="Show/Hide Reference Inspector">
                         📚 References
                     </button>
                     ${quizConfig.timeLimit > 0 ? `<div id="active-timer" class="px-4 py-2 glass-panel border border-gray-700 rounded-xl font-mono text-lg font-bold text-brand-400 shadow-inner">--:--</div>` : ''}
@@ -938,10 +972,10 @@ function renderQuestion() {
             <div id="feedback-container" class="flex-1 overflow-y-auto pr-2 mb-4 space-y-4"></div>
 
             <div class="flex justify-between items-center mt-auto pt-4 border-t border-gray-700/50">
-                <button id="btn-prev" class="secondary-btn px-6 py-3 rounded-xl disabled:opacity-30 font-medium" ${currentIndex === 0 ? 'disabled' : ''}>
+                <button id="btn-prev" class="secondary-btn px-6 py-3 rounded-xl disabled:opacity-30 font-medium cursor-pointer" ${currentIndex === 0 ? 'disabled' : ''}>
                     ← Previous
                 </button>
-                <button id="btn-next" class="primary-btn px-8 py-3 rounded-xl transition-all shadow-lg font-bold disabled:opacity-30" ${!isAnswered && !isTarget ? 'disabled' : ''}>
+                <button id="btn-next" class="primary-btn px-8 py-3 rounded-xl transition-all shadow-lg font-bold disabled:opacity-30 cursor-pointer" ${!isAnswered && !isTarget ? 'disabled' : ''}>
                     ${currentIndex >= currentQuiz.questions.length - 1 && !isTarget ? 'Finish Quiz 🏁' : 'Next Question →'}
                 </button>
             </div>
@@ -986,11 +1020,37 @@ function renderQuestion() {
         optsDiv.appendChild(btn);
     });
 
-    // Learn Mode Feedback: Show CSV Explanation + LLM Detailed Explanation (if LLM enabled)
+    // Learn Mode Feedback: Show FSRS 1-4 Rating Bar + CSV Explanation + LLM Detailed Explanation
     if (isAnswered && isLearn && !quizAnswers[q.id].timedOut) {
         const fbContainer = document.getElementById('feedback-container');
         const llmEnabled = window.AppState ? window.AppState.get().llmEnabled !== false : true;
+        const ans = quizAnswers[q.id];
         let fbHtml = '';
+
+        if (quizConfig.spacedRepetition) {
+            const currentRating = ans.fsrsRating || 3;
+            const intervalDays = ans.fsrsIntervalDays ? `Next review in ${ans.fsrsIntervalDays}d` : 'FSRS v4.5 Scheduled';
+            fbHtml += `
+                <div class="animate-fade-in glass-panel border border-gray-700/50 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <span class="text-xs font-bold text-brand-300 uppercase tracking-wider">🧠 Spaced Repetition Rating</span>
+                        <span id="fsrs-interval-badge" class="text-[11px] text-muted ml-2 font-mono">(${intervalDays})</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        ${[
+                            { r: 1, label: '1 · Again', color: 'border-danger-500/50 text-danger-300' },
+                            { r: 2, label: '2 · Hard', color: 'border-warning-500/50 text-warning-300' },
+                            { r: 3, label: '3 · Good', color: 'border-brand-500/50 text-brand-300' },
+                            { r: 4, label: '4 · Easy', color: 'border-success-500/50 text-success-300' }
+                        ].map(btn => `
+                            <button type="button" data-rating="${btn.r}" class="fsrs-rate-btn px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${currentRating === btn.r ? `${btn.color} bg-white/10 ring-1 ring-current` : 'glass-panel border-gray-700/50 opacity-70 hover:opacity-100'}">
+                                ${btn.label}
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
 
         if (q.explanation && q.explanation !== 'No explanation provided.') {
             fbHtml += `
@@ -1008,15 +1068,23 @@ function renderQuestion() {
                     <div class="prose prose-sm max-w-none">${window.renderMarkdownAndMath(q.llm_explanation)}</div>
                 </div>
             `;
-        } else if (!fbHtml) {
-            fbHtml = `
+        } else if (!q.explanation || q.explanation === 'No explanation provided.') {
+            fbHtml += `
                 <div class="animate-fade-in glass-panel border border-gray-700/50 rounded-2xl p-5 text-sm text-muted">
                     Check the Right Sidebar Inspector for verified textbook, Obsidian, and ZIM references on this question.
                 </div>
             `;
         }
 
-        if (fbContainer) fbContainer.innerHTML = fbHtml;
+        if (fbContainer) {
+            fbContainer.innerHTML = fbHtml;
+            fbContainer.querySelectorAll('.fsrs-rate-btn').forEach(rateBtn => {
+                rateBtn.addEventListener('click', () => {
+                    const newRating = parseInt(rateBtn.dataset.rating, 10);
+                    submitFsrsScore(q, newRating);
+                });
+            });
+        }
     }
 
     document.getElementById('btn-prev').onclick = () => {
@@ -1045,6 +1113,38 @@ function renderQuestion() {
     document.getElementById('toggle-inspector-active')?.addEventListener('click', toggleRightSidebar);
 }
 
+async function submitFsrsScore(q, rating) {
+    if (!q || !q.id) return;
+    if (quizAnswers[q.id]) {
+        quizAnswers[q.id].fsrsRating = rating;
+    }
+    try {
+        const res = await fetch('/api/mcq/score', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                mcq_id: String(q.id),
+                rating: Number(rating),
+                session_id: currentQuiz?.sessionId || null
+            })
+        });
+        if (res.ok) {
+            const data = await res.json();
+            const days = data.fsrs?.interval_days || Math.max(1, Math.round((data.next_due || 86400) / 86400));
+            if (quizAnswers[q.id]) {
+                quizAnswers[q.id].fsrsIntervalDays = days;
+            }
+            const badge = document.getElementById('fsrs-interval-badge');
+            if (badge) badge.textContent = `(Next review in ${days}d)`;
+        }
+    } catch (e) {
+        console.error("FSRS score update error:", e);
+    }
+    if (quizConfig.mode === 'learn') {
+        renderQuestion();
+    }
+}
+
 function handleSelectOption(q, option, isTimeout = false) {
     clearTimeout(timers.autoAdvance);
     clearInterval(timers.question);
@@ -1053,30 +1153,26 @@ function handleSelectOption(q, option, isTimeout = false) {
     const isCorrect = !isTimeout && option === correctOpt;
     const timeSpentMs = Date.now() - times.questionStart;
 
+    const timeSec = timeSpentMs / 1000;
+    let autoRating = 3; // Good
+    if (!isCorrect) autoRating = 1; // Again
+    else if (timeSec > 30) autoRating = 2; // Hard
+    else if (timeSec < 8) autoRating = 4; // Easy
+
     quizAnswers[q.id] = {
         selected: option,
         isCorrect,
         timeSpentMs,
         timedOut: isTimeout,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        fsrsRating: autoRating
     };
 
     if (isCorrect) scores.correct++;
     else scores.wrong++;
 
-    // FSRS v4.5 Spaced Repetition Scoring (supports string IDs like "q_0_...")
     if (quizConfig.spacedRepetition && !isTimeout) {
-        const timeSec = timeSpentMs / 1000;
-        let rating = 3; // Good
-        if (!isCorrect) rating = 1; // Again
-        else if (timeSec > 30) rating = 2; // Hard
-        else if (timeSec < 8) rating = 4; // Easy
-
-        fetch('/api/mcq/score', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mcq_id: String(q.id), rating })
-        }).catch(console.error);
+        submitFsrsScore(q, autoRating);
     }
 
     renderQuestion();
@@ -1121,8 +1217,8 @@ function triggerBreakModal() {
                 <h2 class="text-3xl font-black mb-4">☕ Need a Break?</h2>
                 <p class="text-muted mb-8 text-lg">No answer recorded for ${quizConfig.timeout} minutes. Your progress is safe.</p>
                 <div class="flex flex-col gap-3 max-w-sm mx-auto">
-                    <button id="break-resume" class="primary-btn w-full py-4 font-bold rounded-xl">▶️ Resume Session</button>
-                    <button id="break-skip" class="secondary-btn w-full py-3 rounded-xl">⏭️ Skip Question</button>
+                    <button id="break-resume" class="primary-btn w-full py-4 font-bold rounded-xl cursor-pointer">▶️ Resume Session</button>
+                    <button id="break-skip" class="secondary-btn w-full py-3 rounded-xl cursor-pointer">⏭️ Skip Question</button>
                     <button id="break-end" class="w-full py-2 text-muted hover:text-brand-400 transition-colors mt-2 bg-transparent border-none cursor-pointer">End Session &amp; Save Results</button>
                 </div>
             </div>
@@ -1173,7 +1269,7 @@ async function finishQuiz() {
     const timeUsed = Math.floor((Date.now() - times.start) / 1000);
 
     const savedPayload = await persistSessionToBackend({
-        sessionId: currentQuiz.sessionId || crypto.randomUUID(),
+        sessionId: currentQuiz.sessionId || `sess_${Date.now()}`,
         subjectName: currentQuiz.subjectName,
         customTitle: currentQuiz.customTitle,
         questions: currentQuiz.questions,
@@ -1228,10 +1324,10 @@ function renderResults(result, answeredQs) {
             </div>
 
             <div class="flex flex-wrap gap-4 justify-center mb-10 pb-10 border-b border-gray-700/50">
-                <button id="res-hub" class="secondary-btn px-6 py-3 rounded-xl font-medium">📚 Open Knowledge Hub</button>
-                <button id="res-retake" class="secondary-btn px-6 py-3 rounded-xl font-medium">🔄 Retake Set</button>
-                ${wrongQs.length > 0 ? `<button id="res-wrong" class="primary-btn px-6 py-3 rounded-xl font-bold">🧠 Practice Wrong (${wrongQs.length})</button>` : ''}
-                <button id="res-setup" class="primary-btn px-6 py-3 rounded-xl font-bold">⚙️ New Configuration</button>
+                <button id="res-hub" class="secondary-btn px-6 py-3 rounded-xl font-medium cursor-pointer">📚 Open Knowledge Hub</button>
+                <button id="res-retake" class="secondary-btn px-6 py-3 rounded-xl font-medium cursor-pointer">🔄 Retake Set</button>
+                ${wrongQs.length > 0 ? `<button id="res-wrong" class="primary-btn px-6 py-3 rounded-xl font-bold cursor-pointer">🧠 Practice Wrong (${wrongQs.length})</button>` : ''}
+                <button id="res-setup" class="primary-btn px-6 py-3 rounded-xl font-bold cursor-pointer">⚙️ New Configuration</button>
             </div>
 
             <h3 class="text-2xl font-bold mb-6">Detailed Question Breakdown</h3>
@@ -1289,6 +1385,7 @@ function renderResults(result, answeredQs) {
     });
     document.getElementById('res-setup')?.addEventListener('click', () => {
         currentQuiz = null;
+        _syncQuizGlobals();
         initQuizSetup();
     });
     document.getElementById('res-retake')?.addEventListener('click', () => {
@@ -1314,18 +1411,55 @@ function toggleRightSidebar() {
     }
 }
 
-function renderReferenceBadgesHTML(refs) {
-    if (!refs || typeof refs !== 'object') return '';
+function _groupReferencesPolymorphic(rawRefs) {
+    const grouped = { pdf: [], obsidian: [], zim: [] };
+    if (!rawRefs) return grouped;
+
+    let parsed = rawRefs;
+    if (typeof rawRefs === 'string') {
+        try {
+            parsed = JSON.parse(rawRefs);
+        } catch (_) {
+            return grouped;
+        }
+    }
+
+    const addItem = (item, fallbackSrc = '') => {
+        if (!item || typeof item !== 'object') return;
+        const src = String(item.source || item.source_type || fallbackSrc).toLowerCase();
+        const fp = String(item.file_path || item.path || '').toLowerCase();
+        if (src === 'pdf' || fp.endsWith('.pdf')) grouped.pdf.push(item);
+        else if (src === 'obsidian' || fp.endsWith('.md')) grouped.obsidian.push(item);
+        else if (src === 'zim' || fp.endsWith('.zim')) grouped.zim.push(item);
+    };
+
+    if (Array.isArray(parsed)) {
+        parsed.forEach(item => addItem(item));
+    } else if (typeof parsed === 'object') {
+        ['pdf', 'obsidian', 'zim', 'lancedb'].forEach(k => {
+            if (Array.isArray(parsed[k])) {
+                parsed[k].forEach(item => addItem(item, k));
+            }
+        });
+    }
+    return grouped;
+}
+
+function renderReferenceBadgesHTML(rawRefs) {
+    const refs = _groupReferencesPolymorphic(rawRefs);
     let itemsHtml = '';
 
     (refs.pdf || []).forEach(pdf => {
+        const pageNum = pdf.page || pdf.page_number || 1;
         itemsHtml += `
-            <a href="#" class="citation-pdf w-full p-3 rounded-xl flex items-center justify-between gap-2 mb-2 text-left no-underline"
+            <a href="#" class="citation-link citation-pdf w-full p-3 rounded-xl flex items-center justify-between gap-2 mb-2 text-left no-underline"
+               data-source-type="pdf"
+               data-file-path="${window.escapeHTML(pdf.file_path || '')}"
                data-filepath="${window.escapeHTML(pdf.file_path || '')}"
-               data-page="${pdf.page || 1}">
+               data-page="${pageNum}">
                 <div class="min-w-0 flex-1">
                     <p class="font-semibold text-xs truncate">📕 ${window.escapeHTML(pdf.title || 'PDF Textbook')}</p>
-                    <p class="text-[10px] opacity-80 truncate">${window.escapeHTML(pdf.heading || '')} • Page ${pdf.page || 1}</p>
+                    <p class="text-[10px] opacity-80 truncate">${window.escapeHTML(pdf.heading || pdf.heading_path || '')} • Page ${pageNum}</p>
                 </div>
                 <span class="text-[10px] font-mono px-2 py-0.5 rounded glass-panel shrink-0">SumatraPDF ↗</span>
             </a>
@@ -1334,12 +1468,14 @@ function renderReferenceBadgesHTML(refs) {
 
     (refs.obsidian || []).forEach(obs => {
         itemsHtml += `
-            <a href="#" class="citation-obsidian w-full p-3 rounded-xl flex items-center justify-between gap-2 mb-2 text-left no-underline"
-               data-filepath="${window.escapeHTML(obs.file_path || '')}"
+            <a href="#" class="citation-link citation-obsidian w-full p-3 rounded-xl flex items-center justify-between gap-2 mb-2 text-left no-underline"
+               data-source-type="obsidian"
+               data-file-path="${window.escapeHTML(obs.file_path || obs.title || '')}"
+               data-filepath="${window.escapeHTML(obs.file_path || obs.title || '')}"
                data-file="${window.escapeHTML(obs.title || '')}">
                 <div class="min-w-0 flex-1">
                     <p class="font-semibold text-xs truncate">🟣 ${window.escapeHTML(obs.title || 'Obsidian Note')}</p>
-                    <p class="text-[10px] opacity-80 truncate">${window.escapeHTML(obs.heading || 'Vault Note')}</p>
+                    <p class="text-[10px] opacity-80 truncate">${window.escapeHTML(obs.heading || obs.heading_path || 'Vault Note')}</p>
                 </div>
                 <span class="text-[10px] font-mono px-2 py-0.5 rounded glass-panel shrink-0">View Note</span>
             </a>
@@ -1349,8 +1485,11 @@ function renderReferenceBadgesHTML(refs) {
     (refs.zim || []).forEach(zim => {
         const artTitle = zim.article_id || zim.title || '';
         itemsHtml += `
-            <a href="#" class="citation-zim w-full p-3 rounded-xl flex items-center justify-between gap-2 mb-2 text-left no-underline"
-               data-article-id="${window.escapeHTML(artTitle)}">
+            <a href="#" class="citation-link citation-zim w-full p-3 rounded-xl flex items-center justify-between gap-2 mb-2 text-left no-underline"
+               data-source-type="zim"
+               data-article-id="${window.escapeHTML(artTitle)}"
+               data-file-path="${window.escapeHTML(zim.file_path || '')}"
+               data-filepath="${window.escapeHTML(zim.file_path || '')}">
                 <div class="min-w-0 flex-1">
                     <p class="font-semibold text-xs truncate">🌐 ${window.escapeHTML(zim.title || 'ZIM Article')}</p>
                     <p class="text-[10px] opacity-80 truncate">Offline ZIM Encyclopedia</p>
@@ -1372,25 +1511,24 @@ function renderReferenceBadgesHTML(refs) {
 async function updateInspectorForQuestion(questionObj) {
     if (!questionObj) return;
 
-    // Collect topics specific ONLY to this active MCQ
     const topicsSet = new Set();
 
     if (Array.isArray(questionObj.topic_details) && questionObj.topic_details.length > 0) {
         questionObj.topic_details.forEach(td => {
-            if (td?.name && td.name !== 'General Medical Concept') {
-                topicsSet.add(td.name);
+            const name = td?.name || td?.topic_name;
+            if (name && name !== 'General Medical Concept') {
+                topicsSet.add(name);
             }
         });
     } else if (Array.isArray(questionObj.topics) && questionObj.topics.length > 0) {
         questionObj.topics.forEach(t => {
-            const name = typeof t === 'string' ? t : t?.name;
+            const name = typeof t === 'string' ? t : (t?.name || t?.topic_name);
             if (name && name !== 'General Medical Concept') {
                 topicsSet.add(name);
             }
         });
     }
 
-    // Extract topics on the fly for this question if not already extracted or if only 1 topic
     if (topicsSet.size <= 1) {
         try {
             const extRes = await fetch('/api/queue/extract_topics', {
@@ -1436,14 +1574,12 @@ async function updateInspectorForQuestion(questionObj) {
 
     const topicsArray = Array.from(topicsSet);
 
-    // Initial loading state in Right Inspector
     window.openInspector(
         `Q${currentIndex + 1} Topics & References`,
         `<div class="text-center py-10 text-muted text-sm animate-pulse">Loading topics for Q${currentIndex + 1}...</div>`,
         false
     );
 
-    // Fetch reference & note availability statuses for collected topics
     let statuses = {};
     try {
         const statusRes = await fetch('/api/mcq/topics/status', {
@@ -1459,7 +1595,6 @@ async function updateInspectorForQuestion(questionObj) {
         console.warn("Failed to fetch topic statuses for inspector:", e);
     }
 
-    // Build sidebar topic list HTML
     let html = `<div class="flex flex-col text-xs space-y-4 pb-6">`;
     html += `<div class="glass-panel p-3 rounded-xl border border-gray-700/50 mb-1">
                 <span class="text-[10px] text-muted uppercase tracking-wider font-bold">MCQ ${currentIndex + 1} Topic List</span>
@@ -1493,13 +1628,11 @@ async function updateInspectorForQuestion(questionObj) {
     });
     html += `</div>`;
 
-    // Container for selected topic's reference links inside right inspector
     html += `<div id="inspector-topic-details" class="pt-3 border-t border-gray-700/50 space-y-3"></div>`;
     html += `</div>`;
 
     window.openInspector(`Q${currentIndex + 1} Topics`, html, false);
 
-    // Bind click handlers to topic items
     const inspectorContent = document.getElementById('inspector-content');
     if (inspectorContent) {
         const topicItems = inspectorContent.querySelectorAll('.quiz-topic-item');
@@ -1508,28 +1641,25 @@ async function updateInspectorForQuestion(questionObj) {
                 const topic = item.dataset.topic;
                 if (!topic) return;
 
-                // Highlight active topic item in inspector
                 topicItems.forEach(el => el.classList.remove('border-brand-500', 'bg-brand-500/20'));
                 item.classList.add('border-brand-500', 'bg-brand-500/20');
 
-                // Open Topic Carousel Subview in center stage for this question's topics
                 if (typeof window.openTopicCarouselForQuiz === 'function') {
                     window.openTopicCarouselForQuiz(topicsArray, topic);
-                } else if (typeof loadTopicNotesToCenterView === 'function') {
+                } else {
                     loadTopicNotesToCenterView(topic);
                 }
 
-                // Load reference links for this topic into lower inspector section
                 renderTopicSubDetailsInInspector(topic);
             });
         });
 
-        // Automatically load details for the primary (first) topic
         if (topicsArray.length > 0) {
             renderTopicSubDetailsInInspector(topicsArray[0]);
         }
     }
 }
+window.updateInspectorForQuestion = updateInspectorForQuestion;
 
 async function loadTopicNotesToCenterView(topic) {
     const feedbackContainer = document.getElementById('feedback-container');
@@ -1561,49 +1691,15 @@ async function loadTopicNotesToCenterView(topic) {
             </div>
         `;
 
-        if (llmEnabled && data.unified_article) {
-            try {
-                const art = JSON.parse(data.unified_article);
-                if (art && Array.isArray(art.clinical_points) && art.clinical_points.length > 0) {
-                    fbHtml += `
-                        <div class="glass-card p-5 rounded-2xl border border-brand-500/30">
-                            <h4 class="font-bold text-brand-400 text-xs uppercase tracking-wider mb-3">🤖 High-Yield Synthesis: ${window.escapeHTML(art.subtopic || topic)}</h4>
-                            ${art.conditional_context ? `<p class="text-xs text-muted mb-3 leading-relaxed"><strong>Context:</strong> ${window.escapeHTML(art.conditional_context)}</p>` : ''}
-                            <ul class="list-disc pl-5 space-y-2 text-xs leading-relaxed">
-                                ${art.clinical_points.map(pt => `
-                                    <li>
-                                        ${window.escapeHTML(pt.point)}${pt.source ? `<span class="text-[10px] text-brand-400 font-mono ml-1">[${window.escapeHTML(pt.source)}${pt.page ? ` p.${pt.page}` : ''}]</span>` : ''}
-                                    </li>
-                                `).join('')}
-                            </ul>
-                            ${art.discrepancies ? `
-                                <div class="mt-4 p-3 rounded-xl bg-danger-500/15 border border-danger-500/30 text-danger-300 text-xs">
-                                    <strong>⚠️ Clinical Variance:</strong><br/>${window.escapeHTML(art.discrepancies)}
-                                </div>
-                            ` : ''}
-                        </div>
-                    `;
-                } else {
-                    fbHtml += `
-                        <div class="glass-card p-5 rounded-2xl border border-brand-500/30">
-                            <h4 class="font-bold text-brand-400 text-xs uppercase tracking-wider mb-3">🤖 High-Yield Synopsis</h4>
-                            <div class="prose prose-sm max-w-none text-xs leading-relaxed">${window.renderMarkdownAndMath(data.unified_article)}</div>
-                        </div>
-                    `;
-                }
-            } catch (_) {
-                fbHtml += `
-                    <div class="glass-card p-5 rounded-2xl border border-brand-500/30">
-                        <h4 class="font-bold text-brand-400 text-xs uppercase tracking-wider mb-3">🤖 High-Yield Synopsis</h4>
-                        <div class="prose prose-sm max-w-none text-xs leading-relaxed">${window.renderMarkdownAndMath(data.unified_article)}</div>
-                    </div>
-                `;
-            }
-        } else if (data.enhanced_explanation) {
+        const formattedMd = llmEnabled && window.formatUnifiedArticleToMarkdown
+            ? window.formatUnifiedArticleToMarkdown(data.unified_article, data.enhanced_explanation, topic)
+            : (data.enhanced_explanation || '');
+
+        if (formattedMd && !formattedMd.includes('No local reference files found') && !formattedMd.includes('LM Studio processing skipped')) {
             fbHtml += `
-                <div class="glass-panel border border-gray-700/50 rounded-2xl p-5">
-                    <h4 class="font-bold text-brand-300 text-xs uppercase tracking-wider mb-2">📄 Baseline Clinical Note</h4>
-                    <div class="prose prose-sm max-w-none text-xs leading-relaxed">${window.renderMarkdownAndMath(data.enhanced_explanation)}</div>
+                <div class="glass-card p-5 rounded-2xl border border-brand-500/30">
+                    <h4 class="font-bold text-brand-400 text-xs uppercase tracking-wider mb-3">🤖 High-Yield Synthesis: ${window.escapeHTML(topic)}</h4>
+                    <div class="prose prose-sm max-w-none text-xs leading-relaxed">${window.renderMarkdownAndMath(formattedMd)}</div>
                 </div>
             `;
         } else {
@@ -1616,7 +1712,6 @@ async function loadTopicNotesToCenterView(topic) {
 
         fbHtml += `</div>`;
         feedbackContainer.innerHTML = fbHtml;
-
     } catch (e) {
         feedbackContainer.innerHTML = `
             <div class="animate-fade-in glass-panel border border-gray-700/50 rounded-2xl p-5 text-center text-muted text-xs">
@@ -1641,7 +1736,7 @@ async function renderTopicSubDetailsInInspector(topic) {
         let subHtml = `<div class="space-y-3">`;
         subHtml += `<span class="text-[10px] text-brand-400 uppercase font-bold tracking-wider">References for: ${window.escapeHTML(topic)}</span>`;
 
-        const refsHtml = renderReferenceBadgesHTML(data.references);
+        const refsHtml = renderReferenceBadgesHTML(data.references || data.top_references);
         if (refsHtml) {
             subHtml += refsHtml;
         } else {

@@ -7,6 +7,7 @@ const DEFAULT_PERSISTENCE = {
     habitLog: [],
     testResults: [],
     ankiCards: [],
+    fsrsCounts: { new: 0, learning: 0, review: 0, mastered: 0, total: 0 },
     subjects: [],
     reviewQueue: [],
     topicExpertise: {},
@@ -22,16 +23,37 @@ const DEFAULT_PERSISTENCE = {
     extractorStrategy: 'medspacy', // 'medspacy' | 'regex'
     pdfParser: 'fitz', // 'fitz' | 'docling'
     panelOpacity: 0.78, // Non-card area transparency (0.10 - 0.95)
-    cardOpacity: 0.82,  // Card area transparency (0.40 - 0.98)
+    cardOpacity: 0.82,  // Card area transparency (0.35 - 0.98)
     wallpaperIntervalMinutes: 120, // Wallpaper rotation duration in minutes (0 = Never)
-    embeddingModel: 'Xenova/all-MiniLM-L6-v2',
-    flashrankModel: 'ms-marco-TinyBERT-L-2-v2'
+    embeddingModel: 'sentence-transformers/all-MiniLM-L6-v2',
+    flashrankModel: 'ms-marco-TinyBERT-L-2-v2',
+    scispacyModel: 'en_core_sci_md'
 };
 
 let appState = JSON.parse(JSON.stringify(DEFAULT_PERSISTENCE));
+let _stateLoadedFromServer = false;
+
+function _getLocalDateString(dateObj = new Date()) {
+    const year = dateObj.getFullYear();
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function _normalizeModelIds(stateObj) {
+    if (!stateObj || typeof stateObj !== 'object') return;
+    if (stateObj.embeddingModel === 'Xenova/all-MiniLM-L6-v2') {
+        stateObj.embeddingModel = 'sentence-transformers/all-MiniLM-L6-v2';
+    }
+    if (!stateObj.scispacyModel) {
+        stateObj.scispacyModel = stateObj.scispacy_model || 'en_core_sci_md';
+    }
+}
 
 function applyAppearanceVariables(stateObj = appState) {
     const root = document.documentElement;
+    if (!root) return;
+
     const rawPanel = typeof stateObj.panelOpacity === 'number'
         ? stateObj.panelOpacity
         : (typeof stateObj.panelAlpha === 'number' ? stateObj.panelAlpha : 0.78);
@@ -45,7 +67,7 @@ function applyAppearanceVariables(stateObj = appState) {
     root.style.setProperty('--panel-alpha', panelAlpha.toString());
     root.style.setProperty('--card-alpha', cardAlpha.toString());
 
-    const isDark = document.body.classList.contains('dark-theme');
+    const isDark = document.body ? document.body.classList.contains('dark-theme') : true;
     if (isDark) {
         root.style.setProperty('--panel-bg', `rgba(15, 23, 42, ${panelAlpha})`);
         root.style.setProperty('--input-bg', `rgba(15, 23, 42, ${Math.min(0.95, panelAlpha + 0.05)})`);
@@ -55,18 +77,31 @@ function applyAppearanceVariables(stateObj = appState) {
     }
 }
 
+function _getPersistableState(stateObj = appState) {
+    // Strip synthetic in-memory ankiCards array so we never bloat SQLite user_state with 50k dummy objects
+    const copy = { ...stateObj };
+    delete copy.ankiCards;
+    return copy;
+}
+
 async function fetchState() {
     try {
         const res = await fetch('/api/state/');
         if (res.ok) {
             const data = await res.json();
-            if (data && data.app_persistence) {
-                appState = { ...DEFAULT_PERSISTENCE, ...data.app_persistence };
-                if (typeof data.app_persistence.llmEnabled === 'boolean') {
-                    appState.skipLMStudio = !data.app_persistence.llmEnabled;
-                } else if (typeof data.app_persistence.skipLMStudio === 'boolean') {
-                    appState.llmEnabled = !data.app_persistence.skipLMStudio;
+            const persisted = (data && data.app_persistence && typeof data.app_persistence === 'object')
+                ? data.app_persistence
+                : (data && typeof data === 'object' && !('status' in data) ? data : null);
+
+            if (persisted) {
+                appState = { ...DEFAULT_PERSISTENCE, ...persisted };
+                _normalizeModelIds(appState);
+                if (typeof persisted.llmEnabled === 'boolean') {
+                    appState.skipLMStudio = !persisted.llmEnabled;
+                } else if (typeof persisted.skipLMStudio === 'boolean') {
+                    appState.llmEnabled = !persisted.skipLMStudio;
                 }
+                _stateLoadedFromServer = true;
             }
         }
     } catch (e) {
@@ -78,10 +113,21 @@ async function fetchState() {
         const fsrsRes = await fetch('/api/mcq/fsrs_summary');
         if (fsrsRes.ok) {
             const fsrsData = await fsrsRes.json();
-            if (fsrsData.status === 'success' && fsrsData.counts && fsrsData.total > 0) {
+            if (fsrsData.status === 'success' && fsrsData.counts) {
+                appState.fsrsCounts = {
+                    new: Number(fsrsData.counts.new || 0),
+                    learning: Number(fsrsData.counts.learning || 0),
+                    review: Number(fsrsData.counts.review || 0),
+                    mastered: Number(fsrsData.counts.mastered || 0),
+                    total: Number(fsrsData.total || 0)
+                };
+                // Keep a bounded synthetic array in memory for any legacy UI chart readers
                 const syntheticCards = [];
+                const total = appState.fsrsCounts.total;
+                const scale = total > 2000 ? 2000 / total : 1;
                 Object.entries(fsrsData.counts).forEach(([status, count]) => {
-                    for (let i = 0; i < count; i++) {
+                    const scaledCount = Math.round(Number(count || 0) * scale);
+                    for (let i = 0; i < scaledCount; i++) {
                         syntheticCards.push({ status });
                     }
                 });
@@ -91,32 +137,54 @@ async function fetchState() {
     } catch (_) {}
 
     applyAppearanceVariables(appState);
+    document.dispatchEvent(new CustomEvent('stateUpdated', { detail: appState }));
     return appState;
 }
 
-async function saveState() {
+async function saveState(partialPatch = null) {
     try {
-        await fetch('/api/state/', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ key: 'app_persistence', value: appState }),
-        });
+        if (partialPatch && typeof partialPatch === 'object') {
+            const cleanPatch = { ...partialPatch };
+            delete cleanPatch.ankiCards;
+            await fetch('/api/state/app_persistence', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(cleanPatch),
+            });
+        } else {
+            await fetch('/api/state/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: 'app_persistence', value: _getPersistableState(appState) }),
+            });
+        }
     } catch (e) {
         console.error('Failed to save state:', e);
     }
 }
 
-function updateState(updates) {
-    if ('llmEnabled' in updates && !('skipLMStudio' in updates)) {
-        updates.skipLMStudio = !updates.llmEnabled;
-    } else if ('skipLMStudio' in updates && !('llmEnabled' in updates)) {
-        updates.llmEnabled = !updates.skipLMStudio;
+async function updateState(updates) {
+    if (!updates || typeof updates !== 'object') return appState;
+
+    const patch = { ...updates };
+    if ('llmEnabled' in patch && !('skipLMStudio' in patch)) {
+        patch.skipLMStudio = !patch.llmEnabled;
+    } else if ('skipLMStudio' in patch && !('llmEnabled' in patch)) {
+        patch.llmEnabled = !patch.skipLMStudio;
     }
 
-    appState = { ...appState, ...updates };
+    _normalizeModelIds(patch);
+    appState = { ...appState, ...patch };
     applyAppearanceVariables(appState);
-    saveState();
     document.dispatchEvent(new CustomEvent('stateUpdated', { detail: appState }));
+
+    if (_stateLoadedFromServer) {
+        await saveState(patch);
+    } else {
+        await saveState(patch);
+        _stateLoadedFromServer = true;
+    }
+    return appState;
 }
 
 function recalculateStreaks(habitLog) {
@@ -136,8 +204,8 @@ function recalculateStreaks(habitLog) {
     let currentRun = 1;
 
     for (let i = 1; i < activeDates.length; i++) {
-        const prev = new Date(activeDates[i - 1] + 'T00:00:00Z');
-        const curr = new Date(activeDates[i] + 'T00:00:00Z');
+        const prev = new Date(activeDates[i - 1] + 'T00:00:00');
+        const curr = new Date(activeDates[i] + 'T00:00:00');
         const diffDays = Math.round((curr - prev) / 86400000);
         if (diffDays === 1) {
             currentRun++;
@@ -147,18 +215,19 @@ function recalculateStreaks(habitLog) {
         }
     }
 
-    const todayStr = new Date().toISOString().split('T')[0];
-    const yesterday = new Date();
+    const now = new Date();
+    const todayStr = _getLocalDateString(now);
+    const yesterday = new Date(now);
     yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    const yesterdayStr = _getLocalDateString(yesterday);
 
     const lastActive = activeDates[activeDates.length - 1];
     let activeStreak = 0;
     if (lastActive === todayStr || lastActive === yesterdayStr) {
         activeStreak = 1;
         for (let i = activeDates.length - 1; i > 0; i--) {
-            const curr = new Date(activeDates[i] + 'T00:00:00Z');
-            const prev = new Date(activeDates[i - 1] + 'T00:00:00Z');
+            const curr = new Date(activeDates[i] + 'T00:00:00');
+            const prev = new Date(activeDates[i - 1] + 'T00:00:00');
             if (Math.round((curr - prev) / 86400000) === 1) {
                 activeStreak++;
             } else {
@@ -176,7 +245,7 @@ function recalculateStreaks(habitLog) {
 function recordQuizCompletion(result, answeredQuestions, quizAnswersMap) {
     const state = appState;
     const testResults = [...(state.testResults || []), result];
-    const today = new Date().toISOString().split('T')[0];
+    const today = _getLocalDateString(new Date());
 
     const habitLog = [...(state.habitLog || [])];
     let habit = habitLog.find(h => h.date === today);
@@ -200,7 +269,10 @@ function recordQuizCompletion(result, answeredQuestions, quizAnswersMap) {
     // Update Per-Topic Expertise Map
     const topicExpertise = { ...(state.topicExpertise || {}) };
     (answeredQuestions || []).forEach(q => {
-        const ans = quizAnswersMap ? quizAnswersMap[q.id] : null;
+        const qid = q.id || q.question_id;
+        const ans = quizAnswersMap
+            ? (quizAnswersMap instanceof Map ? quizAnswersMap.get(qid) : quizAnswersMap[qid])
+            : null;
         if (!ans) return;
         const topic = q.topic_name || q.topic || result.subjectName || 'General';
         const subject = q.subject_name || result.subjectName || 'General';
@@ -220,7 +292,8 @@ function recordQuizCompletion(result, answeredQuestions, quizAnswersMap) {
 
         const prevAcc = prev.accuracy || 0;
         const attempted = prev.attempted + 1;
-        const correct = prev.correct + (ans.isCorrect ? 1 : 0);
+        const isCorr = Boolean(ans.isCorrect !== undefined ? ans.isCorrect : ans.is_correct);
+        const correct = prev.correct + (isCorr ? 1 : 0);
         const accuracy = (correct / attempted) * 100;
 
         let level = 'beginner';
@@ -262,10 +335,11 @@ function recordQuizCompletion(result, answeredQuestions, quizAnswersMap) {
 }
 
 function exportState() {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appState, null, 2));
+    const cleanDump = _getPersistableState(appState);
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(cleanDump, null, 2));
     const downloadAnchorNode = document.createElement('a');
     downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", `medisearch_backup_${new Date().toISOString().split('T')[0]}.json`);
+    downloadAnchorNode.setAttribute("download", `medisearch_backup_${_getLocalDateString(new Date())}.json`);
     document.body.appendChild(downloadAnchorNode);
     downloadAnchorNode.click();
     downloadAnchorNode.remove();
@@ -273,11 +347,16 @@ function exportState() {
 
 async function importState(jsonString) {
     try {
-        const parsed = JSON.parse(jsonString);
+        const parsed = typeof jsonString === 'string' ? JSON.parse(jsonString) : jsonString;
         if (parsed && typeof parsed === 'object') {
-            appState = { ...DEFAULT_PERSISTENCE, ...parsed };
+            const payload = (parsed.state && parsed.state.app_persistence)
+                ? parsed.state.app_persistence
+                : (parsed.app_persistence ? parsed.app_persistence : parsed);
+            appState = { ...DEFAULT_PERSISTENCE, ...payload };
+            _normalizeModelIds(appState);
             applyAppearanceVariables(appState);
             await saveState();
+            _stateLoadedFromServer = true;
             document.dispatchEvent(new CustomEvent('stateUpdated', { detail: appState }));
             return true;
         }
