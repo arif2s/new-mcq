@@ -404,7 +404,6 @@ def scan_and_ingest_csvs() -> Dict[str, Any]:
             total_in_db = int(final_row[0] or 0) if final_row else 0
             net_rows_inserted = max(0, total_in_db - initial_count)
 
-            # Invariant 3: Ensure FTS5 external-content shadow table is synchronized
             try:
                 fts_docsize_cnt = cursor.execute(
                     "SELECT COUNT(*) FROM csv_questions_fts_docsize"
@@ -441,7 +440,7 @@ load_csvs_background = scan_and_ingest_csvs
 @router.get("/api/csv/reload")
 @router.get("/reload")
 async def reload_csvs(
-    background_tasks: Optional[BackgroundTasks] = None,
+    background_tasks: BackgroundTasks = None,
 ) -> Dict[str, Any]:
     """
     API endpoint triggering recursive CSV question ingestion.

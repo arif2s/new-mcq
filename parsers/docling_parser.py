@@ -1,6 +1,7 @@
 """
 Layout-aware PDF textbook section & table extractor using Docling ML / PyMuPDF.
 Enforces zero VRAM usage, cached engine singletons, thread safety, and offline safety.
+Includes single-page slicing fix, OCR auto-detection, TableFormer config, and hybrid callout recovery.
 """
 
 from __future__ import annotations
@@ -66,28 +67,38 @@ except ImportError:
     CodeItem = None
     FormulaItem = None
 
+from parsers.pdf_parser import extract_page_with_adaptive_layout
+
 logger = logging.getLogger(__name__)
 
-_converter: Optional[Any] = None
+_converters: Dict[bool, Any] = {}
 _CONVERTER_LOCK = threading.RLock()
 _CONVERT_LOCK = threading.RLock()
 
 
-def get_converter() -> Any:
+def get_converter(do_ocr: bool = False) -> Any:
     """
-    Thread-safe singleton loader for Docling ML models (Section 3 & Invariant 8).
+    Thread-safe singleton loader for Docling ML models cached by do_ocr flag (Section 3 & Invariant 8).
     Enforces CPU-only execution (device='cpu', num_threads=4) to adhere to the zero-VRAM budget.
     """
-    global _converter
+    global _converters
     if DocumentConverter is None:
         raise RuntimeError("Docling is not installed in the current environment.")
 
-    if _converter is None:
+    if do_ocr not in _converters:
         with _CONVERTER_LOCK:
-            if _converter is None:
+            if do_ocr not in _converters:
                 pipeline_options = PdfPipelineOptions()
                 pipeline_options.do_table_structure = True
                 pipeline_options.generate_page_images = False
+                pipeline_options.images_scale = 2.0
+                pipeline_options.do_ocr = do_ocr
+
+                if hasattr(pipeline_options, "table_structure_options"):
+                    try:
+                        pipeline_options.table_structure_options.do_cell_matching = True
+                    except Exception:
+                        pass
 
                 # Strictly limit threads and force CPU accelerator (Invariant 1 & Section 3)
                 if hasattr(pipeline_options, "accelerator_options"):
@@ -110,13 +121,13 @@ def get_converter() -> Any:
                     except Exception:
                         pass
 
-                _converter = DocumentConverter(
+                _converters[do_ocr] = DocumentConverter(
                     allowed_formats=[InputFormat.PDF],
                     format_options={
                         InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
                     },
                 )
-    return _converter
+    return _converters[do_ocr]
 
 
 def _export_item_markdown(item: Any, doc_obj: Any) -> str:
@@ -134,9 +145,70 @@ def _export_item_markdown(item: Any, doc_obj: Any) -> str:
         return ""
 
 
+def _recover_picture_callouts(doc_obj: Any, fitz_page: Any) -> List[str]:
+    """
+    Fix 2.4: Recovers text inside shaded clinical callout boxes misclassified as Picture/Figure.
+    Inspects picture bounding boxes and fitz blocks to extract missing prose.
+    """
+    recovered_callouts: List[str] = []
+    if fitz_page is None or doc_obj is None:
+        return recovered_callouts
+
+    try:
+        picture_items = []
+        for entry in doc_obj.iterate_items():
+            item = entry[0] if isinstance(entry, (tuple, list)) else entry
+            item_label = getattr(item, "label", None)
+            label_str = (
+                str(item_label.value if hasattr(item_label, "value") else item_label).lower()
+                if item_label
+                else ""
+            )
+            if label_str in {"picture", "figure", "image"} or "picture" in type(item).__name__.lower():
+                picture_items.append(item)
+
+        blocks = fitz_page.get_text("blocks")
+        for pic in picture_items:
+            prov = getattr(pic, "prov", None)
+            clip_rect = None
+            if prov and isinstance(prov, (list, tuple)) and len(prov) > 0:
+                p_bbox = getattr(prov[0], "bbox", None)
+                if p_bbox and hasattr(p_bbox, "l"):
+                    # Convert Docling coords to Fitz rect if available
+                    clip_rect = fitz.Rect(p_bbox.l, p_bbox.t, p_bbox.r, p_bbox.b)
+
+            box_text = ""
+            if clip_rect:
+                box_text = fitz_page.get_text("text", clip=clip_rect).strip()
+
+            # If no clip_rect or clip empty, inspect blocks inside drawings or shaded rects
+            if len(box_text) < 35:
+                for b in blocks:
+                    b_text = str(b[4]).strip()
+                    if len(b_text) >= 35 and "pearl" in b_text.lower() or "clinical" in b_text.lower():
+                        box_text = b_text
+                        break
+
+            if len(box_text) >= 35:
+                callout_lines = [f"> {line}" for line in box_text.split("\n") if line.strip()]
+                recovered_callouts.append("> **[Clinical Box]**\n" + "\n".join(callout_lines))
+
+    except Exception as exc:
+        logger.debug("_recover_picture_callouts error: %s", exc)
+
+    return recovered_callouts
+
+
 @functools.lru_cache(maxsize=128)
 def _cached_extract_page_layout(normalized_path: str, page_number: int) -> str:
-    """Internal LRU-cached worker (maxsize=128) for single-page layout markdown extraction."""
+    """
+    Internal LRU-cached worker for single-page layout markdown extraction.
+    Fix 2.1: Slices page into an in-memory 1-page PDF buffer before conversion.
+    Fix 2.2: Auto-detects native text length to disable OCR on digital PDFs.
+    Fix 2.3: Configures CPU accelerator & high-resolution TableFormer.
+    Fix 2.4: Recovers text inside shaded clinical callout boxes.
+    Fix 2.5: Merges/falls back to Adaptive Geometric Engine on truncated output.
+    """
     if page_number < 1:
         return ""
 
@@ -149,6 +221,8 @@ def _cached_extract_page_layout(normalized_path: str, page_number: int) -> str:
         return ""
 
     target_page_index = page_number - 1
+    native_text = ""
+    fitz_page = None
 
     try:
         with fitz.open(normalized_path) as doc:
@@ -161,13 +235,21 @@ def _cached_extract_page_layout(normalized_path: str, page_number: int) -> str:
             if target_page_index < 0 or target_page_index >= doc.page_count:
                 return ""
 
+            fitz_page = doc[target_page_index]
+            native_text = fitz_page.get_text("text").strip()
+
+            # Fix 2.1: Slice target page into a single 1-page document in memory
             with fitz.open() as single_page_doc:
                 single_page_doc.insert_pdf(
                     doc, from_page=target_page_index, to_page=target_page_index
                 )
                 pdf_bytes = single_page_doc.tobytes()
 
-        converter = get_converter()
+        # Fix 2.2: Disable OCR if native text count >= 40 chars
+        do_ocr = len(native_text) < 40
+
+        # Fix 2.3: Obtain singleton converter configured for CPU and TableFormer
+        converter = get_converter(do_ocr=do_ocr)
         stream = DocumentStream(name=f"page_{page_number}.pdf", stream=io.BytesIO(pdf_bytes))
 
         # Thread-safe conversion lock to prevent native CPU thrashing/crashes
@@ -179,22 +261,33 @@ def _cached_extract_page_layout(normalized_path: str, page_number: int) -> str:
             and hasattr(conversion_result, "document")
             and conversion_result.document
         ):
-            md_text = conversion_result.document.export_to_markdown().strip()
-            if md_text:
+            doc_obj = conversion_result.document
+            # Export without page_no filtering since the sliced document has only 1 page
+            md_text = doc_obj.export_to_markdown().strip()
+
+            # Fix 2.4: Recover shaded clinical callout boxes misclassified as pictures
+            callouts = _recover_picture_callouts(doc_obj, fitz_page)
+            if callouts:
+                for c in callouts:
+                    if c[:30] not in md_text:
+                        md_text = md_text + "\n\n" + c
+
+            # Fix 2.5: Check if output is non-empty and sufficient relative to fitz native text
+            if md_text and (len(native_text) < 40 or len(md_text) >= 0.25 * len(native_text)):
                 return md_text
 
     except Exception as exc:
         logger.warning(
-            "Docling layout extraction failed for %s page %d: %s. Attempting PyMuPDF fallback.",
+            "Docling layout extraction failed for %s page %d: %s. Attempting Adaptive Engine fallback.",
             normalized_path,
             page_number,
             exc,
         )
 
+    # Fix 2.5 Fallback: Execute 6-stage Adaptive Multi-Column Geometric Engine
     try:
-        from parsers.pdf_extractor import extract_page_slice
-
-        return extract_page_slice(normalized_path, page_number)
+        adaptive_res = extract_page_with_adaptive_layout(normalized_path, page_number)
+        return adaptive_res.get("extracted_text", "") or native_text
     except Exception as fallback_err:
         logger.error(
             "Fallback extractor also failed for %s page %d: %s",
@@ -202,13 +295,13 @@ def _cached_extract_page_layout(normalized_path: str, page_number: int) -> str:
             page_number,
             fallback_err,
         )
-        return ""
+        return native_text
 
 
 def extract_structured_layout(file_path: Union[str, Path], page_number: int) -> str:
     """
     Extracts structured markdown (tables, columns, headings) from a specific PDF page using Docling.
-    Falls back gracefully to PyMuPDF text slicing if Docling is unavailable or encounters an error.
+    Falls back gracefully to Adaptive Multi-Column Geometric Engine if Docling is unavailable or encounters an error.
     """
     if not file_path:
         return ""
@@ -227,9 +320,8 @@ def extract_structured_layout(file_path: Union[str, Path], page_number: int) -> 
 
     if DocumentConverter is None:
         try:
-            from parsers.pdf_extractor import extract_page_slice
-
-            return extract_page_slice(norm_path, p_num)
+            res = extract_page_with_adaptive_layout(norm_path, p_num)
+            return res.get("extracted_text", "")
         except Exception:
             return ""
 
@@ -259,7 +351,7 @@ def extract_pdf_structure(file_path: Union[str, Path]) -> List[Dict[str, Any]]:
         return extract_pdf_pages(norm_path, default_title=default_title)
 
     try:
-        converter = get_converter()
+        converter = get_converter(do_ocr=False)
         with _CONVERT_LOCK:
             conversion_result = converter.convert(norm_path)
 
@@ -288,7 +380,6 @@ def extract_pdf_structure(file_path: Union[str, Path]) -> List[Dict[str, Any]]:
             if not current_text:
                 return
 
-            # Avoid saving phantom sections that contain only heading tags
             substantive_lines = [
                 line
                 for line in current_text
@@ -345,7 +436,6 @@ def extract_pdf_structure(file_path: Union[str, Path]) -> List[Dict[str, Any]]:
             except (ValueError, TypeError):
                 item_level = 1
 
-            # Extract page provenance robustly across Docling versions
             item_page = current_page
             prov = getattr(item, "prov", None)
             if prov and isinstance(prov, (list, tuple)) and len(prov) > 0:
@@ -361,7 +451,6 @@ def extract_pdf_structure(file_path: Union[str, Path]) -> List[Dict[str, Any]]:
                     except (ValueError, TypeError):
                         pass
 
-            # Detect page transition
             if item_page != current_page and current_text:
                 save_section(current_page)
                 current_text = []
@@ -370,7 +459,6 @@ def extract_pdf_structure(file_path: Union[str, Path]) -> List[Dict[str, Any]]:
                 if active_h != "Untitled":
                     current_text.append(f"[{active_h}]")
 
-            # Determine item label and semantic classification
             item_label = getattr(item, "label", None)
             label_str = (
                 str(item_label.value if hasattr(item_label, "value") else item_label).lower()
@@ -404,7 +492,6 @@ def extract_pdf_structure(file_path: Union[str, Path]) -> List[Dict[str, Any]]:
                     current_page = item_page
 
             else:
-                # Capture TextItem, ListItem, CodeItem, FormulaItem, and generic clinical items
                 text_val = ""
                 if hasattr(item, "text") and isinstance(item.text, str) and item.text.strip():
                     text_val = item.text.strip()
@@ -458,7 +545,6 @@ def ingest_to_lancedb(
     if not sections:
         return 0
 
-    # Invariant 8: Use cached singleton embedding and LanceDB engines
     embedder = get_embedding_engine()
     vector_dim = embedder.get_dimension()
     engine = get_lancedb_engine(vector_dim=vector_dim)
@@ -511,7 +597,6 @@ def ingest_to_lancedb(
         texts = [c["child_content"] for c in batch]
         vectors = embedder.embed(texts)
 
-        # Fallback to zero-vectors if offline embedding model is not yet cached so FTS still works
         if not vectors or len(vectors) != len(batch):
             vectors = [[0.0] * vector_dim for _ in batch]
 

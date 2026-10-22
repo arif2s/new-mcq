@@ -50,6 +50,7 @@ from parsers.pdf_extractor import (
     fitz,
     get_pdf_page_count,
 )
+from parsers.pdf_parser import extract_page_with_adaptive_layout
 from parsers.tantivy_engine import get_index
 from parsers.zim_reader import get_archive, get_enabled_zim_paths
 from server.ws_manager import ws_manager
@@ -277,9 +278,6 @@ async def run_indexing() -> None:
     """
     Builds the hybrid Tantivy (lexical BM25) and LanceDB (dense vector + FTS) indices across
     enabled Obsidian, PDF, and ZIM sources.
-    - Operates under strict zero-VRAM and thread boundaries (Invariant 1).
-    - Utilizes cached singletons and batched ONNX forward passes (Invariant 8).
-    - Releases Tantivy writer lock safely across all completion/exception paths (Invariant 17).
     """
     global _INDEXING_IN_PROGRESS
 
@@ -314,7 +312,6 @@ async def run_indexing() -> None:
                 )
                 return
 
-            # Initialize Tantivy index and acquire writer (Invariant 17)
             index = await asyncio.to_thread(get_index, reset=True)
             writer = (
                 await asyncio.to_thread(index.writer, 50_000_000)
@@ -322,7 +319,6 @@ async def run_indexing() -> None:
                 else None
             )
 
-            # Verify and initialize shared singleton embedding & LanceDB engines (Invariant 8)
             configured_model = get_configured_embedding_model(force_refresh=True)
             can_embed = is_embedding_model_downloaded(configured_model)
             embedder = get_embedding_engine(configured_model)
@@ -373,9 +369,6 @@ async def run_indexing() -> None:
                     lancedb_records.clear()
 
                 if source_path.exists():
-                    # --------------------------------------------------------
-                    # 1. OBSIDIAN VAULT INDEXING
-                    # --------------------------------------------------------
                     if src_type == "obsidian":
                         if source_path.is_dir():
                             files = [
@@ -511,9 +504,6 @@ async def run_indexing() -> None:
                                     "Skipped Obsidian note %s: %s", file_path, exc
                                 )
 
-                    # --------------------------------------------------------
-                    # 2. PDF TEXTBOOK INDEXING
-                    # --------------------------------------------------------
                     elif src_type == "pdf":
                         pdf_files = (
                             [
@@ -684,9 +674,6 @@ async def run_indexing() -> None:
                                     "Failed processing PDF file %s: %s", file_path, exc
                                 )
 
-                    # --------------------------------------------------------
-                    # 3. >10GB ZIM ARCHIVE LINKING
-                    # --------------------------------------------------------
                     elif src_type == "zim":
                         await ws_manager.broadcast_indexing_progress(
                             source_id=src["id"],
@@ -718,7 +705,6 @@ async def run_indexing() -> None:
                     )
                     update_conn.commit()
 
-            # Invariant 17: Offload Tantivy writer commit to separate thread
             if writer is not None:
                 await ws_manager.broadcast_indexing_progress(
                     source_id="system",
@@ -729,7 +715,6 @@ async def run_indexing() -> None:
                 await asyncio.to_thread(writer.commit)
                 committed = True
 
-            # Build LanceDB FTS index over inserted chunks
             if lancedb_engine is not None and total_lancedb_chunks > 0:
                 await ws_manager.broadcast_indexing_progress(
                     source_id="system",
@@ -766,7 +751,6 @@ async def run_indexing() -> None:
                 status="error",
             )
         finally:
-            # Invariant 17: Explicitly release/rollback Tantivy writer across all exit paths
             if writer is not None:
                 if not committed and hasattr(writer, "rollback"):
                     try:
@@ -856,7 +840,6 @@ def open_pdf(payload: OpenPdfPayload) -> Dict[str, str]:
             if cand.is_file():
                 resolved_path = cand.resolve()
 
-        # Invariant 6: Validate file existence and .pdf extension before invocation
         if resolved_path is None or not resolved_path.is_file():
             return {
                 "status": "error",
@@ -909,7 +892,6 @@ def get_asset(path: str) -> FileResponse:
         if not vault_path.is_dir():
             continue
 
-        # 1. Fast direct relative path check
         try:
             direct_candidate = (vault_path / clean_path).resolve()
             if (
@@ -925,7 +907,6 @@ def get_asset(path: str) -> FileResponse:
         except Exception:
             pass
 
-        # 2. Check common Obsidian attachment subdirectories
         for sub_dir in ("attachments", "assets", "images", "files", "media", ""):
             try:
                 cand = (
@@ -942,7 +923,6 @@ def get_asset(path: str) -> FileResponse:
             except Exception:
                 continue
 
-        # 3. Bounded directory walk (pruning .obsidian, .trash, .git)
         for root, dirs, files in os.walk(vault_path):
             dirs[:] = [
                 d
@@ -1013,6 +993,7 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
     """
     Tests PDF extraction engines (PyMuPDF Fitz, Docling ML, or PyMuPDF Heuristic Headings)
     page-by-page for side-by-side verification and manual optimization.
+    Returns JSON strictly conforming to the frontend API contract.
     """
     import parsers.docling_parser as docling_ext
     import parsers.pdf_extractor as pdf_ext
@@ -1078,35 +1059,37 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
             extracted_text = docling_ext.extract_structured_layout(
                 str(target_path), page_num
             )
-        elif engine_used == "headings" and pdf_ext.fitz and page_count > 0:
-            with pdf_ext.fitz.open(str(target_path)) as doc:
-                if doc.is_encrypted:
-                    try:
-                        doc.authenticate("")
-                    except Exception:
-                        pass
-                page_idx = page_num - 1
-                if 0 <= page_idx < doc.page_count:
-                    res = pdf_ext.extract_page_with_headings(
-                        doc[page_idx], default_title=target_path.stem
-                    )
-                    extracted_text = res.get("text", "")
-                    heading_path = res.get("heading_path", "")
-                    subheading = res.get("subheading", "")
+            res = extract_page_with_adaptive_layout(
+                str(target_path), page_num, default_title=target_path.stem
+            )
+            heading_path = res.get("heading_path", target_path.stem)
+            subheading = res.get("subheading", target_path.stem)
+        elif engine_used == "headings":
+            res = extract_page_with_adaptive_layout(
+                str(target_path), page_num, default_title=target_path.stem, promote_headings=True
+            )
+            extracted_text = res.get("extracted_text", "")
+            heading_path = res.get("heading_path", target_path.stem)
+            subheading = res.get("subheading", target_path.stem)
         else:
             engine_used = "fitz"
-            extracted_text = pdf_ext.extract_page_slice(str(target_path), page_num)
+            res = extract_page_with_adaptive_layout(
+                str(target_path), page_num, default_title=target_path.stem, promote_headings=False
+            )
+            extracted_text = res.get("extracted_text", "")
+            heading_path = res.get("heading_path", target_path.stem)
+            subheading = res.get("subheading", target_path.stem)
 
         return {
             "status": "success",
-            "file_path": str(target_path),
             "file_name": target_path.name,
+            "file_path": str(target_path),
             "page_number": page_num,
             "total_pages": page_count,
             "engine": engine_used,
-            "extracted_text": extracted_text,
             "heading_path": heading_path,
             "subheading": subheading,
+            "extracted_text": extracted_text,
             "available_pdfs": available_pdfs,
         }
     except Exception as exc:

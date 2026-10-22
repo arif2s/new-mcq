@@ -1,5 +1,5 @@
 """
-Lightweight PyMuPDF fallback fast text slicer with page heading detection.
+Lightweight PyMuPDF fallback fast text slicer with page heading detection and adaptive geometric layout.
 Enforces zero VRAM usage, ChunkDict compliance, ligature normalization, and margin bounds filtering.
 """
 
@@ -25,55 +25,21 @@ except ImportError:
     except ImportError:
         fitz = None
 
+from parsers.pdf_parser import (
+    AdaptivePdfLayoutEngine,
+    clean_pdf_text,
+    extract_page_with_adaptive_layout,
+)
+
 logger = logging.getLogger(__name__)
 
 # Re-entrant synchronization lock for native PyMuPDF context operations
 _FITZ_LOCK = threading.RLock()
 
-# Unicode ligature and formatting character translation table for medical search
-_LIGATURE_MAP = {
-    "ﬁ": "fi",
-    "ﬂ": "fl",
-    "ﬀ": "ff",
-    "ﬃ": "ffi",
-    "ﬄ": "ffl",
-    "ﬅ": "ft",
-    "ﬆ": "st",
-    "\u00a0": " ",
-    "\u200b": "",
-    "\u200e": "",
-    "\u200f": "",
-    "\ufeff": "",
-    "\u00ad": "",
-}
-
-
-def clean_pdf_text(text: str) -> str:
-    """
-    Sanitizes raw PDF text for Tantivy BM25 indexing, LanceDB FTS, and SQLite safety:
-    - Strips null bytes (\\x00) and form feeds (\\x0c)
-    - Replaces typographical ligatures (fi, fl, ffi)
-    - Normalizes CRLF and excessive vertical whitespace
-    - Reassembles words hyphenated across line breaks
-    """
-    if not text:
-        return ""
-
-    t = text.replace("\x00", "").replace("\x0c", "\n")
-    for lig, rep in _LIGATURE_MAP.items():
-        if lig in t:
-            t = t.replace(lig, rep)
-
-    t = t.replace("\r\n", "\n").replace("\r", "\n")
-    # Reassemble hyphenated words split across lines (e.g., 'hyper-\ntension' -> 'hypertension')
-    t = re.sub(r"([A-Za-z]{3,})-\n([a-z]{3,})", r"\1\2", t)
-    t = re.sub(r"\n{3,}", "\n\n", t)
-    return t.strip()
-
 
 @functools.lru_cache(maxsize=256)
 def _cached_extract_page_slice(normalized_path: str, page_number: int) -> str:
-    """Internal LRU-cached worker for page text extraction."""
+    """Internal LRU-cached worker for page text extraction using Adaptive Geometric Layout Engine."""
     if fitz is None:
         logger.warning("PyMuPDF (fitz) is not installed; cannot slice PDF page.")
         return ""
@@ -83,6 +49,11 @@ def _cached_extract_page_slice(normalized_path: str, page_number: int) -> str:
         return ""
 
     try:
+        res = extract_page_with_adaptive_layout(normalized_path, page_number)
+        text = res.get("extracted_text", "")
+        if text:
+            return text
+
         with _FITZ_LOCK:
             with fitz.open(normalized_path) as doc:
                 if doc.is_encrypted:
@@ -106,7 +77,7 @@ def _cached_extract_page_slice(normalized_path: str, page_number: int) -> str:
 
 def extract_page_slice(file_path: Union[str, Path], page_number: int) -> str:
     """
-    Extracts text from a specific PDF page in natural visual reading order (sort=True).
+    Extracts text from a specific PDF page using Stage 3.1-3.6 Adaptive Geometric Layout Engine.
     Results are cached in memory to optimize batch RAG synthesis and topic verification.
     """
     if not file_path:
@@ -128,7 +99,7 @@ def extract_page_slice(file_path: Union[str, Path], page_number: int) -> str:
 
 def extract_page_with_headings(page: Any, default_title: str = "") -> Dict[str, Any]:
     """
-    Extracts page text and section headings via font size heuristics and margin bounds.
+    Extracts page text and section headings via Stage 3.1-3.6 Adaptive Multi-Column Layout Engine.
     Filters running headers/footers and returns dictionaries conforming to ChunkDict.
     """
     clean_default = str(default_title or "").strip()
@@ -144,77 +115,13 @@ def extract_page_with_headings(page: Any, default_title: str = "") -> Dict[str, 
         file_path = str(page.parent.name)
 
     try:
-        page_dict = page.get_text("dict", sort=True)
-        blocks = page_dict.get("blocks", []) if isinstance(page_dict, dict) else []
+        engine = AdaptivePdfLayoutEngine(page, default_title=clean_default)
+        res = engine.run(promote_headings=True)
 
-        page_height = 800.0
-        if hasattr(page, "rect") and hasattr(page.rect, "height"):
-            page_height = float(page.rect.height) or 800.0
-
-        weighted_font_sizes: List[float] = []
-        candidates: List[Tuple[float, str]] = []
-        body_text_parts: List[str] = []
-        all_text_parts: List[str] = []
-
-        for b in blocks:
-            if b.get("type") != 0:
-                continue
-
-            b_bbox = b.get("bbox", (0.0, 0.0, 0.0, 0.0))
-            y0, y1 = float(b_bbox[1]), float(b_bbox[3])
-            # Exclude running headers (top 4%) and footers/page numbers (bottom 4%)
-            is_marginal = (y0 < page_height * 0.04) or (y1 > page_height * 0.96)
-
-            for line in b.get("lines", []):
-                line_text_parts: List[str] = []
-                max_size = 0.0
-
-                for span in line.get("spans", []):
-                    s_text = str(span.get("text", "")).strip()
-                    if s_text:
-                        sz = float(span.get("size", 10.0) or 10.0)
-                        if not is_marginal:
-                            # Weight font sizes by character count to avoid superscript skew
-                            weight = max(1, min(len(s_text), 60) // 4)
-                            weighted_font_sizes.extend([sz] * weight)
-                        if sz > max_size:
-                            max_size = sz
-                        line_text_parts.append(s_text)
-
-                joined_line = " ".join(line_text_parts).strip()
-                if not joined_line:
-                    continue
-
-                all_text_parts.append(joined_line)
-                if is_marginal:
-                    continue
-
-                body_text_parts.append(joined_line)
-
-                if 3 <= len(joined_line) <= 120 and not joined_line.isdigit():
-                    candidates.append((max_size, joined_line))
-
-        raw_joined = "\n".join(body_text_parts if body_text_parts else all_text_parts)
-        cleaned_text = clean_pdf_text(raw_joined)
-        if not cleaned_text:
-            cleaned_text = clean_pdf_text(page.get_text("text", sort=True))
-
-        headings: List[str] = []
-        if weighted_font_sizes and candidates:
-            sorted_sizes = sorted(weighted_font_sizes)
-            median_size = sorted_sizes[len(sorted_sizes) // 2]
-            threshold = max(median_size * 1.15, median_size + 1.5)
-
-            for sz, l_text in candidates:
-                if sz >= threshold and l_text not in headings:
-                    headings.append(l_text)
-                    if len(headings) >= 2:
-                        break
-
+        cleaned_text = res.get("extracted_text", "")
+        heading_path = res.get("heading_path", clean_default or "Untitled")
+        subheading = res.get("subheading", clean_default or "Untitled")
         title_str = clean_default or "Untitled"
-        parts = [clean_default] + headings if clean_default else headings
-        heading_path = " > ".join(parts) if parts else title_str
-        subheading = headings[-1] if headings else title_str
 
         text_len = len(cleaned_text)
         snippet = cleaned_text[:400] + ("..." if text_len > 400 else "")
@@ -227,6 +134,7 @@ def extract_page_with_headings(page: Any, default_title: str = "") -> Dict[str, 
             "id": doc_id,
             "doc_id": doc_id,
             "text": cleaned_text,
+            "extracted_text": cleaned_text,
             "snippet": snippet,
             "title": title_str,
             "heading": heading_path,
@@ -261,6 +169,7 @@ def extract_page_with_headings(page: Any, default_title: str = "") -> Dict[str, 
             "id": doc_id,
             "doc_id": doc_id,
             "text": fallback,
+            "extracted_text": fallback,
             "snippet": fallback[:400] + ("..." if text_len > 400 else ""),
             "title": title_str,
             "heading": title_str,
@@ -281,7 +190,7 @@ def extract_page_with_headings(page: Any, default_title: str = "") -> Dict[str, 
 
 def extract_pdf_pages(file_path: Union[str, Path], default_title: str = "") -> List[Dict[str, Any]]:
     """
-    Extracts all pages from a PDF document using lightweight PyMuPDF indexing.
+    Extracts all pages from a PDF document using Adaptive Multi-Column Layout Engine indexing.
     Returns ChunkDict-compliant dictionaries suitable for Tantivy and LanceDB ingestion.
     """
     norm_path = str(Path(file_path).resolve())
@@ -307,7 +216,6 @@ def extract_pdf_pages(file_path: Union[str, Path], default_title: str = "") -> L
 
             page_count = int(doc.page_count)
             for idx in range(page_count):
-                # Fine-grained per-page lock so single-page slices never stall behind bulk indexing
                 with _FITZ_LOCK:
                     page = doc.load_page(idx)
                     page_data = extract_page_with_headings(page, default_title=title)
@@ -374,5 +282,5 @@ def get_pdf_page_count(file_path: Union[str, Path]) -> int:
         return 0
 
 
-# Interoperable alias matching docling_parser interface (Section 3)
+# Interoperable alias matching docling_parser interface
 extract_pdf_structure = extract_pdf_pages
