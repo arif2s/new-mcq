@@ -241,7 +241,15 @@ def _get_pdf_parser_setting() -> str:
 
 def _extract_pdf_sync(file_path: str, page: int) -> str:
     parser = _get_pdf_parser_setting()
-    if parser == "docling":
+    if parser == "docling_v2":
+        try:
+            from parsers.docling_v2_parser import extract_structured_layout as extract_v2
+            res = extract_v2(file_path, page)
+            if res:
+                return res
+        except Exception as exc:
+            logger.warning("Docling v2 extraction failed, falling back to fitz: %s", exc)
+    elif parser == "docling":
         try:
             res = extract_structured_layout(file_path, page)
             if res:

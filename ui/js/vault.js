@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const pdfEngineContainer = document.getElementById('pdf-engine-container');
   const pdfEngineFitzLabel = document.getElementById('pdf-engine-fitz-label');
   const pdfEngineDoclingLabel = document.getElementById('pdf-engine-docling-label');
+  const pdfEngineDoclingV2Label = document.getElementById('pdf-engine-docling-v2-label');
   const startIndexingBtn = document.getElementById('start-indexing-btn');
   const indexingBtnText = document.getElementById('indexing-btn-text');
   const indexingIconPlay = document.getElementById('indexing-icon-play');
@@ -172,18 +173,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementsByName('pdfEngine').forEach(radio => {
     radio.addEventListener('change', () => {
-      if (radio.value === 'fitz') {
-        pdfEngineFitzLabel?.classList.add('bg-brand-600/10', 'border-brand-500');
-        pdfEngineFitzLabel?.classList.remove('glass-panel');
-
-        pdfEngineDoclingLabel?.classList.remove('bg-brand-600/10', 'border-brand-500');
-        pdfEngineDoclingLabel?.classList.add('glass-panel');
-      } else {
-        pdfEngineDoclingLabel?.classList.add('bg-brand-600/10', 'border-brand-500');
-        pdfEngineDoclingLabel?.classList.remove('glass-panel');
-
-        pdfEngineFitzLabel?.classList.remove('bg-brand-600/10', 'border-brand-500');
-        pdfEngineFitzLabel?.classList.add('glass-panel');
+      [pdfEngineFitzLabel, pdfEngineDoclingLabel, pdfEngineDoclingV2Label].forEach(label => {
+        label?.classList.remove('bg-brand-600/10', 'border-brand-500');
+        label?.classList.add('glass-panel');
+      });
+      if (radio.value === 'fitz' && pdfEngineFitzLabel) {
+        pdfEngineFitzLabel.classList.add('bg-brand-600/10', 'border-brand-500');
+        pdfEngineFitzLabel.classList.remove('glass-panel');
+      } else if (radio.value === 'docling' && pdfEngineDoclingLabel) {
+        pdfEngineDoclingLabel.classList.add('bg-brand-600/10', 'border-brand-500');
+        pdfEngineDoclingLabel.classList.remove('glass-panel');
+      } else if (radio.value === 'docling_v2' && pdfEngineDoclingV2Label) {
+        pdfEngineDoclingV2Label.classList.add('bg-brand-600/10', 'border-brand-500');
+        pdfEngineDoclingV2Label.classList.remove('glass-panel');
       }
     });
   });

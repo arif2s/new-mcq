@@ -57,6 +57,21 @@ def test_pdf_extract_endpoint_multipage():
         assert d_docling["page_number"] == 2
         assert d_docling["total_pages"] == 2
         assert len(d_docling["extracted_text"]) > 0
+
+        # Test engine="docling_v2" on page 2
+        res_v2 = client.post("/api/sources/test_pdf_extract", json={"file_path": tmp.name, "page_number": 2, "engine": "docling_v2"})
+        assert res_v2.status_code == 200
+        d_v2 = res_v2.json()
+        assert d_v2["status"] == "success"
+        assert d_v2["engine"] == "docling_v2"
+        assert d_v2["page_number"] == 2
+        assert d_v2["total_pages"] == 2
+        assert len(d_v2["extracted_text"]) > 0
+        assert "page_image_base64" in d_v2
+        assert "layout_boxes" in d_v2
+        assert isinstance(d_v2["layout_boxes"], list)
+        assert d_v2["page_width"] > 0
+        assert d_v2["page_height"] > 0
     finally:
         if os.path.exists(tmp.name):
             os.remove(tmp.name)

@@ -118,7 +118,8 @@
                         <label for="pdf-engine-select" class="text-xs font-bold text-muted mb-1 block">Parser Engine</label>
                         <select id="pdf-engine-select" class="glass-input text-xs w-full py-2">
                             <option value="fitz">PyMuPDF (Fitz) Fast Text Slicing</option>
-                            <option value="docling">Docling ML Structural Markdown</option>
+                            <option value="docling">Docling v1 ML Structural Markdown</option>
+                            <option value="docling_v2">Docling v2 Hybrid Multi-Column Layout</option>
                             <option value="headings">PyMuPDF Heuristic Headings</option>
                         </select>
                     </div>
@@ -130,14 +131,53 @@
                 </div>
             </div>
 
-            <!-- Side-by-side View: PDF Info vs Extracted Output -->
+            <!-- Side-by-side View: Left Pane Image/SVG Overlay Viewer vs Extracted Output -->
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div class="card glass-card">
-                    <h4 class="text-sm font-bold mb-3 text-brand-300 flex items-center gap-2">
-                        <span>📖</span> PDF Source Metadata &amp; State
-                    </h4>
-                    <div id="pdf-meta-box" class="space-y-2 text-xs text-muted">
-                        <p>Select a PDF file and click "Extract &amp; Compare Page" to inspect results.</p>
+                <!-- Left Pane: Interactive PDF Page Image & SVG Layout Viewer -->
+                <div class="card glass-card flex flex-col space-y-3">
+                    <div class="flex items-center justify-between border-b border-gray-700/50 pb-2">
+                        <h4 class="text-sm font-bold text-brand-300 flex items-center gap-2">
+                            <span>🖼️</span> Interactive PDF Page &amp; SVG Layout Viewer
+                        </h4>
+                        <!-- Zoom Controls Toolbar -->
+                        <div class="flex items-center gap-1.5 bg-gray-900/60 p-1 rounded-lg border border-gray-700/50">
+                            <button type="button" id="pdf-zoom-out" class="px-2 py-0.5 text-xs bg-gray-800 hover:bg-gray-700 rounded text-brand-300 font-bold cursor-pointer" title="Zoom Out">-</button>
+                            <span id="pdf-zoom-level" class="text-[11px] font-mono font-bold text-gray-300 px-1">100%</span>
+                            <button type="button" id="pdf-zoom-in" class="px-2 py-0.5 text-xs bg-gray-800 hover:bg-gray-700 rounded text-brand-300 font-bold cursor-pointer" title="Zoom In">+</button>
+                            <button type="button" id="pdf-zoom-reset" class="px-2 py-0.5 text-xs bg-brand-500/20 hover:bg-brand-500/30 rounded text-brand-300 font-semibold cursor-pointer ml-1" title="Reset Zoom">Fit</button>
+                        </div>
+                    </div>
+
+                    <!-- Element Type Legend Toggles -->
+                    <div class="flex flex-wrap items-center gap-2 text-[10px] text-muted py-1 border-b border-gray-800/60">
+                        <span class="font-bold text-gray-400">Legend:</span>
+                        <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40">■ Heading</span>
+                        <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/40">■ Table</span>
+                        <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">■ Callout</span>
+                        <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-pink-500/20 text-pink-300 border border-pink-500/40">■ Caption</span>
+                        <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">■ Paragraph</span>
+                        <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300 border border-teal-500/40">■ List</span>
+                    </div>
+
+                    <!-- Image & Overlay Container -->
+                    <div id="pdf-viewer-viewport" class="relative overflow-auto border border-gray-700/60 rounded-xl bg-gray-950 p-2 min-h-[380px] max-h-[500px] flex items-center justify-center">
+                        <div id="pdf-viewer-canvas" class="relative inline-block origin-top-left transition-transform duration-100">
+                            <img id="pdf-page-img" src="" class="max-w-full h-auto block rounded shadow-lg hidden" alt="PDF Page Pixmap" />
+                            <svg id="pdf-svg-overlay" class="absolute top-0 left-0 w-full h-full pointer-events-none hidden" xmlns="http://www.w3.org/2000/svg"></svg>
+                        </div>
+                        <div id="pdf-viewer-placeholder" class="text-xs text-muted py-16 text-center">
+                            Select a PDF file and click "Extract &amp; Compare Page" to render page image and SVG layout bounding boxes.
+                        </div>
+                    </div>
+
+                    <!-- Compact Metadata & Inspection Details Box -->
+                    <div class="border-t border-gray-700/50 pt-2 mt-2">
+                        <div id="pdf-box-inspect-banner" class="hidden p-2 rounded-lg bg-brand-500/10 border border-brand-500/30 mb-2 text-xs font-mono">
+                            <!-- Populated when user hovers or clicks a bounding box -->
+                        </div>
+                        <div id="pdf-meta-box" class="space-y-1.5 text-xs text-muted">
+                            <p>PDF details will appear here after extraction.</p>
+                        </div>
                     </div>
                 </div>
 
@@ -190,6 +230,127 @@
             outputRendered.classList.add('hidden');
         };
 
+        let zoomScale = 1.0;
+        const zoomCanvas = document.getElementById('pdf-viewer-canvas');
+        const zoomLevelEl = document.getElementById('pdf-zoom-level');
+        const zoomInBtn = document.getElementById('pdf-zoom-in');
+        const zoomOutBtn = document.getElementById('pdf-zoom-out');
+        const zoomResetBtn = document.getElementById('pdf-zoom-reset');
+
+        function updateZoom(newScale) {
+            zoomScale = Math.max(0.4, Math.min(3.0, newScale));
+            if (zoomCanvas) zoomCanvas.style.transform = `scale(${zoomScale})`;
+            if (zoomLevelEl) zoomLevelEl.textContent = `${Math.round(zoomScale * 100)}%`;
+        }
+
+        if (zoomInBtn) zoomInBtn.onclick = () => updateZoom(zoomScale + 0.25);
+        if (zoomOutBtn) zoomOutBtn.onclick = () => updateZoom(zoomScale - 0.25);
+        if (zoomResetBtn) zoomResetBtn.onclick = () => updateZoom(1.0);
+
+        function renderSvgLayoutOverlay(data) {
+            const imgEl = document.getElementById('pdf-page-img');
+            const svgEl = document.getElementById('pdf-svg-overlay');
+            const placeholderEl = document.getElementById('pdf-viewer-placeholder');
+            const inspectBanner = document.getElementById('pdf-box-inspect-banner');
+
+            if (!data || !data.page_image_base64) {
+                if (imgEl) imgEl.classList.add('hidden');
+                if (svgEl) svgEl.classList.add('hidden');
+                if (placeholderEl) {
+                    placeholderEl.classList.remove('hidden');
+                    placeholderEl.textContent = 'No page pixmap image returned for this engine/page.';
+                }
+                return;
+            }
+
+            if (placeholderEl) placeholderEl.classList.add('hidden');
+            if (imgEl) {
+                imgEl.src = data.page_image_base64;
+                imgEl.classList.remove('hidden');
+            }
+
+            if (!svgEl) return;
+            svgEl.classList.remove('hidden');
+
+            const pWidth = data.page_width || 612.0;
+            const pHeight = data.page_height || 792.0;
+
+            svgEl.setAttribute('viewBox', `0 0 ${pWidth} ${pHeight}`);
+
+            const boxes = data.layout_boxes || [];
+            let svgMarkup = '';
+
+            const getColorConfig = (type) => {
+                switch ((type || '').toLowerCase()) {
+                    case 'heading':
+                        return { stroke: '#a855f7', fill: 'rgba(168, 85, 247, 0.22)', badge: '#9333ea' };
+                    case 'table':
+                        return { stroke: '#3b82f6', fill: 'rgba(59, 130, 246, 0.22)', badge: '#2563eb' };
+                    case 'callout':
+                        return { stroke: '#f59e0b', fill: 'rgba(245, 158, 11, 0.22)', badge: '#d97706' };
+                    case 'caption':
+                        return { stroke: '#ec4899', fill: 'rgba(236, 72, 153, 0.22)', badge: '#db2777' };
+                    case 'list':
+                        return { stroke: '#14b8a6', fill: 'rgba(20, 184, 166, 0.22)', badge: '#0d9488' };
+                    default:
+                        return { stroke: '#10b981', fill: 'rgba(16, 185, 129, 0.16)', badge: '#059669' };
+                }
+            };
+
+            boxes.forEach((b) => {
+                const order = b.order || 1;
+                const bType = (b.type || 'paragraph').toLowerCase();
+                const normBbox = b.bbox || [0, 0, 1, 1];
+                const x0 = normBbox[0] * pWidth;
+                const y0 = normBbox[1] * pHeight;
+                const x1 = normBbox[2] * pWidth;
+                const y1 = normBbox[3] * pHeight;
+                const w = Math.max(8, x1 - x0);
+                const h = Math.max(8, y1 - y0);
+
+                const c = getColorConfig(bType);
+                const labelText = b.label || `${bType} #${order}`;
+
+                const badgeW = Math.min(32, Math.max(22, String(order).length * 9 + 10));
+                const badgeH = 18;
+                const bx = x0;
+                const by = Math.max(0, y0 - badgeH / 2);
+
+                svgMarkup += `
+                    <g class="layout-box-group pointer-events-auto cursor-pointer transition-opacity hover:opacity-90"
+                       data-order="${order}" data-type="${escapeHTML(bType)}" data-label="${escapeHTML(labelText)}">
+                        <rect x="${x0}" y="${y0}" width="${w}" height="${h}"
+                              fill="${c.fill}" stroke="${c.stroke}" stroke-width="2.5" rx="3" />
+                        <rect x="${bx}" y="${by}" width="${badgeW}" height="${badgeH}"
+                              fill="${c.badge}" rx="4" />
+                        <text x="${bx + badgeW / 2}" y="${by + 13}"
+                              fill="#ffffff" font-size="11" font-weight="bold" text-anchor="middle" font-family="sans-serif">#${order}</text>
+                        <title>#${order} [${bType.toUpperCase()}]: ${escapeHTML(labelText)}</title>
+                    </g>
+                `;
+            });
+
+            svgEl.innerHTML = svgMarkup;
+
+            svgEl.querySelectorAll('.layout-box-group').forEach((group) => {
+                const showInfo = () => {
+                    const order = group.dataset.order;
+                    const type = group.dataset.type;
+                    const label = group.dataset.label;
+                    if (inspectBanner) {
+                        inspectBanner.classList.remove('hidden');
+                        inspectBanner.innerHTML = `
+                            <span class="text-brand-300 font-bold">Reading Order #${escapeHTML(order)}</span> |
+                            <span class="text-emerald-400 font-bold">${escapeHTML(type.toUpperCase())}</span>:
+                            <span class="text-gray-200">${escapeHTML(label)}</span>
+                        `;
+                    }
+                };
+                group.addEventListener('mouseenter', showInfo);
+                group.addEventListener('click', showInfo);
+            });
+        }
+
         async function loadPdfOptions() {
             try {
                 const res = await fetch('/api/sources/test_pdf_extract', {
@@ -228,6 +389,8 @@
                 const data = await res.json();
 
                 if (data.status === 'success') {
+                    renderSvgLayoutOverlay(data);
+
                     metaBox.innerHTML = `
                         <div class="space-y-1.5">
                             <p><strong class="text-brand-300">File Name:</strong> ${escapeHTML(data.file_name)}</p>
@@ -236,6 +399,7 @@
                             <p><strong class="text-brand-300">Engine Selected:</strong> ${escapeHTML(String(data.engine || '').toUpperCase())}</p>
                             ${data.heading_path ? `<p><strong class="text-brand-300">Detected Heading Path:</strong> <span class="text-emerald-400 font-mono">${escapeHTML(data.heading_path)}</span></p>` : ''}
                             ${data.subheading ? `<p><strong class="text-brand-300">Subheading:</strong> ${escapeHTML(data.subheading)}</p>` : ''}
+                            <p><strong class="text-brand-300">Layout Elements Detected:</strong> ${(data.layout_boxes || []).length} boxes</p>
                             <p><strong class="text-brand-300">Character Count:</strong> ${(data.extracted_text || '').length} chars</p>
                             <div class="pt-2">
                                 <a href="#" class="citation-link citation-pdf secondary-btn px-3 py-1.5 rounded-lg text-xs inline-flex items-center gap-1 no-underline"

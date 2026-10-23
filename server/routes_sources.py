@@ -535,7 +535,22 @@ async def run_indexing() -> None:
 
                             try:
                                 sections = []
-                                if pdf_engine == "docling":
+                                if pdf_engine == "docling_v2":
+                                    try:
+                                        from parsers.docling_v2_parser import (
+                                            extract_pdf_structure,
+                                        )
+
+                                        sections = await asyncio.to_thread(
+                                            extract_pdf_structure, str(file_path)
+                                        )
+                                    except Exception as d_err:
+                                        logger.warning(
+                                            "Docling v2 extraction failed for %s: %s",
+                                            file_path,
+                                            d_err,
+                                        )
+                                elif pdf_engine == "docling":
                                     try:
                                         from parsers.docling_parser import (
                                             extract_pdf_structure,
@@ -1055,7 +1070,27 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
         heading_path = ""
         subheading = ""
 
-        if engine_used == "docling":
+        page_image_base64 = ""
+        layout_boxes = []
+        hierarchy_tree = []
+        page_width = 612.0
+        page_height = 792.0
+
+        if engine_used == "docling_v2":
+            import parsers.docling_v2_parser as docling_v2_ext
+
+            res = docling_v2_ext.extract_page_with_docling_v2(
+                str(target_path), page_num, default_title=target_path.stem
+            )
+            extracted_text = res.get("extracted_text", "") or res.get("text", "")
+            heading_path = res.get("heading_path", target_path.stem)
+            subheading = res.get("subheading", target_path.stem)
+            page_image_base64 = res.get("page_image_base64", "")
+            layout_boxes = res.get("layout_boxes", [])
+            hierarchy_tree = res.get("hierarchy_tree", [])
+            page_width = res.get("page_width", 612.0)
+            page_height = res.get("page_height", 792.0)
+        elif engine_used == "docling":
             extracted_text = docling_ext.extract_structured_layout(
                 str(target_path), page_num
             )
@@ -1064,6 +1099,11 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
             )
             heading_path = res.get("heading_path", target_path.stem)
             subheading = res.get("subheading", target_path.stem)
+            page_image_base64 = res.get("page_image_base64", "")
+            layout_boxes = res.get("layout_boxes", [])
+            hierarchy_tree = res.get("hierarchy_tree", [])
+            page_width = res.get("page_width", 612.0)
+            page_height = res.get("page_height", 792.0)
         elif engine_used == "headings":
             res = extract_page_with_adaptive_layout(
                 str(target_path), page_num, default_title=target_path.stem, promote_headings=True
@@ -1071,6 +1111,11 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
             extracted_text = res.get("extracted_text", "")
             heading_path = res.get("heading_path", target_path.stem)
             subheading = res.get("subheading", target_path.stem)
+            page_image_base64 = res.get("page_image_base64", "")
+            layout_boxes = res.get("layout_boxes", [])
+            hierarchy_tree = res.get("hierarchy_tree", [])
+            page_width = res.get("page_width", 612.0)
+            page_height = res.get("page_height", 792.0)
         else:
             engine_used = "fitz"
             res = extract_page_with_adaptive_layout(
@@ -1079,6 +1124,11 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
             extracted_text = res.get("extracted_text", "")
             heading_path = res.get("heading_path", target_path.stem)
             subheading = res.get("subheading", target_path.stem)
+            page_image_base64 = res.get("page_image_base64", "")
+            layout_boxes = res.get("layout_boxes", [])
+            hierarchy_tree = res.get("hierarchy_tree", [])
+            page_width = res.get("page_width", 612.0)
+            page_height = res.get("page_height", 792.0)
 
         return {
             "status": "success",
@@ -1091,6 +1141,11 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
             "subheading": subheading,
             "extracted_text": extracted_text,
             "available_pdfs": available_pdfs,
+            "page_image_base64": page_image_base64,
+            "layout_boxes": layout_boxes,
+            "hierarchy_tree": hierarchy_tree,
+            "page_width": page_width,
+            "page_height": page_height,
         }
     except Exception as exc:
         logger.error("test_pdf_extract error: %s", exc)
