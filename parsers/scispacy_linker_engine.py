@@ -370,22 +370,29 @@ def get_ontology_files_status() -> Dict[str, Any]:
         ontologies_status[kb_key] = {
             "id": kb_key,
             "name": meta["name"],
+            "detected": has_jsonl or has_aliases,
             "ready_to_index": has_jsonl or has_aliases,
             "has_jsonl": has_jsonl,
             "jsonl_path": str(jsonl_path) if jsonl_path else None,
+            "has_concept_aliases": has_aliases,
             "has_aliases_json": has_aliases,
+            "has_tfidf_vectorizer": has_tfidf,
+            "has_sparse_matrix": has_tfidf,
             "has_tfidf": has_tfidf,
             "has_nmslib": has_nmslib,
+            "has_nmslib_index": has_nmslib,
             "folder_path": str(folder) if folder else None,
         }
 
-    tui_tree_exists = any(
-        p.exists()
-        for p in (
-            KBS_DIR / "umls_semantic_type_tree.tsv",
-            LINKERS_DIR / "umls_semantic_type_tree.tsv",
-        )
-    )
+    tui_path = KBS_DIR / "umls_semantic_type_tree.tsv"
+    if not tui_path.exists():
+        tui_path = LINKERS_DIR / "umls_semantic_type_tree.tsv"
+    tui_tree_exists = tui_path.exists()
+    tui_tree_dict = {
+        "detected": tui_tree_exists,
+        "path": str(tui_path) if tui_tree_exists else None,
+    }
+    ontologies_status["semantic_type_tree"] = tui_tree_dict
 
     indexed_concepts = 0
     indexed_aliases = 0

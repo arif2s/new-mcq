@@ -599,10 +599,10 @@
       listContainer.innerHTML = kbs
         .map((key) => {
           const info = ontologies[key] || {};
-          const detected = Boolean(info.detected);
-          const hasAliases = Boolean(info.has_concept_aliases);
-          const hasJsonl = Boolean(info.jsonl_path);
-          const hasSparse = Boolean(info.has_sparse_matrix);
+          const detected = Boolean(info.detected || info.ready_to_index);
+          const hasAliases = Boolean(info.has_concept_aliases || info.has_aliases_json);
+          const hasJsonl = Boolean(info.jsonl_path || info.has_jsonl);
+          const hasSparse = Boolean(info.has_sparse_matrix || info.has_tfidf);
 
           return `
           <div class="p-3 rounded-xl border ${

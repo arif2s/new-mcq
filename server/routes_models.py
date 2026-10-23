@@ -414,6 +414,8 @@ def _inspect_ontology_sources() -> Dict[str, Any]:
         }
 
     tui_path = kbs_dir / "umls_semantic_type_tree.tsv"
+    if not tui_path.exists():
+        tui_path = LINKERS_DIR / "umls_semantic_type_tree.tsv"
     results["semantic_type_tree"] = {
         "detected": tui_path.exists(),
         "path": str(tui_path) if tui_path.exists() else None,
