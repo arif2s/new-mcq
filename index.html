@@ -3,18 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta
-      name="description"
-      content="Medisearch AI — Offline-First Clinical MCQ Hub, Knowledge Synthesizer, and RAG Vault for Medical Education."
-    />
+    <meta name="description" content="Medisearch AI — Offline-First Clinical MCQ Hub, Knowledge Synthesizer, and RAG Vault for Medical Education." />
     <meta name="theme-color" content="#0f172a" />
     <title>Medisearch AI — Clinical MCQ Hub</title>
 
-    <link
-      rel="icon"
-      type="image/svg+xml"
-      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>"
-    />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>" />
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
 
     <link rel="stylesheet" href="/css/main.css" />
@@ -47,27 +40,25 @@
       onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js';"
     ></script>
     <script>
-      window.__applyTailwindConfig = function () {
-        if (window.tailwind) {
-          window.tailwind.config = {
-            theme: {
-              extend: {
-                colors: {
-                  brand: { 300: "#8b5cf6", 400: "#7c3aed", 500: "#6d28d9", 600: "#5b21b6" },
-                  success: { 300: "#86efac", 400: "#4ade80", 500: "#22c55e", 600: "#16a34a", 700: "#15803d" },
-                  warning: { 200: "#fef08a", 300: "#fde047", 400: "#facc15", 500: "#eab308", 600: "#ca8a04" },
-                  danger: { 300: "#fca5a5", 400: "#f87171", 500: "#ef4444", 600: "#dc2626" }
-                }
+      window.tailwind = {
+        config: {
+          theme: {
+            extend: {
+              colors: {
+                brand: { 300: "#8b5cf6", 400: "#7c3aed", 500: "#6d28d9", 600: "#5b21b6" },
+                success: { 300: "#86efac", 400: "#4ade80", 500: "#22c55e", 600: "#16a34a", 700: "#15803d" },
+                warning: { 200: "#fef08a", 300: "#fde047", 400: "#facc15", 500: "#eab308", 600: "#ca8a04" },
+                danger: { 300: "#fca5a5", 400: "#f87171", 500: "#ef4444", 600: "#dc2626" }
               }
             }
-          };
+          }
         }
       };
     </script>
     <script
-      src="/vendor/tailwind.min.js"
-      onload="window.__applyTailwindConfig()"
-      onerror="this.onerror=function(){this.onerror=null;this.src='https://cdn.tailwindcss.com';};this.src='/vendor/tailwind.js';"
+      src="/vendor/tailwind.js"
+      defer
+      onerror="this.onerror=null;this.src='https://cdn.tailwindcss.com';"
     ></script>
   </head>
 
@@ -319,7 +310,7 @@
             <!-- Central Sub-View Expansion Detail Container -->
             <div id="test-feature-detail-container" class="hidden mt-6">
               <div class="flex items-center justify-between mb-6 pb-4 border-b border-gray-700/50">
-                <button type="button" id="test-feature-back-btn" class="secondary-btn text-xs px-4 py-2 flex items-center gap-2 rounded-xl cursor-pointer">
+                <button type="button" id="test-feature-back-btn" class="secondary-btn text-xs px-4 py-2 flex items-center gap-2 rounded-xl">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
                   Back to Test Features Grid
                 </button>
@@ -349,7 +340,7 @@
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
                 Delete Selected (<span id="hub-delete-count">0</span>)
               </button>
-              <button type="button" id="hub-edit-btn" class="p-2 rounded-lg transition-colors secondary-btn cursor-pointer" aria-label="Select Cards to Delete" title="Select Cards to Delete">
+              <button type="button" id="hub-edit-btn" class="p-2 rounded-lg transition-colors secondary-btn" aria-label="Select Cards to Delete" title="Select Cards to Delete">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
               </button>
             </div>
@@ -415,12 +406,12 @@
               </div>
 
               <div class="mt-8 pt-6 border-t border-gray-800 flex justify-between items-center mb-8">
-                <button type="button" id="hub-carousel-prev" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer">
+                <button type="button" id="hub-carousel-prev" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg">
                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"></polyline></svg>
                   Previous
                 </button>
                 <div class="text-xs text-muted hidden md:block">Use Left/Right arrow keys to navigate</div>
-                <button type="button" id="hub-carousel-next" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer">
+                <button type="button" id="hub-carousel-next" class="secondary-btn flex items-center gap-2 px-4 py-2 rounded-lg">
                   Next
                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
                 </button>
@@ -443,7 +434,7 @@
                 </p>
               </div>
 
-              <button type="button" id="start-indexing-btn" class="primary-btn flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all disabled:opacity-40 shadow-lg cursor-pointer">
+              <button type="button" id="start-indexing-btn" class="primary-btn flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all disabled:opacity-40 shadow-lg">
                 <svg id="indexing-icon-play" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                 <svg id="indexing-icon-spin" class="animate-spin hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                 <span id="indexing-btn-text">Build/Update Tantivy Index</span>
@@ -591,7 +582,7 @@
             </div>
 
             <div class="card glass-card">
-              <div class="flex justify-between items-center mb-10 flex-wrap gap-2">
+              <div class="flex justify-between items-center mb-10">
                 <h3 id="queue-total">Recent Tasks</h3>
                 <div class="flex gap-2">
                   <button type="button" id="queue-retry-btn" class="secondary-btn text-xs cursor-pointer">Retry Failed</button>
@@ -662,7 +653,7 @@
               </div>
 
               <!-- Database Build Progress (Collapsible) -->
-              <div class="progress-container mt-3" id="build-progress-container" style="display: none;">
+              <div class="progress-container mt-3 hidden" id="build-progress-container">
                 <div class="progress-bar-bg h-2 rounded-full glass-panel overflow-hidden">
                   <div class="progress-bar-fill h-full bg-brand-500 transition-all duration-300" id="build-progress" style="width: 0%"></div>
                 </div>
@@ -929,7 +920,7 @@
     </div>
 
     <!-- TOPIC VERIFICATION POPUP MODAL -->
-    <div id="topic-editor-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 150;">
+    <div id="topic-editor-modal" class="modal-backdrop fade-enter" style="display: none;" style="z-index: 150;">
       <div class="glass-modal w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl relative text-left p-0">
         <!-- Populated dynamically by window.openTopicVerificationModal in quiz.js -->
         <div id="topic-editor-questions" class="p-6"></div>
@@ -942,14 +933,14 @@
         <h3>Database Index Not Built</h3>
         <p>Please configure your knowledge sources in the RAG Vault or Settings panel and build the index before searching.</p>
         <div class="modal-actions mt-24 flex gap-4 justify-end">
-          <button type="button" id="close-modal-btn" class="secondary-btn cursor-pointer">Close</button>
-          <button type="button" id="go-to-settings-btn" class="primary-btn cursor-pointer">Go to Settings</button>
+          <button type="button" id="close-modal-btn" class="secondary-btn">Close</button>
+          <button type="button" id="go-to-settings-btn" class="primary-btn">Go to Settings</button>
         </div>
       </div>
     </div>
 
     <!-- REGENERATE CHOICE MODAL -->
-    <div id="regenerate-confirm-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 200;">
+    <div id="regenerate-confirm-modal" class="modal-backdrop fade-enter" style="display: none;" style="z-index: 200;">
       <div class="modal glass-modal text-left">
         <h3 id="regen-modal-title" class="text-lg font-bold mb-2">Generate Topic Data</h3>
         <p id="regen-modal-desc" class="text-sm text-muted mb-6">Choose whether to process all topics or only topics without generated data.</p>
@@ -968,7 +959,7 @@
     </div>
 
     <!-- HELP MODAL -->
-    <div id="help-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 200;">
+    <div id="help-modal" class="modal-backdrop fade-enter" style="display: none;" style="z-index: 200;">
       <div class="modal glass-modal w-full max-w-3xl max-h-[85vh] flex flex-col text-left p-0">
         <div class="flex items-center justify-between p-4 border-b border-gray-700 glass-panel rounded-t-24">
           <h2 class="text-xl font-bold flex items-center gap-2">📚 Help &amp; Platform Guide</h2>
