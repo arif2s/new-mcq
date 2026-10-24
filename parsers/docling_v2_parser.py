@@ -471,11 +471,11 @@ class AdaptivePdfLayoutEngine:
             gap_x = s["x0"] - prev_s["x1"]
 
             crosses_rule = any(
-                vr[0] >= prev_s["x1"] - 1.0 and vr[0] <= s["x0"] + 1.0
+                vr[0] >= prev_s["x1"] - 1.5 and vr[0] <= s["x0"] + 1.5
                 for vr in self.vertical_rules
             )
 
-            if crosses_rule or gap_x > 2.2 * self.mu_w:
+            if crosses_rule or gap_x >= 1.75 * self.mu_w:
                 segments.append([s])
             else:
                 segments[-1].append(s)
@@ -525,14 +525,16 @@ class AdaptivePdfLayoutEngine:
 
         for line in lines:
             line_w = line["x1"] - line["x0"]
-            is_heading_candidate = line["size"] >= 1.15 * self.mu_size or (line["is_bold"] and line["size"] >= self.mu_size)
-            crosses_gutter = any(line["x0"] <= g[0] and line["x1"] >= g[1] for g in gutters)
-            if (line_w >= 0.70 * self.page_width or crosses_gutter) and is_heading_candidate:
+            l_bbox = line.get("bbox", (line["x0"], line["y0"], line["x1"], line["y1"]))
+            in_banner = self._is_in_header_banner(l_bbox)
+            is_heading_candidate = line["size"] >= 1.08 * self.mu_size or (line["is_bold"] and line["size"] >= self.mu_size) or in_banner
+            crosses_gutter = any(line["x0"] < (g[0] + g[1]) / 2.0 and line["x1"] > (g[0] + g[1]) / 2.0 for g in gutters)
+            if (line_w >= 0.55 * self.page_width or crosses_gutter or in_banner) and is_heading_candidate:
                 spanning_y_dividers.append(line["y0"])
 
         for nt in non_text:
             nt_w = nt.get("x1", 0) - nt.get("x0", 0)
-            if nt_w >= 0.65 * self.page_width:
+            if nt_w >= 0.55 * self.page_width:
                 spanning_y_dividers.append(nt["y0"])
 
         spanning_y_dividers.sort()
@@ -593,8 +595,8 @@ class AdaptivePdfLayoutEngine:
         in_gutter = False
         g_start = 0
 
-        x_min = int(self.page_width * 0.12)
-        x_max = int(self.page_width * 0.88)
+        x_min = int(self.page_width * 0.08)
+        x_max = int(self.page_width * 0.92)
 
         for x in range(x_min, x_max):
             if hist[x] <= 1:
@@ -640,11 +642,14 @@ class AdaptivePdfLayoutEngine:
             curr_bold = curr.get("is_bold", False)
             curr_lead_bold = bool(curr.get("lead_in_bold"))
 
+            curr_bbox = curr.get("bbox", (curr.get("x0", 0), curr.get("y0", 0), curr.get("x1", 0), curr.get("y1", 0)))
+            curr_in_banner = self._is_in_header_banner(curr_bbox)
+
             is_candidate = (
                 not curr_lead_bold
                 and not list_start_re.match(curr_text)
-                and (curr_sz >= 1.06 * self.mu_size or curr_bold or curr_text.isupper())
-                and len(curr_text) <= 95
+                and (curr_sz >= 1.04 * self.mu_size or curr_bold or curr_text.isupper() or curr_in_banner)
+                and len(curr_text) <= 120
                 and not curr_text.endswith((".", ";", "?", "!"))
             )
 
@@ -659,16 +664,19 @@ class AdaptivePdfLayoutEngine:
                     nxt_text = nxt.get("text", "").strip()
                     nxt_sz = nxt.get("size", self.mu_size)
                     nxt_bold = nxt.get("is_bold", False)
+                    nxt_bbox = nxt.get("bbox", (nxt.get("x0", 0), nxt.get("y0", 0), nxt.get("x1", 0), nxt.get("y1", 0)))
+                    nxt_in_banner = self._is_in_header_banner(nxt_bbox)
                     v_gap = nxt.get("y0", 0.0) - curr.get("y1", 0.0)
                     v_pitch = nxt.get("y0", 0.0) - curr.get("y0", 0.0)
 
                     same_style = (
-                        abs(curr_sz - nxt_sz) <= 0.5
-                        and curr_bold == nxt_bold
-                        and curr_text.isupper() == nxt_text.isupper()
+                        abs(curr_sz - nxt_sz) <= 0.8
+                        and (curr_bold == nxt_bold or curr_in_banner or nxt_in_banner)
                         and not nxt.get("lead_in_bold")
                         and not list_start_re.match(nxt_text)
                     )
+                    if not (curr_in_banner or nxt_in_banner):
+                        same_style = same_style and (curr_text.isupper() == nxt_text.isupper() or curr_bold)
                     tight_vertical = (
                         (-0.85 * max(curr_sz, self.mu_h) <= v_gap <= 0.85 * max(curr_sz, self.mu_h))
                         or (0.0 <= v_pitch <= 1.5 * max(curr_sz, self.mu_h))
@@ -739,6 +747,17 @@ class AdaptivePdfLayoutEngine:
         # 2. Explicit Structural & Numbered Section Prefixes
         if re.match(r"^(CHAPTER|PART|UNIT|MODULE|SECTION)\s+([0-9]+|[IVXLCDM]+)\b", l_text, re.IGNORECASE):
             return 1
+
+        _MED_SECTION_HEADINGS = (
+            "PATHOPHYSIOLOGY", "CLINICAL MANIFESTATIONS", "DIAGNOSIS AND TREATMENT",
+            "ETIOLOGY AND RISK FACTORS", "ETIOLOGY", "MANAGEMENT", "OVERVIEW",
+            "EPIDEMIOLOGY", "PREVENTION", "DIAGNOSTIC WORKUP", "COMPLICATIONS",
+            "PATIENT EVALUATION", "TREATMENT", "CLINICAL FEATURES", "PATHOGENESIS",
+        )
+        norm_upper_text = re.sub(r"\s+", " ", l_text.upper()).strip(" :.")
+        if any(norm_upper_text == h_kw or norm_upper_text.startswith(h_kw) for h_kw in _MED_SECTION_HEADINGS):
+            if is_bold or sz >= 1.02 * self.mu_size or in_banner:
+                return 2
 
         if is_bold or sz >= 1.05 * self.mu_size or in_banner:
             if re.match(r"^\d{1,2}\.\d{1,2}\.\d{1,2}\.?\s+[A-Z]", l_text):
