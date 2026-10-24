@@ -97,7 +97,12 @@ def extract_page_slice(file_path: Union[str, Path], page_number: int) -> str:
     return _cached_extract_page_slice(norm_path, p_num)
 
 
-def extract_page_with_headings(page: Any, default_title: str = "") -> Dict[str, Any]:
+def extract_page_with_headings(
+    page: Any,
+    default_title: str = "",
+    initial_heading_stack: Optional[Dict[int, str]] = None,
+    page_toc: Optional[List[Tuple[int, str]]] = None,
+) -> Dict[str, Any]:
     """
     Extracts page text and section headings via Stage 3.1-3.6 Adaptive Multi-Column Layout Engine.
     Filters running headers/footers and returns dictionaries conforming to ChunkDict.
@@ -115,12 +120,19 @@ def extract_page_with_headings(page: Any, default_title: str = "") -> Dict[str, 
         file_path = str(page.parent.name)
 
     try:
-        engine = AdaptivePdfLayoutEngine(page, default_title=clean_default)
-        res = engine.run(promote_headings=True)
+        engine = AdaptivePdfLayoutEngine(
+            page,
+            default_title=clean_default,
+            initial_heading_stack=initial_heading_stack,
+            page_toc=page_toc,
+        )
+        res = engine.run(promote_headings=False)
 
         cleaned_text = res.get("extracted_text", "")
         heading_path = res.get("heading_path", clean_default or "Untitled")
         subheading = res.get("subheading", clean_default or "Untitled")
+        main_heading = res.get("main_heading", clean_default or "Untitled")
+        active_stack = res.get("active_heading_stack", dict(initial_heading_stack or {}))
         title_str = clean_default or "Untitled"
 
         text_len = len(cleaned_text)
@@ -137,9 +149,11 @@ def extract_page_with_headings(page: Any, default_title: str = "") -> Dict[str, 
             "extracted_text": cleaned_text,
             "snippet": snippet,
             "title": title_str,
+            "main_heading": main_heading,
             "heading": heading_path,
             "heading_path": heading_path,
             "subheading": subheading,
+            "active_heading_stack": active_stack,
             "source": "pdf",
             "file_path": file_path,
             "page": page_num,
@@ -172,9 +186,11 @@ def extract_page_with_headings(page: Any, default_title: str = "") -> Dict[str, 
             "extracted_text": fallback,
             "snippet": fallback[:400] + ("..." if text_len > 400 else ""),
             "title": title_str,
+            "main_heading": title_str,
             "heading": title_str,
             "heading_path": title_str,
             "subheading": title_str,
+            "active_heading_stack": dict(initial_heading_stack or {}),
             "source": "pdf",
             "file_path": file_path,
             "page": page_num,
@@ -207,6 +223,7 @@ def extract_pdf_pages(file_path: Union[str, Path], default_title: str = "") -> L
     sections: List[Dict[str, Any]] = []
 
     try:
+        toc_by_page: Dict[int, List[Tuple[int, str]]] = {}
         with fitz.open(norm_path) as doc:
             if doc.is_encrypted:
                 try:
@@ -215,16 +232,30 @@ def extract_pdf_pages(file_path: Union[str, Path], default_title: str = "") -> L
                     pass
 
             page_count = int(doc.page_count)
+            try:
+                for lvl, title_str, p_num in doc.get_toc():
+                    if p_num >= 1 and title_str:
+                        toc_by_page.setdefault(int(p_num), []).append((int(lvl), str(title_str).strip()))
+            except Exception:
+                pass
+
+            running_stack: Dict[int, str] = {}
             for idx in range(page_count):
+                page_num = idx + 1
                 with _FITZ_LOCK:
                     page = doc.load_page(idx)
-                    page_data = extract_page_with_headings(page, default_title=title)
+                    page_data = extract_page_with_headings(
+                        page,
+                        default_title=title,
+                        initial_heading_stack=running_stack,
+                        page_toc=toc_by_page.get(page_num, []),
+                    )
 
+                running_stack = page_data.get("active_heading_stack", running_stack)
                 page_text = page_data["text"]
                 if not page_text.strip():
                     continue
 
-                page_num = idx + 1
                 raw_key = f"{norm_path}_{page_num}_0_{page_text[:50]}"
                 chunk_id = hashlib.md5(raw_key.encode("utf-8"), usedforsecurity=False).hexdigest()
 
@@ -236,6 +267,7 @@ def extract_pdf_pages(file_path: Union[str, Path], default_title: str = "") -> L
                     "title": title,
                     "source_article": title,
                     "main_topic": title,
+                    "main_heading": page_data.get("main_heading", title),
                     "heading": page_data["heading"],
                     "heading_path": page_data["heading_path"],
                     "subheading": page_data["subheading"],

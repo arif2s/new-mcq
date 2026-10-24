@@ -113,17 +113,25 @@ def _point_in_rect(x: float, y: float, rect: Tuple[float, float, float, float]) 
 class AdaptivePdfLayoutEngine:
     """
     Deterministic Adaptive Multi-Column Medical Layout Engine with Visual Context:
-    1. Per-page typography baseline (mu_w, mu_h, mu_size)
-    2. Vector graphic rulings (vertical barriers, horizontal zone splitters, shaded boxes)
+    1. Per-page typography baseline (mu_w, mu_h, mu_size) and heading size tiers
+    2. Vector graphic rulings (vertical barriers, horizontal zone splitters, banner frames)
     3. Structural element classification (tables, callout boxes, figure captions)
     4. Indentation profiling (first-line paragraph indents, multi-level list nesting)
     5. Constrained Topological DAG reading order solver
     6. Multi-tier hierarchy depth recognition (H1-H4 + medical run-in headings)
     """
 
-    def __init__(self, page: Any, default_title: str = ""):
+    def __init__(
+        self,
+        page: Any,
+        default_title: str = "",
+        initial_heading_stack: Optional[Dict[int, str]] = None,
+        page_toc: Optional[List[Tuple[int, str]]] = None,
+    ):
         self.page = page
         self.default_title = str(default_title or "").strip() or "Untitled"
+        self.initial_heading_stack: Dict[int, str] = dict(initial_heading_stack or {})
+        self.page_toc: List[Tuple[int, str]] = list(page_toc or [])
         self.page_rect = (
             (0.0, 0.0, float(page.rect.width), float(page.rect.height))
             if hasattr(page, "rect") and page.rect
@@ -136,10 +144,12 @@ class AdaptivePdfLayoutEngine:
         self.mu_size: float = 10.0
         self.mu_h: float = 12.0
         self.mu_w: float = 5.0
+        self.heading_size_tiers: List[float] = []
 
         # Structural Containers
         self.vertical_rules: List[Tuple[float, float, float, float]] = []
         self.horizontal_rules: List[Tuple[float, float, float, float]] = []
+        self.header_banners: List[Tuple[float, float, float, float]] = []
         self.tables_markdown: List[Dict[str, Any]] = []
         self.callout_blocks: List[Dict[str, Any]] = []
         self.caption_blocks: List[Dict[str, Any]] = []
@@ -173,6 +183,24 @@ class AdaptivePdfLayoutEngine:
 
         # 8. Hierarchical classification, run-in lead-in extraction, list formatting, and Markdown construction
         return self._format_document(ordered_blocks, promote_headings=promote_headings)
+
+    def _compute_heading_size_tiers(self, spans: List[Dict[str, Any]]) -> None:
+        """Clusters distinct font sizes above body median into descending tiers for relative H1-H3 ranking."""
+        candidate_sizes = sorted(
+            {
+                round(s["size"], 1)
+                for s in spans
+                if not s.get("is_marginal")
+                and (s["size"] >= 1.04 * self.mu_size or s.get("is_bold"))
+                and len(s.get("text", "").strip()) >= 3
+            },
+            reverse=True,
+        )
+        tiers: List[float] = []
+        for sz in candidate_sizes:
+            if not tiers or abs(tiers[-1] - sz) >= 0.45:
+                tiers.append(sz)
+        self.heading_size_tiers = tiers
 
     def _profile_page(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """Extracts text spans and drawing instructions, profiling body typography."""
@@ -225,7 +253,7 @@ class AdaptivePdfLayoutEngine:
                         "y1": y1,
                         "width": x1 - x0,
                         "height": y1 - y0,
-                        "is_bold": bool(flags & 2 or "bold" in font.lower()),
+                        "is_bold": bool(flags & 2 or "bold" in font.lower() or font.lower().endswith("bo") or "hebo" in font.lower()),
                         "is_italic": bool(flags & 1 or "italic" in font.lower() or "oblique" in font.lower()),
                         "is_marginal": is_marginal,
                     }
@@ -261,12 +289,15 @@ class AdaptivePdfLayoutEngine:
         self.mu_h = max(8.0, self.mu_h)
         self.mu_w = max(2.5, self.mu_w)
 
+        self._compute_heading_size_tiers(all_spans)
+
         return all_spans, drawings
 
     def _extract_rulings_and_frames(self, drawings: List[Dict[str, Any]]) -> None:
-        """Extracts vertical ruling lines (column dividers) and horizontal rulings."""
+        """Extracts vertical ruling lines (column dividers), horizontal rulings, and section banners."""
         for dw in drawings:
             rect = dw.get("rect")
+            fill = dw.get("fill")
             if not rect:
                 continue
             rx0, ry0, rx1, ry1 = float(rect[0]), float(rect[1]), float(rect[2]), float(rect[3])
@@ -280,6 +311,16 @@ class AdaptivePdfLayoutEngine:
             # Horizontal ruling line (zone boundary or header/footer separator)
             elif rh <= 3.0 and rw >= 0.20 * self.page_width:
                 self.horizontal_rules.append((rx0, ry0, rx1, ry1))
+
+            # Shallow section header banner background rectangles
+            if fill is not None and 1.0 * self.mu_h <= rh <= 3.2 * self.mu_h and rw >= 0.25 * self.page_width:
+                self.header_banners.append((rx0, ry0, rx1, ry1))
+
+    def _is_in_header_banner(self, bbox: Tuple[float, float, float, float]) -> bool:
+        """Checks if a text line sits inside a colored/shaded section header banner."""
+        cx = (bbox[0] + bbox[2]) * 0.5
+        cy = (bbox[1] + bbox[3]) * 0.5
+        return any(_point_in_rect(cx, cy, hb) for hb in self.header_banners)
 
     def _isolate_tables_and_callouts(
         self, spans: List[Dict[str, Any]], drawings: List[Dict[str, Any]]
@@ -334,7 +375,6 @@ class AdaptivePdfLayoutEngine:
                     if any(_rects_overlap(r_bbox, ez) for ez in self.exclusion_zones):
                         continue
 
-                    # Collect text spans strictly within the shaded box
                     box_spans = [
                         s for s in spans
                         if _point_in_rect((s["x0"] + s["x1"]) / 2, (s["y0"] + s["y1"]) / 2, r_bbox)
@@ -477,10 +517,8 @@ class AdaptivePdfLayoutEngine:
         if not lines:
             return sorted(non_text, key=lambda b: (b.get("y0", 0.0), b.get("x0", 0.0)))
 
-        # Detect vertical gutters
         gutters = self._detect_gutters(lines)
 
-        # Identify horizontal spanning element boundaries
         spanning_y_dividers: List[float] = []
         for hr in self.horizontal_rules:
             spanning_y_dividers.append(hr[1])
@@ -499,7 +537,6 @@ class AdaptivePdfLayoutEngine:
 
         spanning_y_dividers.sort()
 
-        # Slice all blocks into sequential horizontal zones
         all_blocks = list(lines) + list(non_text)
         all_blocks.sort(key=lambda b: (b.get("y0", 0.0), b.get("x0", 0.0)))
 
@@ -519,10 +556,11 @@ class AdaptivePdfLayoutEngine:
         if current_zone:
             zones.append(current_zone)
 
-        # Sort Column-First inside each zone
         ordered_blocks: List[Dict[str, Any]] = []
         for zone in zones:
             if not gutters or len(zone) <= 1:
+                for b in zone:
+                    b["col_idx"] = 0
                 ordered_blocks.extend(sorted(zone, key=lambda b: (b.get("y0", 0.0), b.get("x0", 0.0))))
             else:
                 cols: Dict[int, List[Dict[str, Any]]] = {}
@@ -532,6 +570,7 @@ class AdaptivePdfLayoutEngine:
                     for g_i, g in enumerate(gutters):
                         if bx_mid > g[1]:
                             col_idx = g_i + 1
+                    block["col_idx"] = col_idx
                     cols.setdefault(col_idx, []).append(block)
 
                 for c_k in sorted(cols.keys()):
@@ -569,41 +608,275 @@ class AdaptivePdfLayoutEngine:
                     if gw >= 2.0 * self.mu_w:
                         gutters.append((float(g_start), float(x)))
                     elif gw >= 0.85 * self.mu_w:
-                        # Validate if aligned with a vertical ruling line
                         mid_g = (g_start + x) / 2.0
                         if any(abs(mid_g - vr[0]) <= 3.5 for vr in self.vertical_rules):
                             gutters.append((float(g_start), float(x)))
 
         return gutters
 
+    def _merge_wrapped_headings(self, ordered_blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Merges multi-line wrapped headings of identical typography before level classification
+        so 2-line main headings are not split into separate H1/H2 entries.
+        """
+        if not ordered_blocks:
+            return []
+
+        merged: List[Dict[str, Any]] = []
+        i = 0
+        n = len(ordered_blocks)
+
+        list_start_re = re.compile(r"^([•▪▸◦‣⁃\-\*]|\d+[\.\)]|\([a-zA-Z0-9]+\))\s+")
+
+        while i < n:
+            curr = dict(ordered_blocks[i])
+            if curr.get("type", "text") != "text":
+                merged.append(curr)
+                i += 1
+                continue
+
+            curr_text = curr.get("text", "").strip()
+            curr_sz = curr.get("size", self.mu_size)
+            curr_bold = curr.get("is_bold", False)
+            curr_lead_bold = bool(curr.get("lead_in_bold"))
+
+            is_candidate = (
+                not curr_lead_bold
+                and not list_start_re.match(curr_text)
+                and (curr_sz >= 1.06 * self.mu_size or curr_bold or curr_text.isupper())
+                and len(curr_text) <= 95
+                and not curr_text.endswith((".", ";", "?", "!"))
+            )
+
+            if is_candidate:
+                while i + 1 < n:
+                    nxt = ordered_blocks[i + 1]
+                    if nxt.get("type", "text") != "text":
+                        break
+                    if nxt.get("col_idx", 0) != curr.get("col_idx", 0):
+                        break
+
+                    nxt_text = nxt.get("text", "").strip()
+                    nxt_sz = nxt.get("size", self.mu_size)
+                    nxt_bold = nxt.get("is_bold", False)
+                    v_gap = nxt.get("y0", 0.0) - curr.get("y1", 0.0)
+                    v_pitch = nxt.get("y0", 0.0) - curr.get("y0", 0.0)
+
+                    same_style = (
+                        abs(curr_sz - nxt_sz) <= 0.5
+                        and curr_bold == nxt_bold
+                        and curr_text.isupper() == nxt_text.isupper()
+                        and not nxt.get("lead_in_bold")
+                        and not list_start_re.match(nxt_text)
+                    )
+                    tight_vertical = (
+                        (-0.85 * max(curr_sz, self.mu_h) <= v_gap <= 0.85 * max(curr_sz, self.mu_h))
+                        or (0.0 <= v_pitch <= 1.5 * max(curr_sz, self.mu_h))
+                    )
+
+                    if same_style and tight_vertical and len(curr_text) + len(nxt_text) <= 160:
+                        curr_text = f"{curr_text} {nxt_text}"
+                        curr["text"] = curr_text
+                        curr["x0"] = min(curr["x0"], nxt["x0"])
+                        curr["y0"] = min(curr["y0"], nxt["y0"])
+                        curr["x1"] = max(curr["x1"], nxt["x1"])
+                        curr["y1"] = max(curr["y1"], nxt["y1"])
+                        curr["bbox"] = (curr["x0"], curr["y0"], curr["x1"], curr["y1"])
+                        i += 1
+                        if curr_text.endswith((".", ";", "?", "!")):
+                            break
+                    else:
+                        break
+
+            merged.append(curr)
+            i += 1
+
+        return merged
+
+    def _classify_heading_level(
+        self,
+        item: Dict[str, Any],
+        prev_y1: Optional[float] = None,
+        promote_headings: bool = False,
+    ) -> Optional[int]:
+        """
+        Determines exact heading hierarchy level:
+        - Level 1 (H1): Chapter / Part / Main Article Title
+        - Level 2 (H2): Major Section Heading
+        - Level 3 (H3): Subheading
+        - Level 4 (H4): Minor Sub-subheading
+        Returns None if the line is standard body text or a list item.
+        """
+        l_text = item.get("text", "").strip()
+        if not l_text or len(l_text) > 150 or len(l_text) < 2:
+            return None
+
+        # Never classify lines that are purely numbers or citations
+        if re.match(r"^[\d\s\.,\-–—\(\)\[\]]+$", l_text):
+            return None
+
+        sz = item.get("size", self.mu_size)
+        is_bold = item.get("is_bold", False)
+        is_italic = item.get("is_italic", False)
+        bbox = item.get("bbox", (0.0, 0.0, 0.0, 0.0))
+        line_w = bbox[2] - bbox[0]
+        is_spanning = line_w >= 0.60 * self.page_width
+        in_banner = self._is_in_header_banner(bbox)
+
+        alpha_chars = [c for c in l_text if c.isalpha()]
+        if not alpha_chars:
+            return None
+        upper_ratio = sum(1 for c in alpha_chars if c.isupper()) / len(alpha_chars)
+        is_all_caps = upper_ratio >= 0.85 and len(alpha_chars) >= 3
+
+        # 1. Ground-Truth PDF Table of Contents (TOC) Match
+        norm_line = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", l_text.lower())).strip()
+        for toc_lvl, toc_title in self.page_toc:
+            norm_toc = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", toc_title.lower())).strip()
+            if norm_toc and (norm_line == norm_toc or norm_line.startswith(norm_toc) or norm_toc.startswith(norm_line)):
+                return min(max(int(toc_lvl), 1), 4)
+
+        # 2. Explicit Structural & Numbered Section Prefixes
+        if re.match(r"^(CHAPTER|PART|UNIT|MODULE|SECTION)\s+([0-9]+|[IVXLCDM]+)\b", l_text, re.IGNORECASE):
+            return 1
+
+        if is_bold or sz >= 1.05 * self.mu_size or in_banner:
+            if re.match(r"^\d{1,2}\.\d{1,2}\.\d{1,2}\.?\s+[A-Z]", l_text):
+                return 4
+            if re.match(r"^(\d{1,2}\.\d{1,2}\.?|[A-Z]\.)\s+[A-Z]", l_text):
+                return 3
+            if re.match(r"^([IVXLCDM]+\.|\d{1,2}\.)\s+[A-Z][A-Za-z]", l_text) and len(l_text) <= 95:
+                if not l_text.endswith("."):
+                    return 2
+
+        if l_text.endswith((".", ";", ",")) and sz < 1.25 * self.mu_size and not in_banner:
+            return None
+
+        v_gap = (bbox[1] - prev_y1) if prev_y1 is not None else (1.5 * self.mu_h)
+        has_top_spacing = v_gap >= 0.25 * self.mu_h
+
+        tier_idx = None
+        for idx, t_sz in enumerate(self.heading_size_tiers):
+            if abs(sz - t_sz) <= 0.45:
+                tier_idx = idx
+                break
+
+        # 3. H1: Chapter / Article Main Title
+        if sz >= 1.40 * self.mu_size:
+            return 1
+        if sz >= 1.22 * self.mu_size and (is_spanning or bbox[1] < 0.22 * self.page_height) and tier_idx == 0:
+            return 1
+
+        # 4. H2: Main Section Heading
+        if sz >= 1.18 * self.mu_size and (is_bold or is_all_caps or in_banner):
+            return 2
+        if in_banner and (is_spanning or is_all_caps or sz >= 1.05 * self.mu_size):
+            return 2
+        if is_bold and is_all_caps and sz >= 1.02 * self.mu_size and len(l_text) <= 90:
+            return 2
+        if is_bold and is_spanning and sz >= 1.08 * self.mu_size and len(l_text) <= 100:
+            return 2
+
+        # 5. H3: Subheading
+        min_h3_scale = 1.02 if promote_headings else 1.04
+        if in_banner:
+            return 3
+        if is_bold and sz >= min_h3_scale * self.mu_size and not is_italic and len(l_text) <= 90:
+            return 3
+        if is_all_caps and (is_bold or sz >= 1.0 * self.mu_size) and len(l_text) <= 75 and has_top_spacing:
+            return 3
+        if is_bold and not is_italic and sz >= 0.98 * self.mu_size and len(l_text) <= 70 and has_top_spacing:
+            return 3
+
+        # 6. H4: Minor Sub-subheading
+        if is_bold and is_italic and sz >= 0.96 * self.mu_size and len(l_text) <= 70:
+            return 4
+        if promote_headings and is_bold and sz >= 0.96 * self.mu_size and len(l_text) <= 65:
+            return 4
+
+        return None
+
     def _format_document(
         self, ordered_blocks: List[Dict[str, Any]], promote_headings: bool = False
     ) -> Dict[str, Any]:
-        """Classifies headings (including run-ins), formats lists, builds layout boxes, and outputs Markdown."""
+        """
+        Merges wrapped headings, classifies H1-H4 hierarchy levels and run-in headings,
+        maintains a stateful parent-child heading stack, and formats clean Markdown.
+        """
+        blocks = self._merge_wrapped_headings(ordered_blocks)
+
         output_parts: List[str] = []
         headings_found: List[str] = []
         hierarchy_tree: List[Dict[str, Any]] = []
         layout_boxes: List[Dict[str, Any]] = []
+
+        active_stack: Dict[int, str] = dict(self.initial_heading_stack)
+
         current_paragraph: List[str] = []
+        para_bbox: Optional[List[float]] = None
+        prev_line: Optional[Dict[str, Any]] = None
         order_counter = 1
 
-        def flush_paragraph():
-            nonlocal current_paragraph
-            if current_paragraph:
-                p_text = clean_pdf_text(" ".join(current_paragraph))
-                if p_text:
-                    output_parts.append(p_text)
-                current_paragraph = []
+        def get_current_breadcrumb() -> str:
+            crumbs = [self.default_title]
+            for lvl in sorted(active_stack.keys()):
+                val = active_stack[lvl].strip()
+                if val and val.lower() != crumbs[-1].lower():
+                    crumbs.append(val)
+            return " > ".join(crumbs)
 
-        for item in ordered_blocks:
+        def update_heading_stack(level: int, title: str) -> str:
+            clean_title = re.sub(r"\s+", " ", title).strip(" .:")
+            active_stack[level] = clean_title
+            for deeper_lvl in [k for k in list(active_stack.keys()) if k > level]:
+                del active_stack[deeper_lvl]
+            headings_found.append(clean_title)
+            b_path = get_current_breadcrumb()
+            hierarchy_tree.append({
+                "level": level,
+                "tag": f"H{level}",
+                "title": clean_title,
+                "heading_path": b_path,
+                "order": order_counter,
+            })
+            return clean_title
+
+        def to_norm_bbox(b: Tuple[float, float, float, float]) -> List[float]:
+            return [
+                round(b[0] / self.page_width, 4),
+                round(b[1] / self.page_height, 4),
+                round(b[2] / self.page_width, 4),
+                round(b[3] / self.page_height, 4),
+            ]
+
+        def flush_paragraph() -> None:
+            nonlocal current_paragraph, para_bbox, order_counter
+            if current_paragraph:
+                raw_joined = "\n".join(current_paragraph)
+                cleaned = clean_pdf_text(raw_joined).replace("\n", " ")
+                if cleaned:
+                    output_parts.append(cleaned)
+                    if para_bbox:
+                        layout_boxes.append({
+                            "order": order_counter,
+                            "type": "paragraph",
+                            "bbox": to_norm_bbox(tuple(para_bbox)),
+                            "label": f"Body #{order_counter}",
+                        })
+                        order_counter += 1
+                current_paragraph = []
+                para_bbox = None
+
+        list_pattern = re.compile(r"^([•▪▸◦‣⁃\-\*]|\d+[\.\)]|\([a-zA-Z0-9]+\))\s+(.+)$")
+        run_in_regex = re.compile(
+            r"^(\*\*([A-Za-z0-9\s\-/]{3,42}?)\*\*[\.:—\-]?|"
+            r"([A-Z][A-Za-z0-9\s\-/]{2,38})[\.:])\s+(.+)$"
+        )
+
+        for item in blocks:
             b_type = item.get("type", "text")
             bbox = item.get("bbox", (0.0, 0.0, 0.0, 0.0))
-            norm_bbox = [
-                round(bbox[0] / self.page_width, 4),
-                round(bbox[1] / self.page_height, 4),
-                round(bbox[2] / self.page_width, 4),
-                round(bbox[3] / self.page_height, 4),
-            ]
+            norm_bbox = to_norm_bbox(bbox)
 
             if b_type in {"table", "callout", "caption"}:
                 flush_paragraph()
@@ -614,80 +887,79 @@ class AdaptivePdfLayoutEngine:
                     "order": order_counter,
                     "type": b_type,
                     "bbox": norm_bbox,
+                    "markdown": md_content,
                     "label": f"{b_type.title()} #{order_counter}",
                 })
                 order_counter += 1
+                prev_line = None
                 continue
 
             l_text = item.get("text", "").strip()
             if not l_text:
                 continue
 
-            sz = item.get("size", self.mu_size)
-            is_bold = item.get("is_bold", False)
+            prev_y1 = prev_line["y1"] if (prev_line and prev_line.get("col_idx") == item.get("col_idx")) else None
 
-            # Prominence Scoring for Headings
-            is_h1 = sz >= 1.50 * self.mu_size
-            is_h2 = sz >= 1.25 * self.mu_size or (is_bold and sz >= 1.15 * self.mu_size)
-            is_h3 = (sz >= 1.05 * self.mu_size and is_bold and len(l_text) < 90) or (
-                l_text.isupper() and is_bold and len(l_text) < 80
-            )
-            is_h4 = (
-                sz >= 0.98 * self.mu_size
-                and is_bold
-                and len(l_text) < 70
-                and not l_text.endswith((".", ";"))
-            )
-
-            if is_h1 or is_h2 or is_h3 or is_h4 or promote_headings:
+            # 1. Check Standalone Heading Level (H1, H2, H3, H4)
+            h_level = self._classify_heading_level(item, prev_y1=prev_y1, promote_headings=promote_headings)
+            if h_level is not None:
                 flush_paragraph()
-                level = 1 if is_h1 else (2 if is_h2 else (3 if is_h3 else 4))
-                prefix = "#" * level + " "
-                output_parts.append(f"{prefix}{l_text}")
-                headings_found.append(l_text)
-                hierarchy_tree.append({
-                    "level": level,
-                    "title": l_text,
-                    "order": order_counter,
-                })
+                clean_h = update_heading_stack(h_level, l_text)
+                prefix = "#" * h_level
+                output_parts.append(f"{prefix} {clean_h}")
                 layout_boxes.append({
                     "order": order_counter,
                     "type": "heading",
+                    "level": h_level,
                     "bbox": norm_bbox,
-                    "label": f"H{level}: {l_text[:28]}",
+                    "label": f"H{h_level}: {clean_h[:32]}",
                 })
                 order_counter += 1
+                prev_line = item
                 continue
 
-            # Run-In Heading Detection (e.g., "**PATHOGENESIS.** The disease results from...")
-            run_in_match = re.match(
-                r"^(\*\*([A-Z0-9\s]{3,35})\*\*\.?|\b([A-Z\s]{4,35})[\.:])\s+(.+)$", l_text
-            )
-            if run_in_match and (is_bold or l_text.startswith("**")):
+            # 2. Check Medical Run-In Subheading (H4) at start of paragraph
+            lead_bold = item.get("lead_in_bold", "").strip() if isinstance(item.get("lead_in_bold"), str) else ""
+            rest_txt = item.get("rest_text", "").strip() if isinstance(item.get("rest_text"), str) else ""
+            run_in_title = ""
+            run_in_body = ""
+
+            if lead_bold and rest_txt and 2 <= len(lead_bold) <= 45 and lead_bold.endswith((".", ":", "—", "-")):
+                run_in_title = lead_bold.rstrip(".:—- ").strip()
+                run_in_body = rest_txt
+            else:
+                m_run = run_in_regex.match(l_text)
+                if m_run and (item.get("bold_ratio", 0.0) > 0.15 or l_text.startswith("**")):
+                    run_in_title = (m_run.group(2) or m_run.group(3) or "").strip(".:—- ")
+                    run_in_body = m_run.group(4).strip()
+
+            if run_in_title and run_in_body:
                 flush_paragraph()
-                lead_in = (run_in_match.group(2) or run_in_match.group(3)).strip()
-                rest = run_in_match.group(4).strip()
-                headings_found.append(lead_in)
-                hierarchy_tree.append({
+                clean_h = update_heading_stack(4, run_in_title)
+                output_parts.append(f"#### {clean_h}")
+                layout_boxes.append({
+                    "order": order_counter,
+                    "type": "heading",
                     "level": 4,
-                    "title": lead_in,
-                    "order": order_counter,
-                })
-                output_parts.append(f"#### {lead_in}\n{rest}")
-                layout_boxes.append({
-                    "order": order_counter,
-                    "type": "heading",
                     "bbox": norm_bbox,
-                    "label": f"Run-In H4: {lead_in[:24]}",
+                    "label": f"H4 (Run-In): {clean_h[:28]}",
                 })
                 order_counter += 1
+                current_paragraph = [run_in_body]
+                para_bbox = [bbox[0], bbox[1], bbox[2], bbox[3]]
+                prev_line = item
                 continue
 
-            # Multi-Level List Item Detection
-            list_match = re.match(r"^([•▪▸◦‣⁃\-\*]|\d+[\.\)]|\([a-zA-Z0-9]+\))\s+(.+)$", l_text)
+            # 3. Check Multi-Level List Items
+            list_match = list_pattern.match(l_text)
             if list_match:
                 flush_paragraph()
-                output_parts.append(f"- {list_match.group(2)}")
+                raw_marker, list_body = list_match.group(1), list_match.group(2)
+                col_min_x = item.get("col_min_x", bbox[0])
+                indent_steps = max(0, min(3, int((bbox[0] - col_min_x) / (2.2 * self.mu_w))))
+                indent_str = "  " * indent_steps
+                md_marker = raw_marker if re.match(r"^\d+[\.\)]$", raw_marker) else "-"
+                output_parts.append(f"{indent_str}{md_marker} {list_body}")
                 layout_boxes.append({
                     "order": order_counter,
                     "type": "list",
@@ -695,42 +967,57 @@ class AdaptivePdfLayoutEngine:
                     "label": f"List Item #{order_counter}",
                 })
                 order_counter += 1
+                prev_line = item
                 continue
 
-            # Standard Body Paragraph Line
-            if current_paragraph:
-                prev_text = current_paragraph[-1]
-                no_term_punct = not prev_text.rstrip().endswith((".", "!", "?", ":", ";"))
-                starts_lower = l_text[0].islower() if l_text else False
-                if no_term_punct and starts_lower:
-                    current_paragraph.append(l_text)
-                else:
-                    flush_paragraph()
-                    current_paragraph.append(l_text)
-            else:
-                current_paragraph.append(l_text)
+            # 4. Standard Body Paragraph Continuation vs New Paragraph Break
+            if current_paragraph and prev_line is not None:
+                same_col = item.get("col_idx", 0) == prev_line.get("col_idx", 0)
+                v_gap = bbox[1] - prev_line["y1"]
+                col_min_x = item.get("col_min_x", min(bbox[0], prev_line["x0"]))
+                col_max_x = item.get("col_max_x", max(bbox[2], prev_line["x1"]))
 
-            layout_boxes.append({
-                "order": order_counter,
-                "type": "paragraph",
-                "bbox": norm_bbox,
-                "label": f"Body #{order_counter}",
-            })
-            order_counter += 1
+                large_v_gap = v_gap > 0.65 * self.mu_h
+                prev_short_line = (
+                    prev_line["x1"] < col_max_x - 3.5 * self.mu_w
+                    and prev_line["text"].rstrip().endswith((".", "!", "?", ":"))
+                )
+                first_line_indent = (
+                    (bbox[0] - col_min_x) >= 1.2 * self.mu_w
+                    and (bbox[0] - prev_line["x0"]) >= 1.0 * self.mu_w
+                )
+
+                if not same_col or large_v_gap or prev_short_line or first_line_indent:
+                    flush_paragraph()
+
+            current_paragraph.append(l_text)
+            if para_bbox is None:
+                para_bbox = [bbox[0], bbox[1], bbox[2], bbox[3]]
+            else:
+                para_bbox[0] = min(para_bbox[0], bbox[0])
+                para_bbox[1] = min(para_bbox[1], bbox[1])
+                para_bbox[2] = max(para_bbox[2], bbox[2])
+                para_bbox[3] = max(para_bbox[3], bbox[3])
+
+            prev_line = item
 
         flush_paragraph()
 
         final_md = "\n\n".join(output_parts).strip()
-        h_path = " > ".join([self.default_title] + headings_found[:2]) if headings_found else self.default_title
-        subheading = headings_found[-1] if headings_found else self.default_title
+        final_heading_path = get_current_breadcrumb()
+        deepest_level = max(active_stack.keys()) if active_stack else None
+        subheading = active_stack[deepest_level] if deepest_level is not None else self.default_title
+        main_heading = active_stack.get(1) or active_stack.get(2) or self.default_title
 
         return {
             "text": final_md,
             "extracted_text": final_md,
-            "heading_path": h_path,
+            "main_heading": main_heading,
+            "heading_path": final_heading_path,
             "subheading": subheading,
             "headings": headings_found,
             "hierarchy_tree": hierarchy_tree,
+            "active_heading_stack": active_stack,
             "layout_boxes": layout_boxes,
         }
 
@@ -764,8 +1051,81 @@ def _get_docling_converter(do_ocr: bool) -> Any:
     return converter
 
 
+def _serialize_docling_ast(doc: Any, hierarchy_tree: Optional[List[Dict[str, Any]]] = None) -> str:
+    """
+    Serializes a DoclingDocument AST into Markdown while calibrating H1-H4 levels
+    using the typography/TOC hierarchy tree from AdaptivePdfLayoutEngine.
+    """
+    level_lookup: Dict[str, int] = {}
+    for h_node in (hierarchy_tree or []):
+        norm_title = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", str(h_node.get("title", "")).lower())).strip()
+        if norm_title:
+            level_lookup[norm_title] = int(h_node.get("level", 2))
+
+    blocks: List[str] = []
+    try:
+        from docling.datamodel.document import ContentLayer, DocItemLabel, PictureItem, TableItem
+        iterator = doc.iterate_items(included_content_layers={ContentLayer.BODY})
+    except Exception:
+        iterator = []
+
+    for item, level in iterator:
+        label = getattr(item, "label", None)
+        text_val = getattr(item, "text", "").strip() if hasattr(item, "text") else ""
+
+        if label == DocItemLabel.TITLE and text_val:
+            blocks.append(f"# {text_val}")
+        elif label == DocItemLabel.SECTION_HEADER and text_val:
+            norm_t = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", text_val.lower())).strip()
+            calibrated_lvl = level_lookup.get(norm_t)
+            if calibrated_lvl is None:
+                for k_norm, k_lvl in level_lookup.items():
+                    if k_norm in norm_t or norm_t in k_norm:
+                        calibrated_lvl = k_lvl
+                        break
+            if calibrated_lvl is None:
+                if re.match(r"^(CHAPTER|PART|SECTION|UNIT)\s+", text_val, re.I):
+                    calibrated_lvl = 1
+                elif text_val.isupper() or re.match(r"^([IVXLCDM]+\.|\d{1,2}\.)\s+", text_val):
+                    calibrated_lvl = 2
+                elif re.match(r"^\d{1,2}\.\d{1,2}\.?\s+", text_val):
+                    calibrated_lvl = 3
+                else:
+                    calibrated_lvl = min(max(int(level) + 1, 2), 4)
+
+            blocks.append(f"{'#' * calibrated_lvl} {text_val}")
+        elif label == DocItemLabel.FORMULA and text_val:
+            blocks.append(f"$$\n{text_val}\n$$")
+        elif label == DocItemLabel.LIST_ITEM and text_val:
+            indent = "  " * max(0, int(level) - 1)
+            marker = getattr(item, "marker", "-") or "-"
+            blocks.append(f"{indent}{marker} {text_val}")
+        elif label == DocItemLabel.TABLE:
+            cap = item.caption_text(doc).strip() if hasattr(item, "caption_text") else ""
+            if cap:
+                blocks.append(f"> *{cap}*")
+            if hasattr(item, "export_to_markdown"):
+                blocks.append(item.export_to_markdown(doc=doc).strip())
+        elif label == DocItemLabel.PICTURE:
+            cap = item.caption_text(doc).strip() if hasattr(item, "caption_text") else ""
+            if cap:
+                blocks.append(f"> **[Figure]** *{cap}*")
+        elif label == DocItemLabel.CAPTION and text_val:
+            blocks.append(f"> *{text_val}*")
+        elif label == DocItemLabel.FOOTNOTE and text_val:
+            blocks.append(f"> ^[Footnote]: {text_val}")
+        elif text_val:
+            blocks.append(text_val)
+
+    return "\n\n".join(b for b in blocks if b)
+
+
 def extract_page_with_docling_v2(
-    file_path: Union[str, Path], page_number: int, default_title: str = ""
+    file_path: Union[str, Path],
+    page_number: int,
+    default_title: str = "",
+    initial_heading_stack: Optional[Dict[int, str]] = None,
+    page_toc: Optional[List[Tuple[int, str]]] = None,
 ) -> Dict[str, Any]:
     """
     Docling v2 Memory-Safe Single-Page Extraction:
@@ -776,8 +1136,13 @@ def extract_page_with_docling_v2(
     norm_path = str(Path(file_path).resolve())
     title = default_title or Path(norm_path).stem
 
-    # Run PyMuPDF adaptive layout first for page image, bounding boxes, and callout recovery
-    adaptive_res = extract_page_with_adaptive_layout(norm_path, page_number, default_title=title)
+    adaptive_res = extract_page_with_adaptive_layout(
+        norm_path,
+        page_number,
+        default_title=title,
+        initial_heading_stack=initial_heading_stack,
+        page_toc=page_toc,
+    )
 
     if not _DOCLING_AVAILABLE:
         logger.info("Docling library not installed; cleanly falling back to Adaptive Multi-Column Layout.")
@@ -792,9 +1157,8 @@ def extract_page_with_docling_v2(
 
                 page = doc[page_idx]
                 native_text = page.get_text("text").strip()
-                do_ocr = len(native_text) < 40  # Digital PDF requires no OCR
+                do_ocr = len(native_text) < 40
 
-                # Slice to 1-page in-memory document
                 single_doc = fitz.open()
                 single_doc.insert_pdf(doc, from_page=page_idx, to_page=page_idx)
                 pdf_bytes = single_doc.write()
@@ -806,14 +1170,12 @@ def extract_page_with_docling_v2(
 
         doc_input = io.BytesIO(pdf_bytes)
         conv_res = converter.convert(doc_input)
-        raw_docling_md = conv_res.document.export_to_markdown()
+        raw_docling_md = _serialize_docling_ast(conv_res.document, hierarchy_tree=adaptive_res.get("hierarchy_tree", []))
 
-        # Check if Docling dropped text or produced blank output
         if not raw_docling_md or len(raw_docling_md.strip()) < 0.25 * len(adaptive_res.get("extracted_text", "")):
             logger.info("Docling output sparse; augmenting with adaptive multi-column recovery.")
             return adaptive_res
 
-        # Format and append callout boxes identified by visual engine
         formatted_md = clean_pdf_text(raw_docling_md)
         callout_texts = [
             b.get("markdown", "") for b in adaptive_res.get("layout_boxes", [])
@@ -825,10 +1187,12 @@ def extract_page_with_docling_v2(
         return {
             "text": formatted_md,
             "extracted_text": formatted_md,
+            "main_heading": adaptive_res.get("main_heading", title),
             "heading_path": adaptive_res.get("heading_path", title),
             "subheading": adaptive_res.get("subheading", title),
             "headings": adaptive_res.get("headings", []),
             "hierarchy_tree": adaptive_res.get("hierarchy_tree", []),
+            "active_heading_stack": adaptive_res.get("active_heading_stack", {}),
             "layout_boxes": adaptive_res.get("layout_boxes", []),
             "page_image_base64": adaptive_res.get("page_image_base64", ""),
             "page_width": adaptive_res.get("page_width", 612.0),
@@ -840,7 +1204,12 @@ def extract_page_with_docling_v2(
 
 
 def extract_page_with_adaptive_layout(
-    file_path: Union[str, Path], page_number: int, default_title: str = "", promote_headings: bool = False
+    file_path: Union[str, Path],
+    page_number: int,
+    default_title: str = "",
+    promote_headings: bool = False,
+    initial_heading_stack: Optional[Dict[int, str]] = None,
+    page_toc: Optional[List[Tuple[int, str]]] = None,
 ) -> Dict[str, Any]:
     """Helper executing the Adaptive Multi-Column Geometric Engine on a specific PDF page, including Base64 PNG pixmap."""
     if fitz is None:
@@ -848,11 +1217,13 @@ def extract_page_with_adaptive_layout(
         return {
             "text": "",
             "extracted_text": "",
+            "main_heading": default_title or "Untitled",
             "heading_path": default_title or "Untitled",
             "subheading": default_title or "Untitled",
             "page_image_base64": "",
             "layout_boxes": [],
             "hierarchy_tree": [],
+            "active_heading_stack": dict(initial_heading_stack or {}),
         }
 
     norm_path = str(Path(file_path).resolve())
@@ -871,16 +1242,17 @@ def extract_page_with_adaptive_layout(
                 return {
                     "text": "",
                     "extracted_text": "",
+                    "main_heading": title,
                     "heading_path": title,
                     "subheading": title,
                     "page_image_base64": "",
                     "layout_boxes": [],
                     "hierarchy_tree": [],
+                    "active_heading_stack": dict(initial_heading_stack or {}),
                 }
 
             page = doc[page_idx]
 
-            # Render Page Image to PNG Base64 for the left visual inspection pane
             try:
                 pix = page.get_pixmap(dpi=150, alpha=False)
                 png_bytes = pix.tobytes("png")
@@ -889,7 +1261,12 @@ def extract_page_with_adaptive_layout(
                 logger.debug("Page pixmap generation error: %s", img_err)
                 page_image_b64 = ""
 
-            engine = AdaptivePdfLayoutEngine(page, default_title=title)
+            engine = AdaptivePdfLayoutEngine(
+                page,
+                default_title=title,
+                initial_heading_stack=initial_heading_stack,
+                page_toc=page_toc,
+            )
             result = engine.run(promote_headings=promote_headings)
             result["page_image_base64"] = page_image_b64
             result["page_width"] = float(page.rect.width)
@@ -924,12 +1301,27 @@ def extract_pdf_structure(file_path: Union[str, Path]) -> List[Dict[str, Any]]:
         return []
 
     try:
+        toc_by_page: Dict[int, List[Tuple[int, str]]] = {}
         with fitz.open(norm_path) as doc:
             total_pages = doc.page_count
+            try:
+                for lvl, title_str, p_num in doc.get_toc():
+                    if p_num >= 1 and title_str:
+                        toc_by_page.setdefault(int(p_num), []).append((int(lvl), str(title_str).strip()))
+            except Exception:
+                pass
 
+        running_stack: Dict[int, str] = {}
         sec_idx = 0
         for p_num in range(1, total_pages + 1):
-            p_res = extract_page_with_docling_v2(norm_path, p_num, default_title=default_title)
+            p_res = extract_page_with_docling_v2(
+                norm_path,
+                p_num,
+                default_title=default_title,
+                initial_heading_stack=running_stack,
+                page_toc=toc_by_page.get(p_num, []),
+            )
+            running_stack = p_res.get("active_heading_stack", running_stack)
             text_content = str(p_res.get("extracted_text", "") or p_res.get("text", "")).strip()
             if not text_content:
                 continue
