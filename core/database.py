@@ -259,7 +259,7 @@ def initialize_database() -> None:
                 enabled INTEGER DEFAULT 1,
                 itemCount INTEGER DEFAULT 0,
                 lastIndexed TEXT DEFAULT 'Never',
-                pdfEngine TEXT DEFAULT 'fitz'
+                pdfEngine TEXT DEFAULT 'docling_v2'
             );
 
             -- 7. Quiz Sessions & Knowledge Hub Cards
@@ -342,7 +342,7 @@ def initialize_database() -> None:
         """)
 
         # STAGE 2: Idempotent Column Additions & Schema Migrations (BEFORE Index Creation)
-        _safe_add_column(conn, "knowledge_sources", "pdfEngine TEXT DEFAULT 'fitz'")
+        _safe_add_column(conn, "knowledge_sources", "pdfEngine TEXT DEFAULT 'docling_v2'")
         _safe_add_column(conn, "mcq_bank", "llm_explanation TEXT DEFAULT ''")
         _safe_add_column(conn, "csv_questions", "llm_explanation TEXT DEFAULT ''")
         _safe_add_column(conn, "cached_syntheses", "variance_audit TEXT DEFAULT ''")

@@ -90,7 +90,7 @@ class SourcePayload(BaseModel):
     enabled: bool = True
     itemCount: int = 0
     lastIndexed: str = "Never"
-    pdfEngine: Optional[str] = "fitz"
+    pdfEngine: Optional[str] = "docling_v2"
 
 
 class OpenPdfPayload(BaseModel):
@@ -190,7 +190,7 @@ def get_sources() -> List[Dict[str, Any]]:
                 "lastIndexed": str(r["lastIndexed"] or "Never"),
                 "pdfEngine": str(r["pdfEngine"])
                 if ("pdfEngine" in r.keys() and r["pdfEngine"])
-                else "fitz",
+                else "docling_v2",
             }
             for r in cursor.fetchall()
         ]
@@ -223,7 +223,7 @@ def add_source(payload: SourcePayload) -> Dict[str, str]:
                 int(payload.enabled),
                 payload.itemCount,
                 payload.lastIndexed,
-                payload.pdfEngine or "fitz",
+                payload.pdfEngine or "docling_v2",
             ),
         )
         conn.commit()
@@ -520,7 +520,7 @@ async def run_indexing() -> None:
                             )
                         )
                         total_files = len(pdf_files)
-                        pdf_engine = str(src.get("pdfEngine", "fitz") or "fitz").lower()
+                        pdf_engine = str(src.get("pdfEngine", "docling_v2") or "docling_v2").lower()
 
                         for file_idx, file_path in enumerate(pdf_files):
                             await asyncio.sleep(0)

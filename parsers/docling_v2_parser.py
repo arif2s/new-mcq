@@ -1,8 +1,10 @@
 """
 Adaptive Multi-Column Medical Layout Engine for PyMuPDF (fitz) and Docling v2 Hybrid Recovery.
-Implements per-page typography profiling, vector ruling barriers, shaded callout isolation,
-constrained topological DAG reading order, multi-tier hierarchy detection (H1-H4 + run-in headings),
-PDF page pixmap rendering (base64 PNG), and Docling v2 memory-safe single-page extraction.
+Implements per-page typography & modal color profiling, vector ruling barriers, raster image obstacle
+detection, shaded callout isolation, multi-line & under-image caption tethering, local zone-based
+XY-cut column gutter detection, image-wrapped paragraph continuation, multi-tier hierarchy detection
+(H1-H4 + colored headings + run-in headings), PDF page pixmap rendering (base64 PNG), and
+Docling v2 (Heron RT-DETRv2) memory-safe single-page extraction.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ import functools
 import hashlib
 import io
 import logging
+import math
 import os
 import re
 import threading
@@ -32,8 +35,9 @@ except ImportError:
 
 # Docling imports (lazy / optional to prevent startup failure if not installed)
 _DOCLING_AVAILABLE = False
+DocumentStream = None
 try:
-    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.base_models import DocumentStream, InputFormat
     from docling.datamodel.pipeline_options import (
         AcceleratorDevice,
         AcceleratorOptions,
@@ -113,12 +117,12 @@ def _point_in_rect(x: float, y: float, rect: Tuple[float, float, float, float]) 
 class AdaptivePdfLayoutEngine:
     """
     Deterministic Adaptive Multi-Column Medical Layout Engine with Visual Context:
-    1. Per-page typography baseline (mu_w, mu_h, mu_size) and heading size tiers
-    2. Vector graphic rulings (vertical barriers, horizontal zone splitters, banner frames)
-    3. Structural element classification (tables, callout boxes, figure captions)
-    4. Indentation profiling (first-line paragraph indents, multi-level list nesting)
-    5. Constrained Topological DAG reading order solver
-    6. Multi-tier hierarchy depth recognition (H1-H4 + medical run-in headings)
+    1. Per-page typography baseline (mu_w, mu_h, mu_size, body_color) and heading size tiers
+    2. Vector graphic rulings (vertical barriers, horizontal zone splitters, header/footer rules, banner frames)
+    3. Raster & block image obstacle detection for wrapped-text continuity
+    4. Structural element classification (tables, callout boxes, multi-line & under-image figure captions)
+    5. Local zone-based XY-cut column gutter solver with image-wrap protection
+    6. Multi-tier hierarchy depth recognition (H1-H4 + accent-colored headings + medical run-in headings)
     """
 
     def __init__(
@@ -140,16 +144,18 @@ class AdaptivePdfLayoutEngine:
         self.page_width = max(1.0, self.page_rect[2] - self.page_rect[0])
         self.page_height = max(1.0, self.page_rect[3] - self.page_rect[1])
 
-        # Typography Profile Defaults
+        # Typography & Color Profile Defaults
         self.mu_size: float = 10.0
         self.mu_h: float = 12.0
         self.mu_w: float = 5.0
+        self.body_color: int = 0
         self.heading_size_tiers: List[float] = []
 
         # Structural Containers
         self.vertical_rules: List[Tuple[float, float, float, float]] = []
         self.horizontal_rules: List[Tuple[float, float, float, float]] = []
         self.header_banners: List[Tuple[float, float, float, float]] = []
+        self.image_bboxes: List[Tuple[float, float, float, float]] = []
         self.tables_markdown: List[Dict[str, Any]] = []
         self.callout_blocks: List[Dict[str, Any]] = []
         self.caption_blocks: List[Dict[str, Any]] = []
@@ -157,32 +163,41 @@ class AdaptivePdfLayoutEngine:
 
     def run(self, promote_headings: bool = False) -> Dict[str, Any]:
         """Executes full adaptive visual-context layout extraction."""
-        # 1. Profile typography & extract vector drawings
+        # 1. Profile typography, modal color, image obstacles, & vector drawings
         spans, drawings = self._profile_page()
 
-        # 2. Extract vector rulings & background frames
-        self._extract_rulings_and_frames(drawings)
+        # 2. Extract vector rulings & background frames (and refine header/footer marginal exclusions)
+        self._extract_rulings_and_frames(drawings, spans)
 
         # 3. Isolate tables & shaded clinical callout boxes
         self._isolate_tables_and_callouts(spans, drawings)
 
-        # 4. Isolate figure & table captions
-        self._isolate_captions(spans)
-
-        # 5. Filter out excluded spans (tables, callouts, captions, marginal headers/footers)
+        # 4. Filter out excluded spans (tables, callouts, marginal headers/footers)
         remaining_spans = [
             s for s in spans
-            if not s.get("is_marginal") and not self._is_excluded((s["x0"] + s["x1"]) / 2, (s["y0"] + s["y1"]) / 2)
+            if not s.get("is_marginal") and not self._is_excluded((s["x0"] + s["x1"]) * 0.5, (s["y0"] + s["y1"]) * 0.5)
         ]
 
-        # 6. Assemble spans into lines with intra-line column barrier checks
-        lines = self._assemble_lines(remaining_spans)
+        # 5. Assemble spans into lines with intra-line column barrier checks and color/bold profiling
+        raw_lines = self._assemble_lines(remaining_spans)
 
-        # 7. Solve Topological DAG reading order across columns and horizontal zones
+        # 6. Isolate multi-line figure/table captions and unlabeled descriptions directly under images
+        lines = self._isolate_captions_from_lines(raw_lines)
+
+        # 7. Solve reading order across local horizontal zones and columns while keeping image-wrapped text contiguous
         ordered_blocks = self._topological_dag_reading_order(lines)
 
         # 8. Hierarchical classification, run-in lead-in extraction, list formatting, and Markdown construction
         return self._format_document(ordered_blocks, promote_headings=promote_headings)
+
+    def _is_accent_color(self, color: int) -> bool:
+        """Returns True if span RGB color differs significantly from modal body text color."""
+        if color == self.body_color:
+            return False
+        r1, g1, b1 = (color >> 16) & 255, (color >> 8) & 255, color & 255
+        r0, g0, b0 = (self.body_color >> 16) & 255, (self.body_color >> 8) & 255, self.body_color & 255
+        dist = math.sqrt((r1 - r0) ** 2 + (g1 - g0) ** 2 + (b1 - b0) ** 2)
+        return dist > 42.0
 
     def _compute_heading_size_tiers(self, spans: List[Dict[str, Any]]) -> None:
         """Clusters distinct font sizes above body median into descending tiers for relative H1-H3 ranking."""
@@ -191,7 +206,7 @@ class AdaptivePdfLayoutEngine:
                 round(s["size"], 1)
                 for s in spans
                 if not s.get("is_marginal")
-                and (s["size"] >= 1.04 * self.mu_size or s.get("is_bold"))
+                and (s["size"] >= 1.04 * self.mu_size or s.get("is_bold") or self._is_accent_color(s.get("color", 0)))
                 and len(s.get("text", "").strip()) >= 3
             },
             reverse=True,
@@ -203,7 +218,7 @@ class AdaptivePdfLayoutEngine:
         self.heading_size_tiers = tiers
 
     def _profile_page(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """Extracts text spans and drawing instructions, profiling body typography."""
+        """Extracts text spans, raster image obstacles, and drawing instructions, profiling body typography."""
         try:
             page_dict = self.page.get_text("dict", flags=fitz.TEXTFLAGS_TEXT)
         except Exception:
@@ -214,15 +229,37 @@ class AdaptivePdfLayoutEngine:
         except Exception:
             drawings = []
 
+        # Extract raster image bounding boxes so wrapped text and under-image descriptions are recognized
+        self.image_bboxes = []
+        try:
+            for img in self.page.get_image_info(xrefs=False):
+                ib = img.get("bbox")
+                if ib:
+                    ir = (float(ib[0]), float(ib[1]), float(ib[2]), float(ib[3]))
+                    iw, ih = ir[2] - ir[0], ir[3] - ir[1]
+                    if iw >= 20.0 and ih >= 20.0 and _rect_area(ir) < 0.85 * self.page_width * self.page_height:
+                        self.image_bboxes.append(ir)
+        except Exception:
+            pass
+
         all_spans: List[Dict[str, Any]] = []
         font_sizes_weighted: List[float] = []
         line_heights_weighted: List[float] = []
         char_widths_weighted: List[float] = []
+        color_counts: Dict[int, int] = {}
 
         blocks = page_dict.get("blocks", []) if isinstance(page_dict, dict) else []
         for b in blocks:
+            if b.get("type") == 1 and b.get("bbox"):
+                ir = tuple(float(v) for v in b["bbox"])
+                if (ir[2] - ir[0]) >= 20.0 and (ir[3] - ir[1]) >= 20.0 and _rect_area(ir) < 0.85 * self.page_width * self.page_height:
+                    if not any(_rects_overlap(ir, existing) for existing in self.image_bboxes):
+                        self.image_bboxes.append(ir)
+                continue
+
             if b.get("type") != 0:
                 continue
+
             for line in b.get("lines", []):
                 l_bbox = line.get("bbox", (0, 0, 0, 0))
                 l_h = float(l_bbox[3] - l_bbox[1])
@@ -235,10 +272,29 @@ class AdaptivePdfLayoutEngine:
                     x0, y0, x1, y1 = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
                     flags = int(span.get("flags", 0) or 0)
                     font = str(span.get("font", "") or "")
-                    color = span.get("color", 0)
+                    color = int(span.get("color", 0) or 0)
 
-                    # Running header/footer exclusion (< 3.5% from top or bottom)
-                    is_marginal = (y0 < self.page_height * 0.035) or (y1 > self.page_height * 0.965)
+                    # PyMuPDF font bitmask: bit 0 (1)=superscript, bit 1 (2)=italic, bit 4 (16)=bold
+                    font_lower = font.lower()
+                    is_superscript = bool(flags & 1)
+                    is_italic = bool((flags & 2) or any(k in font_lower for k in ("italic", "oblique", "-it", "ital")))
+                    is_bold = bool(
+                        (flags & 16)
+                        or any(k in font_lower for k in ("bold", "black", "heavy", "demi", "semibold", "-bd", "medi", "hebo"))
+                        or font_lower.endswith(("bo", "bd", "blk"))
+                    )
+
+                    # Running header/footer exclusion (top/bottom margins + standalone page numbers)
+                    in_top_band = y1 <= self.page_height * 0.075
+                    in_bottom_band = y0 >= self.page_height * 0.925
+                    is_page_num = bool(
+                        re.match(r"^(page\s*)?\d+(\s*(of|/)\s*\d+)?$|^[ivxlcdm]+$", s_text, re.IGNORECASE)
+                    )
+                    is_marginal = (
+                        (y0 < self.page_height * 0.045)
+                        or (y1 > self.page_height * 0.955)
+                        or ((in_top_band or in_bottom_band) and (is_page_num or len(s_text) <= 95))
+                    )
 
                     span_dict = {
                         "text": s_text,
@@ -253,15 +309,17 @@ class AdaptivePdfLayoutEngine:
                         "y1": y1,
                         "width": x1 - x0,
                         "height": y1 - y0,
-                        "is_bold": bool(flags & 2 or "bold" in font.lower() or font.lower().endswith("bo") or "hebo" in font.lower()),
-                        "is_italic": bool(flags & 1 or "italic" in font.lower() or "oblique" in font.lower()),
+                        "is_bold": is_bold,
+                        "is_italic": is_italic,
+                        "is_superscript": is_superscript,
                         "is_marginal": is_marginal,
                     }
                     all_spans.append(span_dict)
 
-                    if not is_marginal:
+                    if not is_marginal and not is_superscript:
                         w = max(1, len(s_text))
                         font_sizes_weighted.extend([sz] * w)
+                        color_counts[color] = color_counts.get(color, 0) + w
                         if l_h > 0:
                             line_heights_weighted.extend([l_h] * w)
                         if len(s_text) > 0 and (x1 - x0) > 0:
@@ -285,16 +343,28 @@ class AdaptivePdfLayoutEngine:
         else:
             self.mu_w = self.mu_size * 0.5
 
+        self.body_color = max(color_counts.items(), key=lambda kv: kv[1])[0] if color_counts else 0
         self.mu_size = max(6.0, self.mu_size)
         self.mu_h = max(8.0, self.mu_h)
         self.mu_w = max(2.5, self.mu_w)
+
+        # Un-flag genuine large chapter/article titles near the top of the page
+        for s in all_spans:
+            if s["is_marginal"] and s["size"] >= 1.35 * self.mu_size and s["y0"] >= self.page_height * 0.035:
+                if not re.match(r"^\d+$", s["text"]):
+                    s["is_marginal"] = False
 
         self._compute_heading_size_tiers(all_spans)
 
         return all_spans, drawings
 
-    def _extract_rulings_and_frames(self, drawings: List[Dict[str, Any]]) -> None:
-        """Extracts vertical ruling lines (column dividers), horizontal rulings, and section banners."""
+    def _extract_rulings_and_frames(
+        self, drawings: List[Dict[str, Any]], spans: Optional[List[Dict[str, Any]]] = None
+    ) -> None:
+        """Extracts vertical ruling lines, horizontal zone/margin dividers, and section header banners."""
+        top_header_rule_y: Optional[float] = None
+        bottom_footer_rule_y: Optional[float] = None
+
         for dw in drawings:
             rect = dw.get("rect")
             fill = dw.get("fill")
@@ -305,16 +375,38 @@ class AdaptivePdfLayoutEngine:
             rh = ry1 - ry0
 
             # Vertical ruling line (barrier between columns)
-            if rw <= 3.0 and rh >= 4.0 * self.mu_h:
+            if rw <= 3.5 and rh >= 3.5 * self.mu_h:
                 self.vertical_rules.append((rx0, ry0, rx1, ry1))
 
             # Horizontal ruling line (zone boundary or header/footer separator)
-            elif rh <= 3.0 and rw >= 0.20 * self.page_width:
+            elif rh <= 3.5 and rw >= 0.20 * self.page_width:
                 self.horizontal_rules.append((rx0, ry0, rx1, ry1))
+                if rw >= 0.45 * self.page_width:
+                    if ry1 <= self.page_height * 0.095:
+                        top_header_rule_y = max(top_header_rule_y or 0.0, ry1)
+                    elif ry0 >= self.page_height * 0.905:
+                        bottom_footer_rule_y = min(bottom_footer_rule_y or self.page_height, ry0)
 
             # Shallow section header banner background rectangles
-            if fill is not None and 1.0 * self.mu_h <= rh <= 3.2 * self.mu_h and rw >= 0.25 * self.page_width:
+            if fill is not None and 0.9 * self.mu_h <= rh <= 3.5 * self.mu_h and rw >= 0.18 * self.page_width:
                 self.header_banners.append((rx0, ry0, rx1, ry1))
+
+            # Also treat large vector diagram clusters as visual figure obstacles if they are non-filled complex paths
+            items = dw.get("items", [])
+            if len(items) >= 25 and rw >= 60.0 and rh >= 60.0 and _rect_area((rx0, ry0, rx1, ry1)) < 0.70 * self.page_width * self.page_height:
+                if fill is None:
+                    cand_rect = (rx0, ry0, rx1, ry1)
+                    if not any(_rects_overlap(cand_rect, existing) for existing in self.image_bboxes):
+                        self.image_bboxes.append(cand_rect)
+
+        # Any text span sitting above a top running-header rule or below a bottom running-footer rule is marginal
+        if spans:
+            for s in spans:
+                if top_header_rule_y is not None and s["y1"] <= top_header_rule_y + 2.0:
+                    if s["size"] < 1.35 * self.mu_size:
+                        s["is_marginal"] = True
+                if bottom_footer_rule_y is not None and s["y0"] >= bottom_footer_rule_y - 2.0:
+                    s["is_marginal"] = True
 
     def _is_in_header_banner(self, bbox: Tuple[float, float, float, float]) -> bool:
         """Checks if a text line sits inside a colored/shaded section header banner."""
@@ -370,15 +462,17 @@ class AdaptivePdfLayoutEngine:
             rw = r_bbox[2] - r_bbox[0]
             rh = r_bbox[3] - r_bbox[1]
 
-            if rw >= 8.0 * self.mu_w and rh >= 2.2 * self.mu_h:
+            if rw >= 8.0 * self.mu_w and rh >= 2.8 * self.mu_h:
                 if _rect_area(r_bbox) < 0.75 * self.page_width * self.page_height:
                     if any(_rects_overlap(r_bbox, ez) for ez in self.exclusion_zones):
+                        continue
+                    if any(_rects_overlap(r_bbox, hb) for hb in self.header_banners):
                         continue
 
                     box_spans = [
                         s for s in spans
-                        if _point_in_rect((s["x0"] + s["x1"]) / 2, (s["y0"] + s["y1"]) / 2, r_bbox)
-                        and not self._is_excluded((s["x0"] + s["x1"]) / 2, (s["y0"] + s["y1"]) / 2)
+                        if _point_in_rect((s["x0"] + s["x1"]) * 0.5, (s["y0"] + s["y1"]) * 0.5, r_bbox)
+                        and not self._is_excluded((s["x0"] + s["x1"]) * 0.5, (s["y0"] + s["y1"]) * 0.5)
                     ]
 
                     if box_spans:
@@ -410,29 +504,137 @@ class AdaptivePdfLayoutEngine:
                             })
                             self.exclusion_zones.append(r_bbox)
 
-    def _isolate_captions(self, spans: List[Dict[str, Any]]) -> None:
-        """Identifies figure and table captions and tethers them."""
+    def _isolate_captions_from_lines(self, lines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Identifies multi-line figure/table captions and unlabeled descriptions directly beneath images,
+        tethering them to their parent figures so caption lines never mix into main body paragraphs.
+        """
+        if not lines:
+            return []
+
         caption_pattern = re.compile(
-            r"^(Fig\.|Figure|Table|Box|Plate|Diagram|Scheme|Image)\s*\d+", re.IGNORECASE
+            r"^(Fig\.|Figure|Table|Box|Plate|Diagram|Scheme|Image|Photo|Graph|Chart)\s*([A-Z0-9\.\-]+|\b)",
+            re.IGNORECASE,
         )
-        for s in spans:
-            if self._is_excluded((s["x0"] + s["x1"]) / 2, (s["y0"] + s["y1"]) / 2):
+
+        lines_sorted = sorted(lines, key=lambda l: (l["y0"], l["x0"]))
+        used_indices = set()
+
+        for i, line in enumerate(lines_sorted):
+            if i in used_indices:
                 continue
 
-            s_text = s["text"].strip()
-            if caption_pattern.match(s_text):
-                caption_bbox = s["bbox"]
-                self.caption_blocks.append({
-                    "bbox": caption_bbox,
-                    "text": s_text,
-                    "markdown": f"> *{s_text}*",
-                    "type": "caption",
-                    "y0": s["y0"],
-                    "x0": s["x0"],
-                    "x1": s["x1"],
-                    "y1": s["y1"],
-                })
-                self.exclusion_zones.append(caption_bbox)
+            l_text = line["text"].strip()
+            lx0, ly0, lx1, ly1 = line["x0"], line["y0"], line["x1"], line["y1"]
+            lw = lx1 - lx0
+
+            is_explicit_caption = bool(caption_pattern.match(l_text)) and (
+                bool(re.match(r"^(Fig\.|Figure|Table|Box|Plate|Diagram|Scheme|Image|Photo|Graph|Chart)\s*\d+", l_text, re.I))
+                or line.get("bold_ratio", 0.0) > 0.15
+                or line.get("is_accent_color", False)
+                or line.get("is_italic", False)
+                or line["size"] <= 0.96 * self.mu_size
+            )
+
+            # Check if this line sits directly underneath or inside the bottom edge of a picture/image obstacle
+            is_under_image_desc = False
+            parent_img: Optional[Tuple[float, float, float, float]] = None
+            for img_r in self.image_bboxes:
+                ix0, iy0, ix1, iy1 = img_r
+                horiz_aligned = (lx0 >= ix0 - 3.5 * self.mu_w) and (lx1 <= ix1 + 3.5 * self.mu_w)
+                vert_adjacent = (-0.8 * self.mu_h <= (ly0 - iy1) <= 2.0 * self.mu_h)
+                if horiz_aligned and vert_adjacent:
+                    parent_img = img_r
+                    if (
+                        is_explicit_caption
+                        or line["size"] <= 0.95 * self.mu_size
+                        or line["is_italic"]
+                        or line.get("is_accent_color", False)
+                        or ((ix1 - ix0) <= 0.65 * self.page_width and lw <= (ix1 - ix0) + 2.0 * self.mu_w)
+                    ):
+                        is_under_image_desc = True
+                    break
+
+            if not (is_explicit_caption or is_under_image_desc):
+                continue
+
+            # Group subsequent lines belonging to the same multi-line caption
+            cap_lines = [line]
+            temp_indices = [i]
+            curr_x0, curr_y0, curr_x1, curr_y1 = lx0, ly0, lx1, ly1
+            ref_size = line["size"]
+
+            for j in range(i + 1, len(lines_sorted)):
+                if j in used_indices:
+                    continue
+                nxt = lines_sorted[j]
+                v_gap = nxt["y0"] - curr_y1
+                if v_gap > 0.80 * self.mu_h:
+                    break
+                if v_gap < -0.35 * self.mu_h:
+                    continue
+
+                horiz_overlap = min(curr_x1, nxt["x1"]) - max(curr_x0, nxt["x0"])
+                min_line_w = max(1.0, min(curr_x1 - curr_x0, nxt["x1"] - nxt["x0"]))
+                same_col_bounds = abs(nxt["x0"] - curr_x0) <= 3.0 * self.mu_w and abs(nxt["x1"] - curr_x1) <= 8.0 * self.mu_w
+                size_compatible = abs(nxt["size"] - ref_size) <= 0.85 or nxt["size"] <= 0.95 * self.mu_size
+
+                if (horiz_overlap > 0.45 * min_line_w or same_col_bounds) and size_compatible:
+                    if caption_pattern.match(nxt["text"].strip()) and re.search(r"\d", nxt["text"][:15]):
+                        break
+                    # Stop if next line looks like a normal full-size body paragraph after a 1-line caption
+                    if (
+                        not is_under_image_desc
+                        and nxt["size"] >= 0.99 * self.mu_size
+                        and not nxt["is_italic"]
+                        and cap_lines[-1]["text"].rstrip().endswith(".")
+                        and (nxt["x0"] - curr_x0) >= 1.2 * self.mu_w
+                    ):
+                        break
+
+                    cap_lines.append(nxt)
+                    temp_indices.append(j)
+                    curr_x0 = min(curr_x0, nxt["x0"])
+                    curr_y0 = min(curr_y0, nxt["y0"])
+                    curr_x1 = max(curr_x1, nxt["x1"])
+                    curr_y1 = max(curr_y1, nxt["y1"])
+                else:
+                    break
+
+            # Guard against misclassifying a long normal-font body paragraph under an inline image as a caption
+            if not is_explicit_caption and line["size"] >= 0.97 * self.mu_size and not line["is_italic"]:
+                if len(cap_lines) > 3:
+                    continue
+
+            for idx_used in temp_indices:
+                used_indices.add(idx_used)
+
+            cap_text = clean_pdf_text(" ".join(cl["text"].strip() for cl in cap_lines))
+            cap_bbox = (curr_x0, curr_y0, curr_x1, curr_y1)
+            if parent_img is not None:
+                # Expand parent image obstacle to include its attached caption so wrapped text bridges both
+                idx_img = self.image_bboxes.index(parent_img)
+                self.image_bboxes[idx_img] = (
+                    min(parent_img[0], curr_x0),
+                    min(parent_img[1], curr_y0),
+                    max(parent_img[2], curr_x1),
+                    max(parent_img[3], curr_y1),
+                )
+
+            self.caption_blocks.append({
+                "bbox": cap_bbox,
+                "text": cap_text,
+                "markdown": f"> *{cap_text}*",
+                "type": "caption",
+                "y0": curr_y0,
+                "x0": curr_x0,
+                "x1": curr_x1,
+                "y1": curr_y1,
+                "has_parent_image": parent_img is not None,
+            })
+            self.exclusion_zones.append(cap_bbox)
+
+        return [l for idx, l in enumerate(lines_sorted) if idx not in used_indices]
 
     def _is_excluded(self, x: float, y: float) -> bool:
         return any(_point_in_rect(x, y, ez) for ez in self.exclusion_zones)
@@ -449,8 +651,8 @@ class AdaptivePdfLayoutEngine:
         for s in spans_sorted[1:]:
             last_s = curr_spans[-1]
             v_overlap = min(s["y1"], last_s["y1"]) - max(s["y0"], last_s["y0"])
-            min_h = min(s["height"], last_s["height"])
-            if v_overlap > 0.45 * min_h or abs(s["y0"] - last_s["y0"]) < 0.4 * self.mu_h:
+            min_h = max(1.0, min(s["height"], last_s["height"]))
+            if v_overlap > 0.45 * min_h or abs(s["y0"] - last_s["y0"]) < 0.40 * self.mu_h:
                 curr_spans.append(s)
             else:
                 lines.extend(self._split_line_segments(curr_spans))
@@ -462,7 +664,10 @@ class AdaptivePdfLayoutEngine:
         return lines
 
     def _split_line_segments(self, line_spans: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Splits spans on the same vertical line if crossing vertical rules or wide column gaps."""
+        """
+        Splits spans on the same horizontal line when crossing vertical rules or column gaps,
+        while preserving color, bold ratios, and run-in lead-in subheadings.
+        """
         line_spans.sort(key=lambda s: s["x0"])
         segments: List[List[Dict[str, Any]]] = [[line_spans[0]]]
 
@@ -471,25 +676,61 @@ class AdaptivePdfLayoutEngine:
             gap_x = s["x0"] - prev_s["x1"]
 
             crosses_rule = any(
-                vr[0] >= prev_s["x1"] - 1.5 and vr[0] <= s["x0"] + 1.5
+                vr[0] >= prev_s["x1"] - 2.0
+                and vr[0] <= s["x0"] + 2.0
+                and not (vr[3] < min(s["y0"], prev_s["y0"]) or vr[1] > max(s["y1"], prev_s["y1"]))
                 for vr in self.vertical_rules
             )
 
-            if crosses_rule or gap_x >= 1.75 * self.mu_w:
+            # Use 2.6 * mu_w so justified single-column text never fractures mid-line
+            if crosses_rule or gap_x >= 2.6 * self.mu_w:
                 segments.append([s])
             else:
                 segments[-1].append(s)
 
         results = []
         for seg in segments:
-            seg_text = " ".join(s["text"] for s in seg)
+            parts: List[str] = []
+            for idx, s in enumerate(seg):
+                if idx > 0 and not s.get("is_superscript"):
+                    parts.append(" ")
+                parts.append(s["text"])
+            seg_text = "".join(parts).strip()
+            if not seg_text:
+                continue
+
             x0 = min(s["x0"] for s in seg)
             x1 = max(s["x1"] for s in seg)
             y0 = min(s["y0"] for s in seg)
             y1 = max(s["y1"] for s in seg)
-            max_size = max(s["size"] for s in seg)
-            is_bold = any(s["is_bold"] for s in seg)
-            is_italic = any(s["is_italic"] for s in seg)
+
+            non_sup = [s for s in seg if not s.get("is_superscript")] or seg
+            max_size = max(s["size"] for s in non_sup)
+
+            total_chars = max(1, sum(len(s["text"]) for s in non_sup))
+            bold_chars = sum(len(s["text"]) for s in non_sup if s["is_bold"])
+            italic_chars = sum(len(s["text"]) for s in non_sup if s["is_italic"])
+            accent_chars = sum(len(s["text"]) for s in non_sup if self._is_accent_color(s.get("color", 0)))
+
+            bold_ratio = bold_chars / total_chars
+            is_bold = bold_ratio >= 0.65
+            is_italic = (italic_chars / total_chars) >= 0.65
+            is_accent_color = (accent_chars / total_chars) >= 0.65
+            dom_color = non_sup[0].get("color", self.body_color)
+
+            # Extract run-in lead-in bold or colored title at the start of a paragraph line
+            lead_bold_parts: List[str] = []
+            rest_parts: List[str] = []
+            in_lead = True
+            for s in non_sup:
+                if in_lead and (s["is_bold"] or self._is_accent_color(s.get("color", 0))):
+                    lead_bold_parts.append(s["text"])
+                else:
+                    in_lead = False
+                    rest_parts.append(s["text"])
+
+            lead_in_bold = " ".join(lead_bold_parts).strip() if rest_parts else ""
+            rest_text = " ".join(rest_parts).strip() if lead_bold_parts else ""
 
             results.append({
                 "text": seg_text,
@@ -499,45 +740,217 @@ class AdaptivePdfLayoutEngine:
                 "x1": x1,
                 "y1": y1,
                 "size": max_size,
+                "color": dom_color,
+                "is_accent_color": is_accent_color,
                 "is_bold": is_bold,
                 "is_italic": is_italic,
+                "bold_ratio": bold_ratio,
+                "lead_in_bold": lead_in_bold,
+                "rest_text": rest_text,
                 "type": "text",
             })
 
         return results
 
+    def _is_wrapped_beside_image(self, block: Dict[str, Any]) -> bool:
+        """Returns True if a text line sits horizontally adjacent to a figure/image obstacle."""
+        by0, by1 = block.get("y0", 0.0), block.get("y1", 0.0)
+        bx0, bx1 = block.get("x0", 0.0), block.get("x1", 0.0)
+        bh = max(1.0, by1 - by0)
+        for img_r in self.image_bboxes:
+            v_overlap = min(by1, img_r[3]) - max(by0, img_r[1])
+            if v_overlap > 0.25 * bh:
+                if bx1 <= img_r[0] + 2.0 * self.mu_w or bx0 >= img_r[2] - 2.0 * self.mu_w:
+                    return True
+        return False
+
+    def _detect_zone_gutters(self, zone_lines: List[Dict[str, Any]]) -> List[Tuple[float, float]]:
+        """
+        Detects vertical column gutters locally within a horizontal zone.
+        Adapts to both narrow (0.8 * mu_w) and wide column gaps while ignoring narrow lines
+        caused by inline images so image-wrapped paragraphs never create phantom columns.
+        """
+        text_lines = [l for l in zone_lines if l.get("type", "text") == "text"]
+        if len(text_lines) < 2:
+            return []
+
+        non_image_wrapped = [l for l in text_lines if not l.get("is_image_wrapped", False)]
+        if len(non_image_wrapped) < 2:
+            return []
+
+        # Verify genuine side-by-side text columns exist in this zone
+        has_side_by_side_text = False
+        for i, l1 in enumerate(non_image_wrapped):
+            for l2 in non_image_wrapped[i + 1:]:
+                v_ov = min(l1["y1"], l2["y1"]) - max(l1["y0"], l2["y0"])
+                min_lh = max(1.0, min(l1["y1"] - l1["y0"], l2["y1"] - l2["y0"]))
+                h_gap = max(l1["x0"], l2["x0"]) - min(l1["x1"], l2["x1"])
+                if v_ov > 0.35 * min_lh and h_gap >= 0.75 * self.mu_w:
+                    has_side_by_side_text = True
+                    break
+            if has_side_by_side_text:
+                break
+
+        if not has_side_by_side_text:
+            return []
+
+        hist = [0] * int(self.page_width + 2)
+        for line in non_image_wrapped:
+            line_w = line["x1"] - line["x0"]
+            if line_w < 0.72 * self.page_width:
+                x_start = max(0, int(math.floor(line["x0"])))
+                x_end = min(int(self.page_width), int(math.ceil(line["x1"])))
+                for x in range(x_start, x_end):
+                    hist[x] += 1
+
+        active_xs = [x for x, count in enumerate(hist) if count > 0]
+        if not active_xs:
+            return []
+
+        x_min = max(int(self.page_width * 0.10), min(active_xs) + int(3.5 * self.mu_w))
+        x_max = min(int(self.page_width * 0.90), max(active_xs) - int(3.5 * self.mu_w))
+        if x_min >= x_max:
+            return []
+
+        raw_gutters: List[Tuple[float, float]] = []
+        in_gutter = False
+        g_start = x_min
+
+        for x in range(x_min, x_max + 1):
+            if hist[x] == 0:
+                if not in_gutter:
+                    in_gutter = True
+                    g_start = x
+            else:
+                if in_gutter:
+                    in_gutter = False
+                    gw = x - g_start
+                    if gw >= 0.75 * self.mu_w:
+                        raw_gutters.append((float(g_start), float(x)))
+
+        if in_gutter and (x_max - g_start) >= 0.75 * self.mu_w:
+            raw_gutters.append((float(g_start), float(x_max)))
+
+        valid_gutters: List[Tuple[float, float]] = []
+        for g0, g1 in raw_gutters:
+            g_mid = 0.5 * (g0 + g1)
+            left_lines = [l for l in non_image_wrapped if l["x1"] <= g1 + 2.5]
+            right_lines = [l for l in non_image_wrapped if l["x0"] >= g0 - 2.5]
+            if len(left_lines) >= 2 and len(right_lines) >= 2:
+                valid_gutters.append((g0, g1))
+            elif any(abs(g_mid - vr[0]) <= 4.0 for vr in self.vertical_rules) and left_lines and right_lines:
+                valid_gutters.append((g0, g1))
+
+        return valid_gutters
+
+    def _detect_gutters(self, lines: List[Dict[str, Any]]) -> List[Tuple[float, float]]:
+        """Backwards-compatible wrapper for zone-level gutter detection."""
+        for line in lines:
+            if "is_image_wrapped" not in line:
+                line["is_image_wrapped"] = self._is_wrapped_beside_image(line)
+        return self._detect_zone_gutters(lines)
+
+    def _order_column_with_image_wrap(self, col_blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Orders blocks within a single column so that figure captions/callouts sitting beside
+        narrow image-wrapped text lines do not slice the wrapped text mid-paragraph.
+        """
+        sorted_items = sorted(col_blocks, key=lambda b: (b.get("y0", 0.0), b.get("x0", 0.0)))
+        if len(sorted_items) <= 1:
+            return sorted_items
+
+        wrapped_y_ranges: List[Tuple[float, float]] = []
+        for b in sorted_items:
+            if b.get("type", "text") == "text" and b.get("is_image_wrapped", False):
+                wrapped_y_ranges.append((b["y0"] - 0.5 * self.mu_h, b["y1"] + 0.5 * self.mu_h))
+
+        if not wrapped_y_ranges:
+            return sorted_items
+
+        # Merge overlapping wrapped Y intervals
+        wrapped_y_ranges.sort(key=lambda r: r[0])
+        merged_ranges: List[List[float]] = [[wrapped_y_ranges[0][0], wrapped_y_ranges[0][1]]]
+        for r0, r1 in wrapped_y_ranges[1:]:
+            if r0 <= merged_ranges[-1][1] + 1.5 * self.mu_h:
+                merged_ranges[-1][1] = max(merged_ranges[-1][1], r1)
+            else:
+                merged_ranges.append([r0, r1])
+
+        result: List[Dict[str, Any]] = []
+        deferred_floats: List[Tuple[float, Dict[str, Any]]] = []
+
+        for item in sorted_items:
+            b_type = item.get("type", "text")
+            iy0 = item.get("y0", 0.0)
+
+            # Flush any deferred captions whose wrapped text band has completed
+            still_deferred: List[Tuple[float, Dict[str, Any]]] = []
+            for release_y, flt in deferred_floats:
+                if iy0 > release_y:
+                    result.append(flt)
+                else:
+                    still_deferred.append((release_y, flt))
+            deferred_floats = still_deferred
+
+            if b_type in {"caption", "callout"}:
+                # Check if this caption/callout overlaps vertically with narrow image-wrapped text lines
+                matched_release_y = None
+                for rng0, rng1 in merged_ranges:
+                    if rng0 <= iy0 <= rng1:
+                        matched_release_y = rng1
+                        break
+                if matched_release_y is not None:
+                    deferred_floats.append((matched_release_y, item))
+                    continue
+
+            result.append(item)
+
+        for _, flt in deferred_floats:
+            result.append(flt)
+
+        return result
+
     def _topological_dag_reading_order(self, lines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Orders blocks using a constrained Topological DAG:
-        1. Detect vertical column gutters & horizontal rule dividers.
-        2. Slice into horizontal zones at spanning elements.
-        3. Sort column-first within each zone, integrating tables and callouts seamlessly.
+        1. Flag lines wrapped beside raster/vector images.
+        2. Slice into horizontal zones at true spanning elements.
+        3. Detect column gutters locally per zone and keep image-wrapped text continuous.
         """
         non_text = self.tables_markdown + self.callout_blocks + self.caption_blocks
         if not lines:
             return sorted(non_text, key=lambda b: (b.get("y0", 0.0), b.get("x0", 0.0)))
 
-        gutters = self._detect_gutters(lines)
+        for line in lines:
+            line["is_image_wrapped"] = self._is_wrapped_beside_image(line)
 
-        spanning_y_dividers: List[float] = []
-        for hr in self.horizontal_rules:
-            spanning_y_dividers.append(hr[1])
+        raw_dividers: List[float] = [
+            hr[1] for hr in self.horizontal_rules if (hr[2] - hr[0]) >= 0.55 * self.page_width
+        ]
 
         for line in lines:
             line_w = line["x1"] - line["x0"]
             l_bbox = line.get("bbox", (line["x0"], line["y0"], line["x1"], line["y1"]))
             in_banner = self._is_in_header_banner(l_bbox)
-            is_heading_candidate = line["size"] >= 1.08 * self.mu_size or (line["is_bold"] and line["size"] >= self.mu_size) or in_banner
-            crosses_gutter = any(line["x0"] < (g[0] + g[1]) / 2.0 and line["x1"] > (g[0] + g[1]) / 2.0 for g in gutters)
-            if (line_w >= 0.55 * self.page_width or crosses_gutter or in_banner) and is_heading_candidate:
-                spanning_y_dividers.append(line["y0"])
+            is_heading_candidate = (
+                line["size"] >= 1.12 * self.mu_size
+                or ((line["is_bold"] or line.get("is_accent_color", False)) and line["size"] >= 1.0 * self.mu_size)
+                or in_banner
+            )
+            if (line_w >= 0.62 * self.page_width or in_banner) and is_heading_candidate:
+                raw_dividers.append(line["y0"] - 1.0)
+                raw_dividers.append(line["y1"] + 1.0)
 
         for nt in non_text:
-            nt_w = nt.get("x1", 0) - nt.get("x0", 0)
-            if nt_w >= 0.55 * self.page_width:
-                spanning_y_dividers.append(nt["y0"])
+            nt_w = nt.get("x1", 0.0) - nt.get("x0", 0.0)
+            if nt_w >= 0.62 * self.page_width:
+                raw_dividers.append(nt["y0"] - 1.0)
+                raw_dividers.append(nt["y1"] + 1.0)
 
-        spanning_y_dividers.sort()
+        spanning_y_dividers: List[float] = []
+        for y_val in sorted(raw_dividers):
+            if not spanning_y_dividers or abs(y_val - spanning_y_dividers[-1]) > 4.0:
+                spanning_y_dividers.append(y_val)
 
         all_blocks = list(lines) + list(non_text)
         all_blocks.sort(key=lambda b: (b.get("y0", 0.0), b.get("x0", 0.0)))
@@ -548,11 +961,13 @@ class AdaptivePdfLayoutEngine:
 
         for block in all_blocks:
             by0 = block.get("y0", 0.0)
-            if div_idx < len(spanning_y_dividers) and by0 >= spanning_y_dividers[div_idx]:
-                if current_zone:
-                    zones.append(current_zone)
-                    current_zone = []
+            crossed = False
+            while div_idx < len(spanning_y_dividers) and by0 >= spanning_y_dividers[div_idx]:
+                crossed = True
                 div_idx += 1
+            if crossed and current_zone:
+                zones.append(current_zone)
+                current_zone = []
             current_zone.append(block)
 
         if current_zone:
@@ -560,65 +975,49 @@ class AdaptivePdfLayoutEngine:
 
         ordered_blocks: List[Dict[str, Any]] = []
         for zone in zones:
+            gutters = self._detect_zone_gutters(zone)
             if not gutters or len(zone) <= 1:
+                norm_lines = [
+                    b for b in zone if b.get("type", "text") == "text" and not b.get("is_image_wrapped", False)
+                ] or zone
+                c_min_x = min(b.get("x0", 0.0) for b in norm_lines)
+                c_max_x = max(b.get("x1", self.page_width) for b in norm_lines)
                 for b in zone:
                     b["col_idx"] = 0
-                ordered_blocks.extend(sorted(zone, key=lambda b: (b.get("y0", 0.0), b.get("x0", 0.0))))
+                    b["col_min_x"] = c_min_x
+                    b["col_max_x"] = c_max_x
+                ordered_blocks.extend(self._order_column_with_image_wrap(zone))
             else:
                 cols: Dict[int, List[Dict[str, Any]]] = {}
                 for block in zone:
-                    bx_mid = (block.get("x0", 0.0) + block.get("x1", 0.0)) / 2.0
+                    bx0 = block.get("x0", 0.0)
+                    bx1 = block.get("x1", 0.0)
+                    bx_mid = 0.5 * (bx0 + bx1)
                     col_idx = 0
                     for g_i, g in enumerate(gutters):
-                        if bx_mid > g[1]:
+                        if bx0 >= g[0] - 1.5 * self.mu_w or bx_mid > g[1]:
                             col_idx = g_i + 1
                     block["col_idx"] = col_idx
                     cols.setdefault(col_idx, []).append(block)
 
                 for c_k in sorted(cols.keys()):
-                    ordered_blocks.extend(sorted(cols[c_k], key=lambda b: (b.get("y0", 0.0), b.get("x0", 0.0))))
+                    col_items = cols[c_k]
+                    norm_col_lines = [
+                        b for b in col_items
+                        if b.get("type", "text") == "text" and not b.get("is_image_wrapped", False)
+                    ] or col_items
+                    c_min_x = min(b.get("x0", 0.0) for b in norm_col_lines)
+                    c_max_x = max(b.get("x1", self.page_width) for b in norm_col_lines)
+                    for b in col_items:
+                        b["col_min_x"] = c_min_x
+                        b["col_max_x"] = c_max_x
+                    ordered_blocks.extend(self._order_column_with_image_wrap(col_items))
 
         return ordered_blocks
 
-    def _detect_gutters(self, lines: List[Dict[str, Any]]) -> List[Tuple[float, float]]:
-        """Builds a 1D X-histogram to locate column gutters, reinforced by vertical rules."""
-        hist = [0] * int(self.page_width + 1)
-        for line in lines:
-            line_w = line["x1"] - line["x0"]
-            if line_w < 0.65 * self.page_width:
-                x_start = max(0, int(line["x0"]))
-                x_end = min(int(self.page_width), int(line["x1"]))
-                for x in range(x_start, x_end):
-                    hist[x] += 1
-
-        gutters: List[Tuple[float, float]] = []
-        in_gutter = False
-        g_start = 0
-
-        x_min = int(self.page_width * 0.08)
-        x_max = int(self.page_width * 0.92)
-
-        for x in range(x_min, x_max):
-            if hist[x] <= 1:
-                if not in_gutter:
-                    in_gutter = True
-                    g_start = x
-            else:
-                if in_gutter:
-                    in_gutter = False
-                    gw = x - g_start
-                    if gw >= 2.0 * self.mu_w:
-                        gutters.append((float(g_start), float(x)))
-                    elif gw >= 0.85 * self.mu_w:
-                        mid_g = (g_start + x) / 2.0
-                        if any(abs(mid_g - vr[0]) <= 3.5 for vr in self.vertical_rules):
-                            gutters.append((float(g_start), float(x)))
-
-        return gutters
-
     def _merge_wrapped_headings(self, ordered_blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Merges multi-line wrapped headings of identical typography before level classification
+        Merges multi-line wrapped headings of identical typography (and color) before level classification
         so 2-line main headings are not split into separate H1/H2 entries.
         """
         if not ordered_blocks:
@@ -640,6 +1039,7 @@ class AdaptivePdfLayoutEngine:
             curr_text = curr.get("text", "").strip()
             curr_sz = curr.get("size", self.mu_size)
             curr_bold = curr.get("is_bold", False)
+            curr_accent = curr.get("is_accent_color", False)
             curr_lead_bold = bool(curr.get("lead_in_bold"))
 
             curr_bbox = curr.get("bbox", (curr.get("x0", 0), curr.get("y0", 0), curr.get("x1", 0), curr.get("y1", 0)))
@@ -648,7 +1048,7 @@ class AdaptivePdfLayoutEngine:
             is_candidate = (
                 not curr_lead_bold
                 and not list_start_re.match(curr_text)
-                and (curr_sz >= 1.04 * self.mu_size or curr_bold or curr_text.isupper() or curr_in_banner)
+                and (curr_sz >= 1.04 * self.mu_size or curr_bold or curr_accent or curr_text.isupper() or curr_in_banner)
                 and len(curr_text) <= 120
                 and not curr_text.endswith((".", ";", "?", "!"))
             )
@@ -664,6 +1064,7 @@ class AdaptivePdfLayoutEngine:
                     nxt_text = nxt.get("text", "").strip()
                     nxt_sz = nxt.get("size", self.mu_size)
                     nxt_bold = nxt.get("is_bold", False)
+                    nxt_accent = nxt.get("is_accent_color", False)
                     nxt_bbox = nxt.get("bbox", (nxt.get("x0", 0), nxt.get("y0", 0), nxt.get("x1", 0), nxt.get("y1", 0)))
                     nxt_in_banner = self._is_in_header_banner(nxt_bbox)
                     v_gap = nxt.get("y0", 0.0) - curr.get("y1", 0.0)
@@ -671,12 +1072,16 @@ class AdaptivePdfLayoutEngine:
 
                     same_style = (
                         abs(curr_sz - nxt_sz) <= 0.8
-                        and (curr_bold == nxt_bold or curr_in_banner or nxt_in_banner)
+                        and (
+                            (curr_bold == nxt_bold and curr_accent == nxt_accent)
+                            or curr_in_banner
+                            or nxt_in_banner
+                        )
                         and not nxt.get("lead_in_bold")
                         and not list_start_re.match(nxt_text)
                     )
                     if not (curr_in_banner or nxt_in_banner):
-                        same_style = same_style and (curr_text.isupper() == nxt_text.isupper() or curr_bold)
+                        same_style = same_style and (curr_text.isupper() == nxt_text.isupper() or curr_bold or curr_accent)
                     tight_vertical = (
                         (-0.85 * max(curr_sz, self.mu_h) <= v_gap <= 0.85 * max(curr_sz, self.mu_h))
                         or (0.0 <= v_pitch <= 1.5 * max(curr_sz, self.mu_h))
@@ -711,7 +1116,7 @@ class AdaptivePdfLayoutEngine:
         Determines exact heading hierarchy level:
         - Level 1 (H1): Chapter / Part / Main Article Title
         - Level 2 (H2): Major Section Heading
-        - Level 3 (H3): Subheading
+        - Level 3 (H3): Subheading (including same-size colored or bold headings)
         - Level 4 (H4): Minor Sub-subheading
         Returns None if the line is standard body text or a list item.
         """
@@ -726,6 +1131,7 @@ class AdaptivePdfLayoutEngine:
         sz = item.get("size", self.mu_size)
         is_bold = item.get("is_bold", False)
         is_italic = item.get("is_italic", False)
+        is_accent = item.get("is_accent_color", False)
         bbox = item.get("bbox", (0.0, 0.0, 0.0, 0.0))
         line_w = bbox[2] - bbox[0]
         is_spanning = line_w >= 0.60 * self.page_width
@@ -753,13 +1159,14 @@ class AdaptivePdfLayoutEngine:
             "ETIOLOGY AND RISK FACTORS", "ETIOLOGY", "MANAGEMENT", "OVERVIEW",
             "EPIDEMIOLOGY", "PREVENTION", "DIAGNOSTIC WORKUP", "COMPLICATIONS",
             "PATIENT EVALUATION", "TREATMENT", "CLINICAL FEATURES", "PATHOGENESIS",
+            "PROGNOSIS", "DIFFERENTIAL DIAGNOSIS", "LABORATORY FINDINGS",
         )
         norm_upper_text = re.sub(r"\s+", " ", l_text.upper()).strip(" :.")
         if any(norm_upper_text == h_kw or norm_upper_text.startswith(h_kw) for h_kw in _MED_SECTION_HEADINGS):
-            if is_bold or sz >= 1.02 * self.mu_size or in_banner:
+            if is_bold or is_accent or sz >= 1.02 * self.mu_size or in_banner:
                 return 2
 
-        if is_bold or sz >= 1.05 * self.mu_size or in_banner:
+        if is_bold or is_accent or sz >= 1.05 * self.mu_size or in_banner:
             if re.match(r"^\d{1,2}\.\d{1,2}\.\d{1,2}\.?\s+[A-Z]", l_text):
                 return 4
             if re.match(r"^(\d{1,2}\.\d{1,2}\.?|[A-Z]\.)\s+[A-Z]", l_text):
@@ -772,7 +1179,7 @@ class AdaptivePdfLayoutEngine:
             return None
 
         v_gap = (bbox[1] - prev_y1) if prev_y1 is not None else (1.5 * self.mu_h)
-        has_top_spacing = v_gap >= 0.25 * self.mu_h
+        has_top_spacing = v_gap >= 0.20 * self.mu_h
 
         tier_idx = None
         for idx, t_sz in enumerate(self.heading_size_tiers):
@@ -787,30 +1194,32 @@ class AdaptivePdfLayoutEngine:
             return 1
 
         # 4. H2: Main Section Heading
-        if sz >= 1.18 * self.mu_size and (is_bold or is_all_caps or in_banner):
+        if sz >= 1.18 * self.mu_size and (is_bold or is_accent or is_all_caps or in_banner):
             return 2
         if in_banner and (is_spanning or is_all_caps or sz >= 1.05 * self.mu_size):
             return 2
-        if is_bold and is_all_caps and sz >= 1.02 * self.mu_size and len(l_text) <= 90:
+        if (is_bold or is_accent) and is_all_caps and sz >= 0.98 * self.mu_size and len(l_text) <= 95:
             return 2
-        if is_bold and is_spanning and sz >= 1.08 * self.mu_size and len(l_text) <= 100:
+        if (is_bold or is_accent) and is_spanning and sz >= 1.08 * self.mu_size and len(l_text) <= 100:
             return 2
 
-        # 5. H3: Subheading
+        # 5. H3: Subheading (includes same-size colored headings and bold headings)
         min_h3_scale = 1.02 if promote_headings else 1.04
         if in_banner:
             return 3
+        if is_accent and sz >= 0.96 * self.mu_size and len(l_text) <= 95 and not item.get("lead_in_bold"):
+            return 3 if not is_italic else 4
         if is_bold and sz >= min_h3_scale * self.mu_size and not is_italic and len(l_text) <= 90:
             return 3
-        if is_all_caps and (is_bold or sz >= 1.0 * self.mu_size) and len(l_text) <= 75 and has_top_spacing:
+        if is_all_caps and (is_bold or is_accent or sz >= 1.0 * self.mu_size) and len(l_text) <= 75 and has_top_spacing:
             return 3
         if is_bold and not is_italic and sz >= 0.98 * self.mu_size and len(l_text) <= 70 and has_top_spacing:
             return 3
 
         # 6. H4: Minor Sub-subheading
-        if is_bold and is_italic and sz >= 0.96 * self.mu_size and len(l_text) <= 70:
+        if (is_bold or is_accent) and is_italic and sz >= 0.96 * self.mu_size and len(l_text) <= 70:
             return 4
-        if promote_headings and is_bold and sz >= 0.96 * self.mu_size and len(l_text) <= 65:
+        if promote_headings and (is_bold or is_accent) and sz >= 0.96 * self.mu_size and len(l_text) <= 65:
             return 4
 
         return None
@@ -820,7 +1229,8 @@ class AdaptivePdfLayoutEngine:
     ) -> Dict[str, Any]:
         """
         Merges wrapped headings, classifies H1-H4 hierarchy levels and run-in headings,
-        maintains a stateful parent-child heading stack, and formats clean Markdown.
+        maintains a stateful parent-child heading stack, and formats clean Markdown with
+        seamless paragraph continuation across inline figures.
         """
         blocks = self._merge_wrapped_headings(ordered_blocks)
 
@@ -833,6 +1243,7 @@ class AdaptivePdfLayoutEngine:
 
         current_paragraph: List[str] = []
         para_bbox: Optional[List[float]] = None
+        pending_floats: List[Dict[str, Any]] = []
         prev_line: Optional[Dict[str, Any]] = None
         order_counter = 1
 
@@ -868,6 +1279,24 @@ class AdaptivePdfLayoutEngine:
                 round(b[3] / self.page_height, 4),
             ]
 
+        def flush_pending_floats() -> None:
+            nonlocal pending_floats, order_counter
+            while pending_floats:
+                flt = pending_floats.pop(0)
+                f_type = flt.get("type", "caption")
+                f_bbox = flt.get("bbox", (0.0, 0.0, 0.0, 0.0))
+                md_content = flt.get("markdown", "").strip()
+                if md_content:
+                    output_parts.append(md_content)
+                layout_boxes.append({
+                    "order": order_counter,
+                    "type": f_type,
+                    "bbox": to_norm_bbox(f_bbox),
+                    "markdown": md_content,
+                    "label": f"{f_type.title()} #{order_counter}",
+                })
+                order_counter += 1
+
         def flush_paragraph() -> None:
             nonlocal current_paragraph, para_bbox, order_counter
             if current_paragraph:
@@ -885,6 +1314,7 @@ class AdaptivePdfLayoutEngine:
                         order_counter += 1
                 current_paragraph = []
                 para_bbox = None
+            flush_pending_floats()
 
         list_pattern = re.compile(r"^([•▪▸◦‣⁃\-\*]|\d+[\.\)]|\([a-zA-Z0-9]+\))\s+(.+)$")
         run_in_regex = re.compile(
@@ -898,6 +1328,16 @@ class AdaptivePdfLayoutEngine:
             norm_bbox = to_norm_bbox(bbox)
 
             if b_type in {"table", "callout", "caption"}:
+                # If a caption or callout interrupts an unfinished sentence mid-paragraph, defer it until paragraph flush
+                if (
+                    b_type in {"caption", "callout"}
+                    and current_paragraph
+                    and prev_line is not None
+                    and not prev_line["text"].rstrip().endswith((".", "!", "?", ":"))
+                ):
+                    pending_floats.append(item)
+                    continue
+
                 flush_paragraph()
                 md_content = item.get("markdown", "").strip()
                 if md_content:
@@ -910,7 +1350,6 @@ class AdaptivePdfLayoutEngine:
                     "label": f"{b_type.title()} #{order_counter}",
                 })
                 order_counter += 1
-                prev_line = None
                 continue
 
             l_text = item.get("text", "").strip()
@@ -993,20 +1432,51 @@ class AdaptivePdfLayoutEngine:
             if current_paragraph and prev_line is not None:
                 same_col = item.get("col_idx", 0) == prev_line.get("col_idx", 0)
                 v_gap = bbox[1] - prev_line["y1"]
+                v_pitch = bbox[1] - prev_line["y0"]
                 col_min_x = item.get("col_min_x", min(bbox[0], prev_line["x0"]))
                 col_max_x = item.get("col_max_x", max(bbox[2], prev_line["x1"]))
 
-                large_v_gap = v_gap > 0.65 * self.mu_h
+                curr_wrapped = item.get("is_image_wrapped", False)
+                prev_wrapped = prev_line.get("is_image_wrapped", False)
+
+                # Detect if an inline image obstacle sits between prev_line and current line
+                bridged_over_image = False
+                if same_col and v_gap > 1.1 * self.mu_h:
+                    for img_r in self.image_bboxes:
+                        if img_r[1] >= prev_line["y0"] - 1.5 * self.mu_h and img_r[3] <= bbox[3] + 1.5 * self.mu_h:
+                            bridged_over_image = True
+                            break
+
+                prev_txt = prev_line["text"].rstrip()
+                ends_sentence = prev_txt.endswith((".", "!", "?", ":"))
+                starts_lower = bool(l_text and l_text[0].islower())
+
+                # Require a genuine vertical paragraph gap (> 0.95 * mu_h and baseline pitch > 1.55 * mu_h)
+                large_v_gap = (v_gap > 0.95 * self.mu_h and v_pitch > 1.55 * self.mu_h) and not bridged_over_image
+
+                eff_max_x = prev_line["x1"] if prev_wrapped else col_max_x
                 prev_short_line = (
-                    prev_line["x1"] < col_max_x - 3.5 * self.mu_w
-                    and prev_line["text"].rstrip().endswith((".", "!", "?", ":"))
-                )
-                first_line_indent = (
-                    (bbox[0] - col_min_x) >= 1.2 * self.mu_w
-                    and (bbox[0] - prev_line["x0"]) >= 1.0 * self.mu_w
+                    ends_sentence
+                    and not starts_lower
+                    and (prev_line["x1"] < eff_max_x - 4.0 * self.mu_w)
                 )
 
-                if not same_col or large_v_gap or prev_short_line or first_line_indent:
+                first_line_indent = (
+                    not curr_wrapped
+                    and not prev_wrapped
+                    and ends_sentence
+                    and (bbox[0] - col_min_x) >= 1.3 * self.mu_w
+                    and (bbox[0] - prev_line["x0"]) >= 1.1 * self.mu_w
+                )
+
+                # Continuation override if previous line did not end with sentence punctuation
+                force_join = (
+                    not ends_sentence
+                    and same_col
+                    and (starts_lower or curr_wrapped or prev_wrapped or bridged_over_image or v_gap <= 1.25 * self.mu_h)
+                )
+
+                if not force_join and (not same_col or large_v_gap or prev_short_line or first_line_indent):
                     flush_paragraph()
 
             current_paragraph.append(l_text)
@@ -1042,7 +1512,7 @@ class AdaptivePdfLayoutEngine:
 
 
 def _get_docling_converter(do_ocr: bool) -> Any:
-    """Initializes and caches a CPU-only Docling DocumentConverter instance."""
+    """Initializes and caches a CPU-only Docling DocumentConverter instance (using Heron RT-DETRv2 layout model)."""
     if not _DOCLING_AVAILABLE:
         return None
 
@@ -1073,7 +1543,7 @@ def _get_docling_converter(do_ocr: bool) -> Any:
 def _serialize_docling_ast(doc: Any, hierarchy_tree: Optional[List[Dict[str, Any]]] = None) -> str:
     """
     Serializes a DoclingDocument AST into Markdown while calibrating H1-H4 levels
-    using the typography/TOC hierarchy tree from AdaptivePdfLayoutEngine.
+    (and promoting colored/typographic headings) using AdaptivePdfLayoutEngine's hierarchy tree.
     """
     level_lookup: Dict[str, int] = {}
     for h_node in (hierarchy_tree or []):
@@ -1091,6 +1561,9 @@ def _serialize_docling_ast(doc: Any, hierarchy_tree: Optional[List[Dict[str, Any
     for item, level in iterator:
         label = getattr(item, "label", None)
         text_val = getattr(item, "text", "").strip() if hasattr(item, "text") else ""
+
+        if label in {DocItemLabel.PAGE_HEADER, DocItemLabel.PAGE_FOOTER}:
+            continue
 
         if label == DocItemLabel.TITLE and text_val:
             blocks.append(f"# {text_val}")
@@ -1134,7 +1607,13 @@ def _serialize_docling_ast(doc: Any, hierarchy_tree: Optional[List[Dict[str, Any
         elif label == DocItemLabel.FOOTNOTE and text_val:
             blocks.append(f"> ^[Footnote]: {text_val}")
         elif text_val:
-            blocks.append(text_val)
+            # Check if AdaptivePdfLayoutEngine identified this short line as a colored/typographic heading
+            norm_t = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", text_val.lower())).strip()
+            if len(text_val) <= 110 and norm_t in level_lookup:
+                lvl = level_lookup[norm_t]
+                blocks.append(f"{'#' * lvl} {text_val}")
+            else:
+                blocks.append(text_val)
 
     return "\n\n".join(b for b in blocks if b)
 
@@ -1148,9 +1627,9 @@ def extract_page_with_docling_v2(
 ) -> Dict[str, Any]:
     """
     Docling v2 Memory-Safe Single-Page Extraction:
-    - Slices requested page into a temporary 1-page PDF buffer
+    - Slices requested page into a temporary 1-page PDF buffer wrapped in DocumentStream
     - Auto-detects whether OCR is necessary
-    - Formats Markdown and recovers shaded callout boxes from PyMuPDF
+    - Calibrates headings and image-wrapped text against AdaptivePdfLayoutEngine
     """
     norm_path = str(Path(file_path).resolve())
     title = default_title or Path(norm_path).stem
@@ -1163,7 +1642,7 @@ def extract_page_with_docling_v2(
         page_toc=page_toc,
     )
 
-    if not _DOCLING_AVAILABLE:
+    if not _DOCLING_AVAILABLE or DocumentStream is None:
         logger.info("Docling library not installed; cleanly falling back to Adaptive Multi-Column Layout.")
         return adaptive_res
 
@@ -1187,9 +1666,12 @@ def extract_page_with_docling_v2(
         if converter is None:
             return adaptive_res
 
-        doc_input = io.BytesIO(pdf_bytes)
+        doc_input = DocumentStream(name=f"page_{page_number}.pdf", stream=io.BytesIO(pdf_bytes))
         conv_res = converter.convert(doc_input)
-        raw_docling_md = _serialize_docling_ast(conv_res.document, hierarchy_tree=adaptive_res.get("hierarchy_tree", []))
+        raw_docling_md = _serialize_docling_ast(
+            conv_res.document,
+            hierarchy_tree=adaptive_res.get("hierarchy_tree", []),
+        )
 
         if not raw_docling_md or len(raw_docling_md.strip()) < 0.25 * len(adaptive_res.get("extracted_text", "")):
             logger.info("Docling output sparse; augmenting with adaptive multi-column recovery.")
@@ -1197,8 +1679,9 @@ def extract_page_with_docling_v2(
 
         formatted_md = clean_pdf_text(raw_docling_md)
         callout_texts = [
-            b.get("markdown", "") for b in adaptive_res.get("layout_boxes", [])
-            if b.get("type") == "callout"
+            b.get("markdown", "")
+            for b in adaptive_res.get("layout_boxes", [])
+            if b.get("type") == "callout" and b.get("markdown", "")[:30] not in formatted_md
         ]
         if callout_texts:
             formatted_md += "\n\n" + "\n\n".join(callout_texts)

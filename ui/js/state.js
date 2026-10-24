@@ -21,7 +21,7 @@ const DEFAULT_PERSISTENCE = {
     skipLMStudio: false,
     obsidianOpenMode: 'browser', // 'browser' | 'app'
     extractorStrategy: 'medspacy', // 'medspacy' | 'regex'
-    pdfParser: 'fitz', // 'fitz' | 'docling'
+    pdfParser: 'docling_v2', // 'docling_v2' | 'fitz' | 'docling'
     panelOpacity: 0.78, // Non-card area transparency (0.10 - 0.95)
     cardOpacity: 0.82,  // Card area transparency (0.35 - 0.98)
     wallpaperIntervalMinutes: 120, // Wallpaper rotation duration in minutes (0 = Never)

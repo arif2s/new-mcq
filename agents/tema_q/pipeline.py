@@ -231,11 +231,11 @@ def _get_pdf_parser_setting() -> str:
             if row:
                 app_state = json.loads(row[0] if isinstance(row, tuple) else row["value"])
                 if isinstance(app_state, dict):
-                    _cached_pdf_parser = str(app_state.get("pdfParser") or "fitz")
+                    _cached_pdf_parser = str(app_state.get("pdfParser") or "docling_v2")
                     return _cached_pdf_parser
     except Exception as exc:
         logger.debug("Failed to fetch pdfParser state: %s", exc)
-    _cached_pdf_parser = "fitz"
+    _cached_pdf_parser = "docling_v2"
     return _cached_pdf_parser
 
 
