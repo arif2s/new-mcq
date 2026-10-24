@@ -312,6 +312,7 @@ async def run_indexing() -> None:
                 )
                 return
 
+            await asyncio.sleep(0)
             index = await asyncio.to_thread(get_index, reset=True)
             writer = (
                 await asyncio.to_thread(index.writer, 50_000_000)

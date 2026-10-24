@@ -399,6 +399,10 @@ def _inspect_ontology_sources() -> Dict[str, Any]:
         for jc in jsonl_candidates:
             if jc and jc.exists() and jc.is_file():
                 found_jsonl = jc
+                try:
+                    folder_size_bytes += jc.stat().st_size
+                except Exception:
+                    pass
                 break
 
         results[kb] = {

@@ -67,13 +67,15 @@ def _has_valid_model_files(directory: Path) -> bool:
     if not directory.exists() or not directory.is_dir():
         return False
     try:
-        tok_file = directory / "tokenizer.json"
-        if not tok_file.is_file() or tok_file.stat().st_size == 0:
-            return False
-        return any(
-            f.is_file() and f.suffix.lower() == ".onnx" and f.stat().st_size > 0
-            for f in directory.iterdir()
+        has_tok = any(
+            f.is_file() and f.name == "tokenizer.json" and f.stat().st_size > 0
+            for f in directory.rglob("*")
         )
+        has_onnx = any(
+            f.is_file() and f.suffix.lower() == ".onnx" and f.stat().st_size > 0
+            for f in directory.rglob("*")
+        )
+        return has_tok and has_onnx
     except OSError:
         return False
 
@@ -108,7 +110,7 @@ def download_flashrank_model(model_name: str) -> Dict[str, Any]:
             _RANKER_CACHE[model_name] = ranker
 
             global _CONFIGURED_MODEL_CACHE
-            _CONFIGURED_MODEL_CACHE = model_name
+            get_configured_flashrank_model(force_refresh=True)
 
             logger.info("Successfully loaded and cached FlashRank model '%s'", model_name)
             return {"status": "success", "model_id": model_name, "downloaded": True}

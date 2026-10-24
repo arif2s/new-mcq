@@ -367,6 +367,20 @@ def get_ontology_files_status() -> Dict[str, Any]:
         has_nmslib = bool(folder and (folder / "nmslib_index.bin").exists())
         has_jsonl = bool(jsonl_path and jsonl_path.exists())
 
+        total_bytes = 0
+        if folder and folder.exists():
+            try:
+                total_bytes += sum(f.stat().st_size for f in folder.glob("**/*") if f.is_file())
+            except Exception:
+                pass
+        if jsonl_path and jsonl_path.exists():
+            try:
+                total_bytes += jsonl_path.stat().st_size
+            except Exception:
+                pass
+
+        size_mb = round(total_bytes / (1024 * 1024), 2)
+
         ontologies_status[kb_key] = {
             "id": kb_key,
             "name": meta["name"],
@@ -382,6 +396,7 @@ def get_ontology_files_status() -> Dict[str, Any]:
             "has_nmslib": has_nmslib,
             "has_nmslib_index": has_nmslib,
             "folder_path": str(folder) if folder else None,
+            "size_mb": size_mb,
         }
 
     tui_path = KBS_DIR / "umls_semantic_type_tree.tsv"

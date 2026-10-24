@@ -621,7 +621,7 @@
                     ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
                     : "glass-panel text-neutral-500 border border-gray-700/50"
                 }">
-                  ${detected ? `${info.size_mb || 0} MB` : "Missing"}
+                  ${detected ? `${info.size_mb !== undefined && info.size_mb !== null ? info.size_mb : 0} MB` : "Missing"}
                 </span>
               </div>
               <div class="space-y-1 text-[11px] text-neutral-400">

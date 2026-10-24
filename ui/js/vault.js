@@ -266,6 +266,27 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function connectIndexingWebSocket() {
+    if (window.appWebSocket && window.appWebSocket.readyState === WebSocket.OPEN) {
+      return;
+    }
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+    try {
+      const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+      ws = new WebSocket(`${protocol}${window.location.host}/ws/indexing`);
+      ws.onmessage = (event) => {
+        try {
+          handleIndexingProgressPayload(JSON.parse(event.data));
+        } catch (_) {}
+      };
+      ws.onerror = () => {
+        try { ws.close(); } catch (_) {}
+      };
+    } catch (_) {}
+  }
+
   // Listen to global WebSocket events dispatched by app.js (/ws) so zero frames are missed
   document.addEventListener('ws:indexing_progress', (e) => {
     handleIndexingProgressPayload(e.detail);
@@ -319,17 +340,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateProgressUI(5, 'Starting hybrid vault indexing...');
 
     // Open dedicated /ws/indexing listener BEFORE firing POST /api/sources/index so fast runs are never missed
-    if (!window.appWebSocket || window.appWebSocket.readyState !== WebSocket.OPEN) {
-      try {
-        const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-        ws = new WebSocket(`${protocol}${window.location.host}/ws/indexing`);
-        ws.onmessage = (event) => {
-          try {
-            handleIndexingProgressPayload(JSON.parse(event.data));
-          } catch (_) {}
-        };
-      } catch (_) {}
-    }
+    connectIndexingWebSocket();
 
     fetch('/api/sources/index', { method: 'POST' })
       .then(res => {

@@ -93,6 +93,7 @@ def get_index(reset: bool = False) -> Optional[Any]:
         return None
 
     with _TANTIVY_LOCK:
+        _remove_stale_lock_files()
         if reset:
             _index = None
             gc.collect()  # Release Windows mmap file handles before deletion
@@ -108,6 +109,7 @@ def get_index(reset: bool = False) -> Optional[Any]:
 
         if _index is None:
             os.makedirs(INDEX_PATH, exist_ok=True)
+            _remove_stale_lock_files()
             schema = get_schema()
             try:
                 _index = tantivy.Index(schema, path=str(INDEX_PATH))
@@ -119,6 +121,7 @@ def get_index(reset: bool = False) -> Optional[Any]:
                 except Exception:
                     pass
                 os.makedirs(INDEX_PATH, exist_ok=True)
+                _remove_stale_lock_files()
                 _index = tantivy.Index(schema, path=str(INDEX_PATH))
         return _index
 
