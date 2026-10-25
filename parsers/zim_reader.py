@@ -608,6 +608,10 @@ def get_zim_article_html(
 
             safe_html = _SRC_RE.sub(_rewrite_src, safe_html)
 
+            # Ensure HTML is wrapped in .mw-parser-output scope for MediaWiki/openZIM styling
+            if "mw-parser-output" not in safe_html:
+                safe_html = f'<div class="mw-parser-output">{safe_html}</div>'
+
             return {
                 "status": "success",
                 "title": canonical_title,

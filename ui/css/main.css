@@ -898,3 +898,242 @@ body.dark-theme .moon-icon { display: none; }
   padding: 2px 5px;
   border-radius: 4px;
 }
+
+/* =========================================================
+   MediaWiki & openZIM Offline Reader Overrides (.mw-parser-output)
+   Harvested & adapted from MediaWiki:Common.css, Vector/Minerva skins,
+   and openZIM MWOffliner styles.
+   ========================================================= */
+
+.mw-parser-output {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--text-primary);
+  line-height: 1.6;
+  font-size: 0.95rem;
+  word-wrap: break-word;
+}
+
+.mw-parser-output p {
+  margin: 0.5em 0 1em 0;
+  color: var(--text-primary);
+}
+
+.mw-parser-output h1,
+.mw-parser-output h2,
+.mw-parser-output h3,
+.mw-parser-output h4,
+.mw-parser-output h5,
+.mw-parser-output h6 {
+  color: var(--text-primary);
+  font-weight: 700;
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
+  border-bottom: 1px solid var(--panel-border);
+  padding-bottom: 0.25em;
+}
+
+/* Links inside ZIM articles */
+.mw-parser-output a {
+  color: var(--c-brand-400, #a78bfa);
+  text-decoration: none;
+}
+.mw-parser-output a:hover {
+  text-decoration: underline;
+}
+
+/* Infoboxes and Navboxes */
+.mw-parser-output .infobox,
+.mw-parser-output table.infobox {
+  border: 1px solid var(--panel-border);
+  background-color: var(--glass-subpanel-bg);
+  color: var(--text-primary);
+  margin: 0.5em 0 1em 1em;
+  padding: 0.4em;
+  float: right;
+  clear: right;
+  width: 22em;
+  max-width: 100%;
+  font-size: 0.88em;
+  line-height: 1.5;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.mw-parser-output .infobox th,
+.mw-parser-output .infobox td {
+  padding: 6px 10px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.mw-parser-output .infobox th {
+  background: rgba(139, 92, 246, 0.15);
+  text-align: left;
+  font-weight: 600;
+}
+
+.mw-parser-output .navbox,
+.mw-parser-output table.navbox {
+  box-sizing: border-box;
+  border: 1px solid var(--panel-border);
+  background-color: var(--glass-subpanel-bg);
+  width: 100%;
+  clear: both;
+  font-size: 0.88em;
+  text-align: center;
+  padding: 4px;
+  margin: 1em 0;
+  border-radius: 10px;
+}
+
+.mw-parser-output .navbox-title,
+.mw-parser-output .navbox-abovebelow,
+.mw-parser-output table.navbox th {
+  background: rgba(139, 92, 246, 0.18);
+  font-weight: bold;
+  padding: 6px 10px;
+}
+
+/* Wikitables */
+.mw-parser-output table.wikitable {
+  background-color: var(--glass-subpanel-bg);
+  color: var(--text-primary);
+  margin: 1em 0;
+  border: 1px solid var(--panel-border);
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.9em;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mw-parser-output table.wikitable th,
+.mw-parser-output table.wikitable td {
+  border: 1px solid var(--panel-border);
+  padding: 8px 12px;
+}
+
+.mw-parser-output table.wikitable th {
+  background-color: rgba(139, 92, 246, 0.18);
+  font-weight: 700;
+  text-align: left;
+}
+
+.mw-parser-output table.wikitable tr:nth-child(even) {
+  background-color: rgba(128, 128, 128, 0.05);
+}
+
+/* MediaWiki Thumbnails, Galleries and Image Containers */
+.mw-parser-output .thumb,
+.mw-parser-output div.thumb {
+  margin-bottom: 0.8em;
+  width: auto;
+  background-color: transparent;
+}
+
+.mw-parser-output .tright {
+  clear: right;
+  float: right;
+  margin: 0.5em 0 1em 1em;
+}
+
+.mw-parser-output .tleft {
+  clear: left;
+  float: left;
+  margin: 0.5em 1em 1em 0;
+}
+
+.mw-parser-output .thumbinner {
+  border: 1px solid var(--panel-border);
+  padding: 6px;
+  background-color: var(--glass-subpanel-bg);
+  font-size: 0.85em;
+  text-align: center;
+  overflow: hidden;
+  border-radius: 10px;
+  max-width: 100%;
+}
+
+.mw-parser-output .thumbimage {
+  background-color: transparent;
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 auto 6px auto;
+  border-radius: 6px;
+}
+
+.mw-parser-output .thumbcaption {
+  border: none;
+  text-align: left;
+  line-height: 1.4;
+  padding: 4px 2px 2px 2px;
+  color: var(--text-muted);
+  font-size: 0.82em;
+}
+
+.mw-parser-output ul.gallery {
+  margin: 1em 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  list-style: none;
+}
+
+.mw-parser-output li.gallerybox {
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-subpanel-bg);
+  border: 1px solid var(--panel-border);
+  padding: 8px;
+  border-radius: 10px;
+  max-width: 200px;
+}
+
+.mw-parser-output li.gallerybox div.thumb {
+  border: none;
+  margin: 0;
+  text-align: center;
+}
+
+/* Hatnotes and Callouts */
+.mw-parser-output .hatnote,
+.mw-parser-output div.hatnote {
+  font-style: italic;
+  padding-left: 1.6em;
+  margin-bottom: 0.5em;
+  color: var(--text-muted);
+  font-size: 0.88em;
+}
+
+/* References & Citations */
+.mw-parser-output .reflist,
+.mw-parser-output div.reflist,
+.mw-parser-output ol.references {
+  font-size: 0.85em;
+  margin-top: 1em;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.mw-parser-output ol.references li {
+  margin-bottom: 0.4em;
+}
+
+/* Math, LaTeX and Chemical formula blocks */
+.mw-parser-output .mwe-math-fallback-image-inline,
+.mw-parser-output .mwe-math-element {
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0.2em 0.1em;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Clearfix for floating elements inside articles */
+.mw-parser-output::after {
+  content: "";
+  display: table;
+  clear: both;
+}

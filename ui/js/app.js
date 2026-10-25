@@ -14,11 +14,13 @@ const _PURIFY_ALLOWED_TAGS = [
     'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'sup', 'sub',
     'mark', 'details', 'summary', 'kbd', 'style', 'figure', 'figcaption',
     'span', 'div', 'p', 'b', 'i', 'strong', 'em', 'code', 'pre', 'a',
-    'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'br'
+    'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'br',
+    'caption', 'col', 'colgroup', 'section', 'header', 'footer', 'nav', 'article', 'aside', 'main'
 ];
 
 const _PURIFY_ALLOWED_ATTRS = [
-    'target', 'class', 'style', 'src', 'href', 'alt', 'title', 'width', 'height',
+    'target', 'class', 'style', 'src', 'href', 'alt', 'title', 'width', 'height', 'align', 'valign',
+    'colspan', 'rowspan', 'cellpadding', 'cellspacing', 'border', 'role', 'aria-label', 'aria-hidden',
     'data-file', 'data-file-path', 'data-filepath', 'data-vault',
     'data-page', 'data-article-id', 'data-title', 'data-source-type', 'data-anchor'
 ];
