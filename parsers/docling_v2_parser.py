@@ -361,15 +361,23 @@ class AdaptivePdfLayoutEngine:
                     )
 
                     # Running header/footer exclusion (top/bottom margins + standalone page numbers)
-                    in_top_band = y1 <= self.page_height * 0.075
-                    in_bottom_band = y0 >= self.page_height * 0.925
+                    in_top_band = y1 <= self.page_height * 0.08
+                    in_bottom_band = y0 >= self.page_height * 0.92
                     is_page_num = bool(
                         re.match(r"^(page\s*)?\d+(\s*(of|/)\s*\d+)?$|^[ivxlcdm]+$", s_text, re.IGNORECASE)
                     )
+                    is_heading_like = (
+                        is_bold
+                        or (color != 0 and color != self.body_color)
+                        or sz >= 1.05 * self.mu_size
+                        or s_text.isupper()
+                        or bool(re.match(r"^(CHAPTER|PART|SECTION|UNIT|MODULE)\b", s_text, re.IGNORECASE))
+                    )
                     is_marginal = (
-                        (y0 < self.page_height * 0.045)
-                        or (y1 > self.page_height * 0.955)
-                        or ((in_top_band or in_bottom_band) and (is_page_num or len(s_text) <= 95))
+                        (y0 < self.page_height * 0.035 and not is_heading_like)
+                        or (y1 > self.page_height * 0.965 and not is_heading_like)
+                        or ((in_top_band or in_bottom_band) and is_page_num)
+                        or ((in_top_band or in_bottom_band) and not is_heading_like and sz <= 1.02 * self.mu_size and len(s_text) <= 95)
                     )
 
                     span_dict = {
@@ -424,11 +432,12 @@ class AdaptivePdfLayoutEngine:
         self.mu_h = max(8.0, self.mu_h)
         self.mu_w = max(2.5, self.mu_w)
 
-        # Un-flag genuine large chapter/article titles near the top of the page
+        # Un-flag genuine chapter/article titles and section headings near the top or bottom of the page
         for s in all_spans:
-            if s["is_marginal"] and s["size"] >= 1.35 * self.mu_size and s["y0"] >= self.page_height * 0.035:
-                if not re.match(r"^\d+$", s["text"]):
-                    s["is_marginal"] = False
+            if s["is_marginal"]:
+                if s["size"] >= 1.05 * self.mu_size or s["is_bold"] or self._is_accent_color(s.get("color", 0)):
+                    if not re.match(r"^\d+$", s["text"]):
+                        s["is_marginal"] = False
 
         self._compute_heading_size_tiers(all_spans)
 
@@ -464,7 +473,7 @@ class AdaptivePdfLayoutEngine:
                         bottom_footer_rule_y = min(bottom_footer_rule_y or self.page_height, ry0)
 
             # Shallow section header banner background rectangles
-            if fill is not None and 0.9 * self.mu_h <= rh <= 3.5 * self.mu_h and rw >= 0.18 * self.page_width:
+            if fill is not None and 0.5 * self.mu_h <= rh <= 6.0 * self.mu_h and rw >= 0.15 * self.page_width:
                 self.header_banners.append((rx0, ry0, rx1, ry1))
 
             # Also treat large vector diagram clusters as visual figure obstacles if they are non-filled complex paths
@@ -479,16 +488,17 @@ class AdaptivePdfLayoutEngine:
         if spans:
             for s in spans:
                 if top_header_rule_y is not None and s["y1"] <= top_header_rule_y + 2.0:
-                    if s["size"] < 1.35 * self.mu_size:
+                    if s["size"] < 1.05 * self.mu_size and not s["is_bold"] and not self._is_accent_color(s.get("color", 0)):
                         s["is_marginal"] = True
                 if bottom_footer_rule_y is not None and s["y0"] >= bottom_footer_rule_y - 2.0:
-                    s["is_marginal"] = True
+                    if s["size"] < 1.05 * self.mu_size and not s["is_bold"] and not self._is_accent_color(s.get("color", 0)):
+                        s["is_marginal"] = True
 
     def _is_in_header_banner(self, bbox: Tuple[float, float, float, float]) -> bool:
-        """Checks if a text line sits inside a colored/shaded section header banner."""
+        """Checks if a text line sits inside or overlaps a colored/shaded section header banner."""
         cx = (bbox[0] + bbox[2]) * 0.5
         cy = (bbox[1] + bbox[3]) * 0.5
-        return any(_point_in_rect(cx, cy, hb) for hb in self.header_banners)
+        return any(_point_in_rect(cx, cy, hb) or _rects_overlap(bbox, hb) for hb in self.header_banners)
 
     def _isolate_tables_and_callouts(
         self, spans: List[Dict[str, Any]], drawings: List[Dict[str, Any]]
@@ -1270,32 +1280,30 @@ class AdaptivePdfLayoutEngine:
             return 1
 
         # 4. H2: Main Section Heading
-        if sz >= 1.18 * self.mu_size and (is_bold or is_accent or is_all_caps or in_banner):
-            return 2
-        if in_banner and (is_spanning or is_all_caps or sz >= 1.05 * self.mu_size):
+        if in_banner:
+            return 2 if (is_all_caps or sz >= 1.02 * self.mu_size or is_bold or is_spanning or len(l_text) <= 60) else 3
+        if sz >= 1.18 * self.mu_size and (is_bold or is_accent or is_all_caps):
             return 2
         if (is_bold or is_accent) and is_all_caps and sz >= 0.98 * self.mu_size and len(l_text) <= 95:
             return 2
-        if (is_bold or is_accent) and is_spanning and sz >= 1.08 * self.mu_size and len(l_text) <= 100:
+        if (is_bold or is_accent) and is_spanning and sz >= 1.05 * self.mu_size and len(l_text) <= 100:
             return 2
 
         # 5. H3: Subheading (includes same-size colored headings and bold headings)
-        min_h3_scale = 1.02 if promote_headings else 1.04
-        if in_banner:
-            return 3
-        if is_accent and sz >= 0.96 * self.mu_size and len(l_text) <= 95 and not item.get("lead_in_bold"):
+        min_h3_scale = 1.0 if promote_headings else 0.98
+        if is_accent and sz >= 0.95 * self.mu_size and len(l_text) <= 95 and not item.get("lead_in_bold"):
             return 3 if not is_italic else 4
-        if is_bold and sz >= min_h3_scale * self.mu_size and not is_italic and len(l_text) <= 90:
+        if is_bold and sz >= min_h3_scale * self.mu_size and not is_italic and len(l_text) <= 90 and not item.get("lead_in_bold"):
             return 3
-        if is_all_caps and (is_bold or is_accent or sz >= 1.0 * self.mu_size) and len(l_text) <= 75 and has_top_spacing:
+        if is_all_caps and (is_bold or is_accent or sz >= 0.98 * self.mu_size) and len(l_text) <= 85 and has_top_spacing:
             return 3
-        if is_bold and not is_italic and sz >= 0.98 * self.mu_size and len(l_text) <= 70 and has_top_spacing:
+        if is_bold and not is_italic and sz >= 0.96 * self.mu_size and len(l_text) <= 75 and has_top_spacing:
             return 3
 
         # 6. H4: Minor Sub-subheading
-        if (is_bold or is_accent) and is_italic and sz >= 0.96 * self.mu_size and len(l_text) <= 70:
+        if (is_bold or is_accent) and is_italic and sz >= 0.95 * self.mu_size and len(l_text) <= 75:
             return 4
-        if promote_headings and (is_bold or is_accent) and sz >= 0.96 * self.mu_size and len(l_text) <= 65:
+        if promote_headings and (is_bold or is_accent) and sz >= 0.95 * self.mu_size and len(l_text) <= 70:
             return 4
 
         return None
