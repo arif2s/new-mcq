@@ -345,21 +345,32 @@
       btn.addEventListener("click", async () => {
         const modelId = btn.getAttribute("data-id");
         if (!modelId) return;
-        const patch =
-          modelType === "embedding"
-            ? { embeddingModel: modelId, embedding_model: modelId }
-            : { flashrankModel: modelId, flashrank_model: modelId };
 
-        if (window.AppState && window.AppState.update) {
-          await window.AppState.update(patch);
-        } else {
-          await fetch("/api/state/app_persistence", {
-            method: "PATCH",
+        btn.disabled = true;
+        btn.innerHTML = `<svg class="animate-spin w-3.5 h-3.5 text-white inline mr-1" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg> Activating...`;
+
+        try {
+          const res = await fetch("/api/models/set_active", {
+            method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(patch),
+            body: JSON.stringify({ model_type: modelType, model_id: modelId }),
           });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || "Activation failed");
+
+          const patch =
+            modelType === "embedding"
+              ? { embeddingModel: modelId, embedding_model: modelId }
+              : { flashrankModel: modelId, flashrank_model: modelId };
+
+          if (window.AppState && window.AppState.update) {
+            await window.AppState.update(patch);
+          }
+          refreshFn();
+        } catch (err) {
+          alert(`Failed to activate model: ${err.message}`);
+          refreshFn();
         }
-        refreshFn();
       });
     });
   }
@@ -967,6 +978,80 @@
    * 6. Master Lifecycle Initialization
    * ========================================================================= */
 
+  let _downloadAllPollTimer = null;
+
+  function initDownloadAllEvents() {
+    const btn = $("btn-download-all-defaults");
+    if (!btn || btn.dataset.bound) return;
+    btn.dataset.bound = "1";
+
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      btn.innerHTML = `<svg class="animate-spin w-4 h-4 text-white inline mr-1" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg> Starting Downloader...`;
+
+      try {
+        const res = await fetch("/api/models/download_all", { method: "POST" });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.detail || "Download initialization failed");
+
+        startDownloadAllPolling();
+      } catch (err) {
+        alert(`Download Error: ${err.message}`);
+        btn.disabled = false;
+        btn.textContent = "📥 Download All Required Files";
+      }
+    });
+  }
+
+  function startDownloadAllPolling() {
+    if (_downloadAllPollTimer) clearInterval(_downloadAllPollTimer);
+
+    const container = $("download-all-progress-container");
+    const bar = $("download-all-progress-bar");
+    const label = $("download-all-progress-label");
+    const msg = $("download-all-progress-msg");
+    const btn = $("btn-download-all-defaults");
+
+    if (container) container.classList.remove("hidden");
+
+    _downloadAllPollTimer = setInterval(async () => {
+      try {
+        const res = await fetch("/api/models/download_all_status");
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const pct = Math.max(0, Math.min(100, Math.round(data.progress || 0)));
+        if (bar) bar.style.width = pct + "%";
+        if (label) label.textContent = pct + "%";
+        if (msg) msg.textContent = data.message || "Downloading models & assets...";
+
+        if (data.status === "completed") {
+          clearInterval(_downloadAllPollTimer);
+          _downloadAllPollTimer = null;
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = "✓ All Required Files Downloaded";
+            btn.className = "text-xs px-4 py-2 rounded-lg font-bold bg-emerald-600/80 text-white transition-colors flex items-center gap-1.5 shadow-md cursor-default";
+          }
+          await loadEmbeddingModels();
+          await loadFlashrankModels();
+          await loadScispacyModels();
+          await loadDiagnostics();
+        } else if (data.status === "failed") {
+          clearInterval(_downloadAllPollTimer);
+          _downloadAllPollTimer = null;
+          alert(`Download failed: ${data.error || data.message}`);
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = "📥 Retry Download All Required Files";
+          }
+        }
+      } catch (e) {
+        console.warn("Polling download all status error:", e);
+      }
+    }, 1000);
+  }
+
   function initSettings() {
     bindGeneralSettingsEvents();
     syncGeneralSettingsUI();
@@ -976,6 +1061,7 @@
     initScispacyEvents();
     loadLinkersStatus();
     initLinkersEvents();
+    initDownloadAllEvents();
     loadDiagnostics();
 
     const refreshDiagBtn = $("btn-refresh-diagnostics");

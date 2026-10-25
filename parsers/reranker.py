@@ -50,7 +50,8 @@ def get_configured_flashrank_model(force_refresh: bool = False) -> str:
 
                 # 2. Check nested key inside 'app_persistence' JSON object
                 if not resolved_model and "app_persistence" in state_map:
-                    state_obj = json.loads(state_map["app_persistence"])
+                    raw_app = state_map["app_persistence"]
+                    state_obj = json.loads(raw_app) if isinstance(raw_app, str) else raw_app
                     if isinstance(state_obj, dict):
                         candidate = state_obj.get("flashrankModel")
                         if isinstance(candidate, str) and candidate.strip():
@@ -60,6 +61,60 @@ def get_configured_flashrank_model(force_refresh: bool = False) -> str:
 
         _CONFIGURED_MODEL_CACHE = resolved_model or DEFAULT_FLASHRANK_MODEL
         return _CONFIGURED_MODEL_CACHE
+
+
+def set_configured_flashrank_model(model_id: str) -> str:
+    """Explicitly updates the active FlashRank model in SQLite user_state and invalidates caches."""
+    global _CONFIGURED_MODEL_CACHE
+    if not model_id or not str(model_id).strip():
+        return get_configured_flashrank_model(force_refresh=True)
+
+    clean_id = str(model_id).strip()
+    with _RANKER_LOCK:
+        _CONFIGURED_MODEL_CACHE = clean_id
+        _RANKER_CACHE.clear()
+        gc.collect()
+
+        try:
+            with closing(get_db_connection()) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO user_state (key, value, updated_at)
+                    VALUES ('flashrankModel', ?, unixepoch('now'))
+                    ON CONFLICT(key) DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = excluded.updated_at
+                    """,
+                    (json.dumps(clean_id),),
+                )
+
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM user_state WHERE key = 'app_persistence'")
+                row = cursor.fetchone()
+                app_obj = {}
+                if row and row[0]:
+                    try:
+                        raw_app = row[0]
+                        app_obj = json.loads(raw_app) if isinstance(raw_app, str) else raw_app
+                    except Exception:
+                        pass
+                if isinstance(app_obj, dict):
+                    app_obj["flashrankModel"] = clean_id
+                    conn.execute(
+                        """
+                        INSERT INTO user_state (key, value, updated_at)
+                        VALUES ('app_persistence', ?, unixepoch('now'))
+                        ON CONFLICT(key) DO UPDATE SET
+                            value = excluded.value,
+                            updated_at = excluded.updated_at
+                        """,
+                        (json.dumps(app_obj),),
+                    )
+                conn.commit()
+        except Exception as exc:
+            logger.error("Failed to persist set_configured_flashrank_model to DB: %s", exc)
+
+    return clean_id
 
 
 def _has_valid_model_files(directory: Path) -> bool:

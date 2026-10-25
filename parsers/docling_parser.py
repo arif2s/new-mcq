@@ -85,6 +85,14 @@ def get_converter(do_ocr: bool = False) -> Any:
     if DocumentConverter is None:
         raise RuntimeError("Docling is not installed in the current environment.")
 
+    try:
+        from parsers.docling_v2_parser import is_docling_models_downloaded
+        if is_docling_models_downloaded():
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    except Exception:
+        pass
+
     if do_ocr not in _converters:
         with _CONVERTER_LOCK:
             if do_ocr not in _converters:

@@ -26,6 +26,16 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 try:
+    from config import HF_CACHE_DIR
+    if HF_CACHE_DIR:
+        os.makedirs(HF_CACHE_DIR, exist_ok=True)
+        os.environ.setdefault("HF_HOME", str(HF_CACHE_DIR))
+        os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(HF_CACHE_DIR))
+except ImportError:
+    HF_CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "models" / "huggingface"
+    os.makedirs(HF_CACHE_DIR, exist_ok=True)
+
+try:
     import pymupdf as fitz
 except ImportError:
     try:
@@ -53,6 +63,72 @@ logger = logging.getLogger(__name__)
 
 _FITZ_LOCK = threading.RLock()
 _DOCLING_CONVERTERS: Dict[bool, Any] = {}
+
+DOCLING_REQUIRED_MODELS = (
+    "docling-project/docling-layout-heron",
+    "docling-project/docling-layout-heron-onnx",
+    "docling-project/docling-models",
+)
+
+
+def is_docling_models_downloaded() -> bool:
+    """Checks whether all required Docling layout and table model weights exist in HF cache."""
+    cache_dirs = [HF_CACHE_DIR, Path(os.path.expanduser("~/.cache/huggingface/hub"))]
+    for repo_id in DOCLING_REQUIRED_MODELS:
+        folder_name = f"models--{repo_id.replace('/', '--')}"
+        found = False
+        for c_dir in cache_dirs:
+            target = Path(c_dir) / folder_name
+            if target.exists() and any(target.glob("snapshots/*")):
+                found = True
+                break
+        if not found:
+            return False
+    return True
+
+
+def download_docling_models() -> Dict[str, Any]:
+    """Pre-downloads and caches all required Docling Heron & table models for offline PDF parsing."""
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError as exc:
+        return {
+            "status": "error",
+            "message": f"huggingface_hub not installed: {exc}",
+            "downloaded": False,
+        }
+
+    target_dir = Path(HF_CACHE_DIR)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    downloaded_paths = []
+
+    try:
+        # Save previous offline mode setting during active download
+        prev_offline = os.environ.get("HF_HUB_OFFLINE")
+        if "HF_HUB_OFFLINE" in os.environ:
+            del os.environ["HF_HUB_OFFLINE"]
+
+        for repo_id in DOCLING_REQUIRED_MODELS:
+            logger.info("Downloading Docling model %s into %s...", repo_id, target_dir)
+            p = snapshot_download(repo_id=repo_id, cache_dir=str(target_dir))
+            downloaded_paths.append(p)
+
+        if prev_offline is not None:
+            os.environ["HF_HUB_OFFLINE"] = prev_offline
+
+        return {
+            "status": "success",
+            "message": "All Docling layout models pre-downloaded for offline processing.",
+            "downloaded_paths": downloaded_paths,
+            "downloaded": True,
+        }
+    except Exception as exc:
+        logger.error("Failed to pre-download Docling layout models: %s", exc)
+        return {
+            "status": "error",
+            "message": str(exc),
+            "downloaded": False,
+        }
 
 _LIGATURE_MAP = {
     "ﬁ": "fi",
@@ -1519,6 +1595,14 @@ def _get_docling_converter(do_ocr: bool) -> Any:
     if do_ocr in _DOCLING_CONVERTERS:
         return _DOCLING_CONVERTERS[do_ocr]
 
+    if HF_CACHE_DIR:
+        os.environ["HF_HOME"] = str(HF_CACHE_DIR)
+        os.environ["HUGGINGFACE_HUB_CACHE"] = str(HF_CACHE_DIR)
+
+    if is_docling_models_downloaded():
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
     accelerator = AcceleratorOptions(num_threads=4, device=AcceleratorDevice.CPU)
     pipeline_options = PdfPipelineOptions()
     pipeline_options.accelerator_options = accelerator
@@ -1531,11 +1615,24 @@ def _get_docling_converter(do_ocr: bool) -> Any:
     except Exception:
         pass
 
-    converter = DocumentConverter(
-        format_options={
-            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
-        }
-    )
+    try:
+        converter = DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+            }
+        )
+    except Exception as exc:
+        if os.environ.get("HF_HUB_OFFLINE") == "1":
+            os.environ.pop("HF_HUB_OFFLINE", None)
+            os.environ.pop("TRANSFORMERS_OFFLINE", None)
+            converter = DocumentConverter(
+                format_options={
+                    InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+                }
+            )
+        else:
+            raise exc
+
     _DOCLING_CONVERTERS[do_ocr] = converter
     return converter
 
@@ -1665,6 +1762,10 @@ def extract_page_with_docling_v2(
         converter = _get_docling_converter(do_ocr=do_ocr)
         if converter is None:
             return adaptive_res
+
+        if is_docling_models_downloaded():
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
         doc_input = DocumentStream(name=f"page_{page_number}.pdf", stream=io.BytesIO(pdf_bytes))
         conv_res = converter.convert(doc_input)

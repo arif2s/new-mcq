@@ -603,6 +603,35 @@
               <p class="subtitle text-sm text-muted">Manage offline ontologies, biomedical NER models, diagnostics, and glassmorphic appearance.</p>
             </header>
 
+            <!-- 0. ONE-CLICK COMPLETE OFFLINE DOWNLOAD CARD -->
+            <div class="glass-card p-5 rounded-2xl bg-gradient-to-r from-brand-600/10 via-purple-600/10 to-emerald-600/10 border border-brand-500/30">
+              <div class="flex items-center justify-between pb-3 mb-3 border-b border-gray-700/50">
+                <div class="flex items-center gap-2.5">
+                  <div class="w-8 h-8 rounded-lg bg-brand-500/20 text-brand-400 flex items-center justify-center font-bold text-sm border border-brand-500/30">
+                    📥
+                  </div>
+                  <div>
+                    <h3 class="font-semibold text-sm text-neutral-100">Download All Required Offline Files</h3>
+                    <p class="text-xs text-neutral-400">Pre-download default embedding, FlashRank, SciSpaCy, Docling layout models, and UI vendor assets for 100% offline operation</p>
+                  </div>
+                </div>
+                <button type="button" id="btn-download-all-defaults" class="text-xs px-4 py-2 rounded-lg font-bold bg-brand-600 hover:bg-brand-500 text-white transition-colors flex items-center gap-1.5 shadow-md cursor-pointer">
+                  📥 Download All Required Files
+                </button>
+              </div>
+
+              <!-- Progress Bar -->
+              <div id="download-all-progress-container" class="hidden space-y-2 p-3.5 rounded-xl glass-panel border border-brand-500/30">
+                <div class="flex justify-between text-xs text-neutral-300">
+                  <span id="download-all-progress-msg" class="truncate pr-2 font-medium">Initializing downloader...</span>
+                  <span id="download-all-progress-label" class="font-mono font-bold text-brand-400">0%</span>
+                </div>
+                <div class="w-full h-2.5 glass-panel rounded-full overflow-hidden">
+                  <div id="download-all-progress-bar" class="h-full bg-gradient-to-r from-brand-500 to-emerald-400 transition-all duration-300" style="width: 0%"></div>
+                </div>
+              </div>
+            </div>
+
             <!-- 1. SYSTEM DIAGNOSTICS & OFFLINE HEALTH TELEMETRY -->
             <div class="glass-card p-5 rounded-2xl">
               <div class="flex items-center justify-between pb-3 mb-4 border-b border-gray-700/50">

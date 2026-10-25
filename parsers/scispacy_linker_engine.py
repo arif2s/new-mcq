@@ -1210,6 +1210,60 @@ def get_configured_scispacy_model(force_refresh: bool = False) -> str:
         return _CONFIGURED_SCISPACY_MODEL_CACHE
 
 
+def set_configured_scispacy_model(model_id: str) -> str:
+    """Explicitly updates the active SciSpaCy model in SQLite user_state and invalidates caches."""
+    global _CONFIGURED_SCISPACY_MODEL_CACHE
+    if not model_id or not str(model_id).strip():
+        return get_configured_scispacy_model(force_refresh=True)
+
+    clean_id = str(model_id).strip()
+    with _PIPELINE_LOCK:
+        _CONFIGURED_SCISPACY_MODEL_CACHE = clean_id
+        _LOADED_SCISPACY_PIPELINES.clear()
+        gc.collect()
+
+        try:
+            with closing(get_db_connection()) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO user_state (key, value, updated_at)
+                    VALUES ('scispacyModel', ?, unixepoch('now'))
+                    ON CONFLICT(key) DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = excluded.updated_at
+                    """,
+                    (json.dumps(clean_id),),
+                )
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM user_state WHERE key = 'app_persistence'")
+                row = cursor.fetchone()
+                app_obj = {}
+                if row and row[0]:
+                    try:
+                        raw_app = row[0]
+                        app_obj = json.loads(raw_app) if isinstance(raw_app, str) else raw_app
+                    except Exception:
+                        pass
+                if isinstance(app_obj, dict):
+                    app_obj["scispacyModel"] = clean_id
+                    app_obj["scispacy_model"] = clean_id
+                    conn.execute(
+                        """
+                        INSERT INTO user_state (key, value, updated_at)
+                        VALUES ('app_persistence', ?, unixepoch('now'))
+                        ON CONFLICT(key) DO UPDATE SET
+                            value = excluded.value,
+                            updated_at = excluded.updated_at
+                        """,
+                        (json.dumps(app_obj),),
+                    )
+                conn.commit()
+        except Exception as exc:
+            logger.error("Failed to persist set_configured_scispacy_model to DB: %s", exc)
+
+    return clean_id
+
+
 def load_scispacy_pipeline(model_id: Optional[str] = None) -> List[Any]:
     """
     Loads and caches the configured SciSpaCy pipeline(s) strictly on CPU with thread safety.

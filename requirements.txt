@@ -28,8 +28,9 @@ markdown>=3.5.0
 spacy>=3.7.2,<3.8.0
 scispacy>=0.5.4
 medspacy>=1.0.0
-typer>=0.15.1
+typer>=0.12.5,<0.27.0
 en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.0/en_core_web_sm-3.7.0-py3-none-any.whl
+en_core_sci_md @ https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_md-0.5.4.tar.gz
 
 # --- Sparse Vector & Offline Ontology Linker Support ---
 # Required for loading tfidf_vectorizer.joblib & tfidf_vectors_sparse.npz
@@ -37,6 +38,7 @@ numpy>=1.24.0,<2.0.0
 scipy>=1.11.0,<1.13.0
 scikit-learn>=1.3.0,<1.5.0
 joblib>=1.3.2
+cloudpickle>=3.0.0
 
 # --- Hybrid Lexical + Semantic Search & Zero-VRAM Reranking ---
 tantivy>=0.22.0

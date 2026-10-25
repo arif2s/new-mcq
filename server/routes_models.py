@@ -190,6 +190,120 @@ SUPPORTED_SCISPACY_MODELS: List[Dict[str, Any]] = [
 _download_lock = threading.Lock()
 _active_downloads: Dict[str, Dict[str, Any]] = {}
 
+_download_all_state: Dict[str, Any] = {
+    "status": "idle",
+    "progress": 0.0,
+    "message": "",
+    "details": {},
+    "error": None,
+}
+
+
+def _download_all_defaults_worker() -> None:
+    """Sequential worker downloading and warming up all default offline models and vendor assets."""
+    global _download_all_state
+    with _download_lock:
+        _download_all_state = {
+            "status": "running",
+            "progress": 5.0,
+            "message": "Starting download of all default offline models and assets...",
+            "details": {},
+            "error": None,
+        }
+
+    try:
+        # Step 1: Default Embedding Model
+        with _download_lock:
+            _download_all_state.update({
+                "progress": 15.0,
+                "message": f"Downloading default embedding model ({DEFAULT_EMBEDDING_MODEL})...",
+            })
+        from parsers.embedding_engine import download_embedding_model
+        download_embedding_model(DEFAULT_EMBEDDING_MODEL)
+
+        # Step 2: Default FlashRank Model
+        with _download_lock:
+            _download_all_state.update({
+                "progress": 35.0,
+                "message": f"Downloading default FlashRank reranker ({DEFAULT_FLASHRANK_MODEL})...",
+            })
+        from parsers.reranker import download_flashrank_model
+        download_flashrank_model(DEFAULT_FLASHRANK_MODEL)
+
+        # Step 3: Default SciSpaCy Model
+        with _download_lock:
+            _download_all_state.update({
+                "progress": 55.0,
+                "message": "Downloading default SciSpaCy model (en_core_sci_md)...",
+            })
+        from parsers.scispacy_linker_engine import download_scispacy_model
+        download_scispacy_model("en_core_sci_md")
+
+        # Step 4: Default Docling v2 Layout Models
+        with _download_lock:
+            _download_all_state.update({
+                "progress": 75.0,
+                "message": "Downloading Docling v2 layout & table models...",
+            })
+        from parsers.docling_v2_parser import download_docling_models
+        download_docling_models()
+
+        # Step 5: UI Vendor Assets
+        with _download_lock:
+            _download_all_state.update({
+                "progress": 90.0,
+                "message": "Caching offline UI vendor libraries (Tailwind, Marked, KaTeX)...",
+            })
+        from config import ensure_offline_vendor_assets
+        ensure_offline_vendor_assets()
+
+        with _download_lock:
+            _download_all_state = {
+                "status": "completed",
+                "progress": 100.0,
+                "message": "All required offline models and vendor assets are downloaded and ready!",
+                "details": {"completed": True},
+                "error": None,
+            }
+        logger.info("Download all defaults worker completed successfully.")
+
+    except Exception as exc:
+        logger.error("Download all defaults worker failed: %s", exc)
+        with _download_lock:
+            _download_all_state = {
+                "status": "failed",
+                "progress": 0.0,
+                "message": f"Download failed: {exc}",
+                "details": {},
+                "error": str(exc),
+            }
+
+
+@router.post("/download_all")
+@router.post("/download_all_defaults")
+async def download_all_defaults(background_tasks: BackgroundTasks) -> Dict[str, Any]:
+    """Triggers background download worker for all default offline models and vendor assets."""
+    with _download_lock:
+        if _download_all_state.get("status") == "running":
+            return {
+                "status": "in_progress",
+                "message": "Download process is already running.",
+                "info": dict(_download_all_state),
+            }
+
+    background_tasks.add_task(_download_all_defaults_worker)
+    return {
+        "status": "started",
+        "message": "Background installation started for all required offline models and assets.",
+    }
+
+
+@router.get("/download_all_status")
+async def get_download_all_status() -> Dict[str, Any]:
+    """Polls progress of the complete offline model download worker."""
+    with _download_lock:
+        return dict(_download_all_state)
+
 _index_lock = threading.Lock()
 _indexing_state: Dict[str, Any] = {
     "status": "idle",
@@ -223,6 +337,22 @@ class ModelDownloadRequest(BaseModel):
 
     def get_model_name(self) -> str:
         return (self.model_name or self.model_id or "").strip()
+
+
+class SetActiveModelRequest(BaseModel):
+    if _MODEL_CONFIG is not None:
+        model_config = _MODEL_CONFIG
+    else:
+
+        class Config:
+            extra = "allow"
+
+    model_type: str = Field(..., description="'embedding', 'flashrank', or 'scispacy'")
+    model_id: Optional[str] = None
+    model_name: Optional[str] = None
+
+    def get_model_id(self) -> str:
+        return (self.model_id or self.model_name or "").strip()
 
 
 class BuildIndexRequest(BaseModel):
@@ -728,7 +858,7 @@ async def get_cpu_embedding_models() -> Dict[str, Any]:
     try:
         from parsers.embedding_engine import get_configured_embedding_model
 
-        active_model = str(get_configured_embedding_model() or DEFAULT_EMBEDDING_MODEL)
+        active_model = str(get_configured_embedding_model(force_refresh=True) or DEFAULT_EMBEDDING_MODEL)
     except Exception:
         active_model = str(DEFAULT_EMBEDDING_MODEL)
 
@@ -736,14 +866,15 @@ async def get_cpu_embedding_models() -> Dict[str, Any]:
     for m in SUPPORTED_EMBEDDING_MODELS:
         m_id = str(m["id"])
         is_dl = _is_embedding_downloaded(m_id)
-        is_default = m_id.lower() == active_model.lower() or bool(m.get("default"))
+        is_active = m_id.lower() == active_model.lower()
         models.append({
             "id": m_id,
             "name": str(m["name"]),
             "dimension": int(m["dimension"]),
             "size_mb": int(m["size_mb"]),
             "downloaded": is_dl,
-            "default": is_default,
+            "default": bool(m.get("default")),
+            "active": is_active,
         })
 
     return {"models": models, "active": active_model}
@@ -756,7 +887,7 @@ async def get_flashrank_models() -> Dict[str, Any]:
     try:
         from parsers.reranker import get_configured_flashrank_model
 
-        active_model = str(get_configured_flashrank_model() or DEFAULT_FLASHRANK_MODEL)
+        active_model = str(get_configured_flashrank_model(force_refresh=True) or DEFAULT_FLASHRANK_MODEL)
     except Exception:
         active_model = str(DEFAULT_FLASHRANK_MODEL)
 
@@ -764,13 +895,14 @@ async def get_flashrank_models() -> Dict[str, Any]:
     for m in SUPPORTED_FLASHRANK_MODELS:
         m_id = str(m["id"])
         is_dl = _is_flashrank_downloaded(m_id)
-        is_default = m_id.lower() == active_model.lower() or bool(m.get("default"))
+        is_active = m_id.lower() == active_model.lower()
         models.append({
             "id": m_id,
             "name": str(m["name"]),
             "size_mb": int(m["size_mb"]),
             "downloaded": is_dl,
-            "default": is_default,
+            "default": bool(m.get("default")),
+            "active": is_active,
         })
 
     return {"models": models, "active": active_model}
@@ -783,7 +915,7 @@ async def get_scispacy_models() -> Dict[str, Any]:
     try:
         from parsers.scispacy_linker_engine import get_configured_scispacy_model
 
-        active_pipeline = str(get_configured_scispacy_model() or "en_core_sci_md")
+        active_pipeline = str(get_configured_scispacy_model(force_refresh=True) or "en_core_sci_md")
     except Exception:
         active_pipeline = "en_core_sci_md"
 
@@ -821,6 +953,36 @@ async def get_scispacy_models() -> Dict[str, Any]:
         })
 
     return {"models": results, "active": active_pipeline}
+
+
+@router.post("/set_active")
+@router.post("/select")
+async def set_active_model(payload: SetActiveModelRequest) -> Dict[str, Any]:
+    """Activates an offline downloaded embedding, FlashRank, or SciSpaCy model."""
+    m_type = (payload.model_type or "").strip().lower()
+    m_id = payload.get_model_id()
+
+    if not m_id:
+        raise HTTPException(
+            status_code=400, detail="Missing required 'model_id' or 'model_name'."
+        )
+
+    if m_type == "embedding":
+        from parsers.embedding_engine import set_configured_embedding_model
+        active = await asyncio.to_thread(set_configured_embedding_model, m_id)
+        return {"status": "success", "model_type": m_type, "active": active}
+    elif m_type == "flashrank":
+        from parsers.reranker import set_configured_flashrank_model
+        active = await asyncio.to_thread(set_configured_flashrank_model, m_id)
+        return {"status": "success", "model_type": m_type, "active": active}
+    elif m_type == "scispacy":
+        from parsers.scispacy_linker_engine import set_configured_scispacy_model
+        active = await asyncio.to_thread(set_configured_scispacy_model, m_id)
+        return {"status": "success", "model_type": m_type, "active": active}
+    else:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid model_type '{m_type}'"
+        )
 
 
 @router.post("/download")
