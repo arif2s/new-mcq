@@ -172,6 +172,7 @@ def clean_pdf_text(text: str) -> str:
         return f"{prefix}{suffix}"
 
     t = re.sub(r"([A-Za-z]{2,})-\n([a-z]{2,})", _dehyphen_match, t)
+    t = re.sub(r"\b(CHAPTER|PART|SECTION|UNIT|MODULE)\s*([0-9]+|[IVXLCDM]+)\b", r"\1 \2", t, flags=re.IGNORECASE)
     t = re.sub(r"\n{3,}", "\n\n", t)
     return t.strip()
 
@@ -779,7 +780,22 @@ class AdaptivePdfLayoutEngine:
             parts: List[str] = []
             for idx, s in enumerate(seg):
                 if idx > 0 and not s.get("is_superscript"):
-                    parts.append(" ")
+                    prev_s = seg[idx - 1]
+                    gap_x = s["x0"] - prev_s["x1"]
+                    prev_txt = prev_s["text"].strip()
+                    is_single_letter_lead = (
+                        len(prev_txt) == 1
+                        and prev_txt.isalpha()
+                        and bool(s["text"])
+                        and s["text"][0].islower()
+                        and gap_x < 1.4 * self.mu_w
+                    )
+                    needs_space = (
+                        not is_single_letter_lead
+                        and (gap_x >= 0.15 * self.mu_w or gap_x < 0.0 or abs(s["y0"] - prev_s["y0"]) >= 0.25 * self.mu_h)
+                    )
+                    if needs_space:
+                        parts.append(" ")
                 parts.append(s["text"])
             seg_text = "".join(parts).strip()
             if not seg_text:
@@ -1158,16 +1174,15 @@ class AdaptivePdfLayoutEngine:
 
                     same_style = (
                         abs(curr_sz - nxt_sz) <= 0.8
+                        and (curr_in_banner == nxt_in_banner)
                         and (
                             (curr_bold == nxt_bold and curr_accent == nxt_accent)
-                            or curr_in_banner
-                            or nxt_in_banner
+                            or (curr_in_banner and nxt_in_banner)
                         )
                         and not nxt.get("lead_in_bold")
                         and not list_start_re.match(nxt_text)
+                        and (curr_text.isupper() == nxt_text.isupper())
                     )
-                    if not (curr_in_banner or nxt_in_banner):
-                        same_style = same_style and (curr_text.isupper() == nxt_text.isupper() or curr_bold or curr_accent)
                     tight_vertical = (
                         (-0.85 * max(curr_sz, self.mu_h) <= v_gap <= 0.85 * max(curr_sz, self.mu_h))
                         or (0.0 <= v_pitch <= 1.5 * max(curr_sz, self.mu_h))
@@ -1197,13 +1212,15 @@ class AdaptivePdfLayoutEngine:
         item: Dict[str, Any],
         prev_y1: Optional[float] = None,
         promote_headings: bool = False,
+        active_stack: Optional[Dict[int, str]] = None,
     ) -> Optional[int]:
         """
-        Determines exact heading hierarchy level:
+        Determines exact heading hierarchy level (H1-H5) taking active heading stack depth into account:
         - Level 1 (H1): Chapter / Part / Main Article Title
-        - Level 2 (H2): Major Section Heading
-        - Level 3 (H3): Subheading (including same-size colored or bold headings)
-        - Level 4 (H4): Minor Sub-subheading
+        - Level 2 (H2): Section Review Banner / Main Section Heading
+        - Level 3 (H3): Sub-section Heading (e.g. CONGENITAL ANOMALIES, KERATITIS)
+        - Level 4 (H4): Sub-subheading (e.g. Megalocornea, Microcornea, CORNEAL ULCER)
+        - Level 5 (H5): Minor Sub-heading (e.g. Bacterial corneal ulcer, Hypopyon corneal ulcer)
         Returns None if the line is standard body text or a list item.
         """
         l_text = item.get("text", "").strip()
@@ -1229,12 +1246,18 @@ class AdaptivePdfLayoutEngine:
         upper_ratio = sum(1 for c in alpha_chars if c.isupper()) / len(alpha_chars)
         is_all_caps = upper_ratio >= 0.85 and len(alpha_chars) >= 3
 
+        deepest_lvl = max(active_stack.keys()) if active_stack else None
+
         # 1. Ground-Truth PDF Table of Contents (TOC) Match
         norm_line = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", l_text.lower())).strip()
         for toc_lvl, toc_title in self.page_toc:
             norm_toc = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", toc_title.lower())).strip()
             if norm_toc and (norm_line == norm_toc or norm_line.startswith(norm_toc) or norm_toc.startswith(norm_line)):
-                return min(max(int(toc_lvl), 1), 4)
+                return min(max(int(toc_lvl), 1), 5)
+
+        # Explicit check for main review pill / section review header
+        if l_text.upper().startswith("QUICK TEXT REVIEW"):
+            return 2
 
         # 2. Explicit Structural & Numbered Section Prefixes
         if re.match(r"^(CHAPTER|PART|UNIT|MODULE|SECTION)\s+([0-9]+|[IVXLCDM]+)\b", l_text, re.IGNORECASE):
@@ -1274,37 +1297,55 @@ class AdaptivePdfLayoutEngine:
                 break
 
         # 3. H1: Chapter / Article Main Title
-        if sz >= 1.40 * self.mu_size:
+        if sz >= 1.40 * self.mu_size and deepest_lvl is None:
             return 1
-        if sz >= 1.22 * self.mu_size and (is_spanning or bbox[1] < 0.22 * self.page_height) and tier_idx == 0:
+        if sz >= 1.22 * self.mu_size and (is_spanning or bbox[1] < 0.22 * self.page_height) and tier_idx == 0 and deepest_lvl is None:
             return 1
 
-        # 4. H2: Main Section Heading
+        # 4. H2 / H3: Main Section & Sub-section Banners
         if in_banner:
+            if deepest_lvl == 2 or (active_stack and 2 in active_stack):
+                return 3
             return 2 if (is_all_caps or sz >= 1.02 * self.mu_size or is_bold or is_spanning or len(l_text) <= 60) else 3
         if sz >= 1.18 * self.mu_size and (is_bold or is_accent or is_all_caps):
-            return 2
+            if deepest_lvl is None or deepest_lvl < 2:
+                return 2
+            return min(deepest_lvl + 1, 5) if deepest_lvl >= 2 else 3
         if (is_bold or is_accent) and is_all_caps and sz >= 0.98 * self.mu_size and len(l_text) <= 95:
-            return 2
+            if deepest_lvl is None or deepest_lvl < 2:
+                return 2
+            return min(deepest_lvl + 1, 5) if deepest_lvl >= 2 else 3
         if (is_bold or is_accent) and is_spanning and sz >= 1.05 * self.mu_size and len(l_text) <= 100:
-            return 2
+            if deepest_lvl is None or deepest_lvl < 2:
+                return 2
+            return min(deepest_lvl + 1, 5) if deepest_lvl >= 2 else 3
 
-        # 5. H3: Subheading (includes same-size colored headings and bold headings)
+        # 5. Relative H3/H4/H5 Heading Classification based on active stack depth
+        if is_bold or is_accent or is_all_caps or sz >= 0.96 * self.mu_size:
+            if len(l_text) <= 90 and not item.get("lead_in_bold"):
+                if deepest_lvl == 4:
+                    return 5
+                elif deepest_lvl == 3:
+                    return 4
+                elif deepest_lvl == 2:
+                    return 3
+
+        # Fallback H3 / H4 / H5
         min_h3_scale = 1.0 if promote_headings else 0.98
         if is_accent and sz >= 0.95 * self.mu_size and len(l_text) <= 95 and not item.get("lead_in_bold"):
             return 3 if not is_italic else 4
         if is_bold and sz >= min_h3_scale * self.mu_size and not is_italic and len(l_text) <= 90 and not item.get("lead_in_bold"):
-            return 3
+            return 3 if (deepest_lvl is None or deepest_lvl < 3) else min(deepest_lvl + 1, 5)
         if is_all_caps and (is_bold or is_accent or sz >= 0.98 * self.mu_size) and len(l_text) <= 85 and has_top_spacing:
-            return 3
+            return 3 if (deepest_lvl is None or deepest_lvl < 3) else min(deepest_lvl + 1, 5)
         if is_bold and not is_italic and sz >= 0.96 * self.mu_size and len(l_text) <= 75 and has_top_spacing:
-            return 3
+            return 3 if (deepest_lvl is None or deepest_lvl < 3) else min(deepest_lvl + 1, 5)
 
-        # 6. H4: Minor Sub-subheading
+        # 6. H4/H5 Minor Subheadings
         if (is_bold or is_accent) and is_italic and sz >= 0.95 * self.mu_size and len(l_text) <= 75:
-            return 4
+            return 5 if deepest_lvl == 4 else 4
         if promote_headings and (is_bold or is_accent) and sz >= 0.95 * self.mu_size and len(l_text) <= 70:
-            return 4
+            return 5 if deepest_lvl == 4 else 4
 
         return None
 
@@ -1340,7 +1381,7 @@ class AdaptivePdfLayoutEngine:
             return " > ".join(crumbs)
 
         def update_heading_stack(level: int, title: str) -> str:
-            clean_title = re.sub(r"\s+", " ", title).strip(" .:")
+            clean_title = re.sub(r"\s+", " ", title).strip(" .:*")
             active_stack[level] = clean_title
             for deeper_lvl in [k for k in list(active_stack.keys()) if k > level]:
                 del active_stack[deeper_lvl]
@@ -1442,13 +1483,24 @@ class AdaptivePdfLayoutEngine:
 
             prev_y1 = prev_line["y1"] if (prev_line and prev_line.get("col_idx") == item.get("col_idx")) else None
 
-            # 1. Check Standalone Heading Level (H1, H2, H3, H4)
-            h_level = self._classify_heading_level(item, prev_y1=prev_y1, promote_headings=promote_headings)
+            # 1. Check Standalone Heading Level (H1, H2, H3, H4, H5)
+            h_level = self._classify_heading_level(
+                item, prev_y1=prev_y1, promote_headings=promote_headings, active_stack=active_stack
+            )
             if h_level is not None:
                 flush_paragraph()
                 clean_h = update_heading_stack(h_level, l_text)
+                is_bold_heading = (
+                    item.get("is_bold", False)
+                    or item.get("is_accent_color", False)
+                    or l_text.startswith("**")
+                    or h_level in (4, 5)
+                )
                 prefix = "#" * h_level
-                output_parts.append(f"{prefix} {clean_h}")
+                if is_bold_heading and h_level in (4, 5):
+                    output_parts.append(f"{prefix} **{clean_h}**")
+                else:
+                    output_parts.append(f"{prefix} {clean_h}")
                 layout_boxes.append({
                     "order": order_counter,
                     "type": "heading",

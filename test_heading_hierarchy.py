@@ -99,3 +99,81 @@ def test_docling_v2_pdf_structure_stack_propagation(multi_tier_pdf):
     assert "CHAPTER 45" in p1_sec["heading_path"]
     assert "1.1 Etiology and Risk Factors" not in p2_sec["heading_path"]
     assert "CLINICAL MANIFESTATIONS" in p2_sec["heading_path"]
+
+
+@pytest.fixture
+def ophthalmology_pdf():
+    doc = fitz.open()
+    p = doc.new_page(width=612, height=792)
+
+    # Shaded top callout box with CHAPTER and 5 on separate lines
+    rect_box = fitz.Rect(40, 30, 570, 90)
+    p.draw_rect(rect_box, color=(0.2, 0.2, 0.5), fill=(0.92, 0.94, 0.98))
+    p.insert_text((50, 48), "CHAPTER", fontsize=11, fontname="hebo")
+    p.insert_text((50, 62), "5", fontsize=18, fontname="hebo")
+    p.insert_text((150, 60), "Diseases of Cornea", fontsize=16, fontname="hebo")
+
+    # Quick Text Review pill / header (H2)
+    p.insert_text((50, 110), "Quick Text Review", fontsize=16, fontname="hebo")
+
+    # CONGENITAL ANOMALIES sub-banner (H3)
+    rect_banner = fitz.Rect(40, 130, 300, 150)
+    p.draw_rect(rect_banner, color=(0.1, 0.3, 0.6), fill=(0.85, 0.9, 0.98))
+    p.insert_text((45, 143), "CONGENITAL ANOMALIES", fontsize=11, fontname="hebo")
+
+    # H4 Megalocornea
+    p.insert_text((45, 165), "Megalocornea", fontsize=11, fontname="hebo")
+    p.insert_text((45, 180), "The horizontal diameter of cornea at birth is 10 mm.", fontsize=10, fontname="helv")
+
+    # Drop-cap initial letter test ("S" + "clerocornea")
+    p.insert_text((45, 205), "S", fontsize=10, fontname="hebo")
+    p.insert_text((52, 205), "clerocornea", fontsize=10, fontname="helv")
+
+    # KERATITIS sub-banner (H3)
+    rect_banner2 = fitz.Rect(40, 230, 300, 250)
+    p.draw_rect(rect_banner2, color=(0.1, 0.3, 0.6), fill=(0.85, 0.9, 0.98))
+    p.insert_text((45, 243), "KERATITIS", fontsize=11, fontname="hebo")
+
+    # H4 CORNEAL ULCER
+    p.insert_text((45, 265), "CORNEAL ULCER (ULCERATIVE KERATITIS)", fontsize=11, fontname="hebo")
+
+    # H5 Bacterial corneal ulcer
+    p.insert_text((45, 285), "Bacterial corneal ulcer", fontsize=10, fontname="hebo")
+    p.insert_text((45, 300), "Commonest causative organisms are pneumococcus.", fontsize=10, fontname="helv")
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    doc.save(tmp.name)
+    doc.close()
+
+    yield tmp.name
+
+    if os.path.exists(tmp.name):
+        os.remove(tmp.name)
+
+
+def test_ophthalmology_heading_levels_and_formatting(ophthalmology_pdf):
+    res = extract_page_with_adaptive_layout(ophthalmology_pdf, 1, default_title="Ophthalmology")
+    extracted = res.get("extracted_text", "")
+
+    # 1. CHAPTER 5 merging in callout box
+    assert "CHAPTER 5" in extracted
+
+    # 2. Drop-cap concatenation
+    assert "Sclerocornea" in extracted
+
+    # 3. Heading levels and **text** bold heading formatting
+    assert "## Quick Text Review" in extracted
+    assert "### CONGENITAL ANOMALIES" in extracted
+    assert "#### **Megalocornea**" in extracted or "#### Megalocornea" in extracted
+    assert "### KERATITIS" in extracted
+    assert "#### **CORNEAL ULCER (ULCERATIVE KERATITIS)**" in extracted or "#### CORNEAL ULCER" in extracted
+    assert "##### **Bacterial corneal ulcer**" in extracted or "##### Bacterial corneal ulcer" in extracted
+
+    # 4. Details saved in active stack and hierarchy tree for retrieval
+    hierarchy = res.get("hierarchy_tree", [])
+    titles = [h["title"] for h in hierarchy]
+    assert "Megalocornea" in titles
+    assert "Bacterial corneal ulcer" in titles
+
+    active_stack = res.get("active_heading_stack", {})
+    assert any(val == "Bacterial corneal ulcer" for val in active_stack.values())
