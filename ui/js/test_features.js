@@ -117,10 +117,21 @@
                     <div>
                         <label for="pdf-engine-select" class="text-xs font-bold text-muted mb-1 block">Parser Engine</label>
                         <select id="pdf-engine-select" class="glass-input text-xs w-full py-2">
-                            <option value="fitz">PyMuPDF (Fitz) Fast Text Slicing</option>
-                            <option value="docling">Docling v1 ML Structural Markdown</option>
+                            <option value="docling_v3" selected>Docling v3 Multi-Engine Layout & OCR</option>
                             <option value="docling_v2">Docling v2 Hybrid Multi-Column Layout</option>
+                            <option value="docling">Docling v1 ML Structural Markdown</option>
+                            <option value="fitz">PyMuPDF (Fitz) Fast Text Slicing</option>
                             <option value="headings">PyMuPDF Heuristic Headings</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="pdf-ocr-engine-select" class="text-xs font-bold text-muted mb-1 block">OCR Engine</label>
+                        <select id="pdf-ocr-engine-select" class="glass-input text-xs w-full py-2">
+                            <option value="auto">Auto Detect (RapidOCR / PP-OCR fallback)</option>
+                            <option value="rapidocr">RapidOCR (PP-OCR v6 ONNX)</option>
+                            <option value="easyocr">EasyOCR Engine</option>
+                            <option value="tesseract">Tesseract Engine</option>
+                            <option value="mac_ocr">Mac Native OCR</option>
                         </select>
                     </div>
                 </div>

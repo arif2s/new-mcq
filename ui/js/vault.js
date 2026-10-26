@@ -173,7 +173,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementsByName('pdfEngine').forEach(radio => {
     radio.addEventListener('change', () => {
-      [pdfEngineFitzLabel, pdfEngineDoclingLabel, pdfEngineDoclingV2Label].forEach(label => {
+      [pdfEngineFitzLabel, pdfEngineDoclingLabel, pdfEngineDoclingV2Label, pdfEngineDoclingV3Label].forEach(label => {
         label?.classList.remove('bg-brand-600/10', 'border-brand-500');
         label?.classList.add('glass-panel');
       });

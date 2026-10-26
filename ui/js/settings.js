@@ -51,6 +51,10 @@
     if (pdfParserSelect && state.pdfParser) {
       pdfParserSelect.value = state.pdfParser;
     }
+    const ocrEngineSelect = $("setting-ocr-engine");
+    if (ocrEngineSelect && state.ocrEngine) {
+      ocrEngineSelect.value = state.ocrEngine;
+    }
 
     const extractorSelect = $("setting-extractor-strategy");
     if (extractorSelect && (state.extractorStrategy || state.extractor_strategy)) {
@@ -130,6 +134,14 @@
       pdfParserSelect.addEventListener("change", (e) => {
         if (window.AppState && window.AppState.update) {
           window.AppState.update({ pdfParser: e.target.value });
+        }
+      });
+    }
+    const ocrEngineSelect = $("setting-ocr-engine");
+    if (ocrEngineSelect) {
+      ocrEngineSelect.addEventListener("change", (e) => {
+        if (window.AppState && window.AppState.update) {
+          window.AppState.update({ ocrEngine: e.target.value });
         }
       });
     }

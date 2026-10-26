@@ -1781,6 +1781,7 @@ def extract_page_with_docling_v2(
     default_title: str = "",
     initial_heading_stack: Optional[Dict[int, str]] = None,
     page_toc: Optional[List[Tuple[int, str]]] = None,
+    ocr_engine: str = "auto",
 ) -> Dict[str, Any]:
     """
     Docling v2 Memory-Safe Single-Page Extraction:
@@ -1819,7 +1820,7 @@ def extract_page_with_docling_v2(
                 pdf_bytes = single_doc.write()
                 single_doc.close()
 
-        converter = _get_docling_converter(do_ocr=do_ocr)
+        converter = _get_docling_converter(do_ocr=do_ocr, ocr_engine=ocr_engine)
         if converter is None:
             return adaptive_res
 
@@ -1937,13 +1938,13 @@ def extract_page_with_adaptive_layout(
             return result
 
 
-def extract_structured_layout(file_path: Union[str, Path], page_number: int) -> str:
+def extract_structured_layout(file_path: Union[str, Path], page_number: int, ocr_engine: str = "auto") -> str:
     """Convenience layout extractor returning Markdown text using Docling v2."""
-    res = extract_page_with_docling_v2(file_path, page_number)
+    res = extract_page_with_docling_v2(file_path, page_number, ocr_engine=ocr_engine)
     return res.get("extracted_text", "") or res.get("text", "")
 
 
-def extract_pdf_structure(file_path: Union[str, Path]) -> List[Dict[str, Any]]:
+def extract_pdf_structure(file_path: Union[str, Path], ocr_engine: str = "auto") -> List[Dict[str, Any]]:
     """
     Extracts structured sections from a PDF for Tantivy BM25 and LanceDB indexing using Docling v2.
     Conforms strictly to the Section 4 ChunkDict contract.

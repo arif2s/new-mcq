@@ -245,7 +245,10 @@ def _download_all_defaults_worker() -> None:
                 "progress": 75.0,
                 "message": "Downloading Docling v2 layout & table models...",
             })
-        from parsers.docling_v2_parser import download_docling_models
+        try:
+            from parsers.docling_v3_parser import download_docling_models
+        except Exception:
+            from parsers.docling_v2_parser import download_docling_models
         download_docling_models()
 
         # Step 5: UI Vendor Assets

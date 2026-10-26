@@ -496,8 +496,16 @@
                     </div>
                   </label>
 
-                  <label id="pdf-engine-docling-v2-label" for="pdf-engine-docling-v2" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors bg-brand-600/10 border-brand-500">
-                    <input type="radio" id="pdf-engine-docling-v2" name="pdfEngine" value="docling_v2" checked class="mt-1 text-brand-500 focus:ring-brand-500" />
+                  <label id="pdf-engine-docling-v3-label" for="pdf-engine-docling-v3" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors bg-brand-600/10 border-brand-500">
+                    <input type="radio" id="pdf-engine-docling-v3" name="pdfEngine" value="docling_v3" checked class="mt-1 text-brand-500 focus:ring-brand-500" />
+                    <div>
+                      <div class="font-medium text-sm">Docling v3 (Multi-Engine & OCR)</div>
+                      <div class="text-xs text-muted mt-1 leading-relaxed">Pixel-level visual inspection, RapidOCR (PP-OCR), and booktabs table recovery.</div>
+                    </div>
+                  </label>
+
+                  <label id="pdf-engine-docling-v2-label" for="pdf-engine-docling-v2" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors glass-panel border-gray-700">
+                    <input type="radio" id="pdf-engine-docling-v2" name="pdfEngine" value="docling_v2" class="mt-1 text-brand-500 focus:ring-brand-500" />
                     <div>
                       <div class="font-medium text-sm">Docling v2 (Hybrid Layout)</div>
                       <div class="text-xs text-muted mt-1 leading-relaxed">Adaptive multi-column DAG layout with typography profiling & callout recovery.</div>
@@ -832,6 +840,26 @@
                   <p class="text-[11px] text-neutral-400 mt-1">
                     When OFF, only verified reference links (PDF, Obsidian, ZIM) are resolved without querying LM Studio.
                   </p>
+                </div>
+
+                <div class="form-group pt-2">
+                  <label for="setting-pdf-parser" class="text-xs text-neutral-300 block mb-1">Default PDF Parser Engine:</label>
+                  <select id="setting-pdf-parser" class="glass-select w-full rounded-lg px-3 py-2 text-xs">
+                    <option value="docling_v3">Docling v3 Multi-Engine Layout & OCR</option>
+                    <option value="docling_v2">Docling v2 Hybrid Multi-Column Layout</option>
+                    <option value="docling">Docling v1 ML Structural Markdown</option>
+                    <option value="fitz">PyMuPDF (Fitz) Fast Text Slicing</option>
+                  </select>
+                </div>
+
+                <div class="form-group pt-2">
+                  <label for="setting-ocr-engine" class="text-xs text-neutral-300 block mb-1">Default OCR Engine:</label>
+                  <select id="setting-ocr-engine" class="glass-select w-full rounded-lg px-3 py-2 text-xs">
+                    <option value="auto">Auto Detect (RapidOCR / PP-OCR fallback)</option>
+                    <option value="rapidocr">RapidOCR (PP-OCR v6 ONNX)</option>
+                    <option value="easyocr">EasyOCR Engine</option>
+                    <option value="tesseract">Tesseract Engine</option>
+                  </select>
                 </div>
 
                 <div class="form-group pt-2">

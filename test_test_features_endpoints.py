@@ -72,6 +72,18 @@ def test_pdf_extract_endpoint_multipage():
         assert isinstance(d_v2["layout_boxes"], list)
         assert d_v2["page_width"] > 0
         assert d_v2["page_height"] > 0
+        # Test engine="docling_v3" on page 2 with rapidocr
+        res_v3 = client.post("/api/sources/test_pdf_extract", json={"file_path": tmp.name, "page_number": 2, "engine": "docling_v3", "ocr_engine": "rapidocr"})
+        assert res_v3.status_code == 200
+        d_v3 = res_v3.json()
+        assert d_v3["status"] == "success"
+        assert d_v3["engine"] == "docling_v3"
+        assert d_v3["page_number"] == 2
+        assert d_v3["total_pages"] == 2
+        assert len(d_v3["extracted_text"]) > 0
+        assert "page_image_base64" in d_v3
+        assert "layout_boxes" in d_v3
+
     finally:
         if os.path.exists(tmp.name):
             os.remove(tmp.name)
