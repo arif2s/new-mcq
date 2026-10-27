@@ -5,8 +5,8 @@
 - **Core Purpose**: Offline-first medical MCQ, spaced repetition, RAG search & local AI synthesis platform.
 - **Runtime Environment**: Python 3.10+ async backend (FastAPI/Uvicorn), SQLite (WAL mode), pywebview (Windows Edge Chromium) or browser client, Vanilla HTML5/JS/CSS frontend.
 - **Tech Stack**:
-  - *Backend*: FastAPI, Uvicorn, SQLite3, Tantivy (BM25 lexical index), LanceDB (CPU vector + FTS hybrid search), ONNX Runtime (SapBERT/MiniLM), FlashRank (ms-marco-TinyBERT-L-2-v2 CPU cross-encoder reranking), SciSpaCy (UMLS/MeSH ontologies), Docling & PyMuPDF (PDF parsing), LibZim (ZIM reader), Tiktoken.
-  - *Frontend*: Vanilla HTML5/JS (ES6+), CSS3 with theme CSS variables (`ui/css/main.css`), Marked.js, KaTeX, DOMPurify.
+  - *Backend*: FastAPI, Uvicorn, SQLite3, Tantivy (BM25 lexical index), LanceDB (CPU vector + FTS hybrid search), ONNX Runtime (SapBERT 768d / MiniLM 384d), FlashRank (ms-marco-TinyBERT-L-2-v2 / ms-marco-MiniLM-L-6-v2 CPU cross-encoder reranking), SciSpaCy (UMLS/MeSH ontologies & SciPy sparse TF-IDF matcher), Docling v2 & Docling v3 (visual layout, booktabs reconstruction, OCR line-crop re-reading & PP-OCR ONNX layout parser) & PyMuPDF / AdaptivePdfLayoutEngine (PDF text extraction), LibZim (ZIM reader), Tiktoken.
+  - *Frontend*: Vanilla HTML5/JS (ES6+), CSS3 with glassmorphism theme CSS variables (`ui/css/main.css`), Marked.js, KaTeX, DOMPurify. Local offline vendor fallback assets automatically checked and cached under `ui/vendor/`.
   - *External Readers / Bridges*: SumatraPDF (`-reuse-instance`), Obsidian URI protocol (`obsidian://`), LM Studio API (`http://127.0.0.1:1234/v1`).
 - **Strict Hardware & Performance Budgets**:
   - *VRAM Budget*: Zero VRAM for backend processes (`CUDA_VISIBLE_DEVICES=""`); 100% VRAM (4.2–4.8 GB) reserved for local LM Studio GGUF models.
@@ -38,22 +38,25 @@
 │   ├── scheduler.py                   # FSRS v4.5 spaced repetition scheduling algorithm.
 │   └── reporter.py                    # Jinja2 HTML dossier report compiler for clinical topic syntheses.
 ├── parsers/
-│   ├── embedding_engine.py            # CPUEmbeddingEngine running ONNX SapBERT/MiniLM (384/768d) lazily on CPU.
+│   ├── embedding_engine.py            # CPUEmbeddingEngine running ONNX SapBERT/MiniLM (384/768d) lazily on CPU with active model switching.
 │   ├── lancedb_engine.py              # LanceDB hybrid vector storage and FTS engine for hierarchical document chunks.
 │   ├── tantivy_engine.py              # Low-latency BM25 lexical inverted index builder and depth-scored multi-depth searcher.
 │   ├── docling_parser.py              # Layout-aware PDF textbook section & table extractor using Docling ML / PyMuPDF.
+│   ├── docling_v2_parser.py           # Standalone Docling v2 layout parser with AdaptivePdfLayoutEngine base64/SVG rendering.
+│   ├── docling_v3_parser.py           # Standalone Docling v3 layout engine with dark-pixel de-bleeding & PP-OCR ONNX re-reading.
 │   ├── pdf_extractor.py               # Lightweight PyMuPDF fallback fast text slicer with page heading detection.
+│   ├── pdf_parser.py                  # Standalone 6-stage layout reconstruction pipeline (PyMuPDF AdaptivePdfLayoutEngine).
 │   ├── obsidian_reader.py             # Obsidian markdown frontmatter stripper, wikilink cleaner, and section reader.
 │   ├── zim_reader.py                  # LibZim C-bindings reader for offline Wikipedia/medical .zim archives and asset extraction.
-│   ├── reranker.py                    # FlashRank (ms-marco-TinyBERT-L-2-v2) CPU cross-encoder reranker.
-│   └── scispacy_linker_engine.py      # SciSpaCy NLP pipeline loader and TF-IDF offline UMLS/MeSH/RxNorm ontology linker.
+│   ├── reranker.py                    # FlashRank (ms-marco-TinyBERT-L-2-v2) CPU cross-encoder reranker with active model switching.
+│   └── scispacy_linker_engine.py      # SciSpaCy NLP pipeline loader, covering index SQLite pool, SciPy sparse TF-IDF matcher & batched linker.
 ├── server/
 │   ├── app.py                         # FastAPI app initialization, startup/shutdown lifespans, WS endpoints, and static file mounting.
 │   ├── ws_manager.py                  # Global WebSocket connection manager for live task/indexing progress.
 │   ├── routes_csv.py                  # Endpoints for CSV topic listing, question retrieval, filtering, and FSRS summary.
 │   ├── routes_csv_loader.py           # Background loader scanning data/csv and auto-ingesting questions into SQLite.
 │   ├── routes_mcq.py                  # MCQ topic extraction, scoring, synthesis lookup, and batch generation triggers.
-│   ├── routes_models.py               # Hardware-constrained model manager, canonical diagnostic endpoints, and ontology index builder.
+│   ├── routes_models.py               # Hardware-constrained model manager, active model switcher, diagnostic endpoints, & linker index builder.
 │   ├── routes_notes.py                # External app bridges (SumatraPDF launch, Obsidian native URI, ZIM asset/article proxy).
 │   ├── routes_queue.py                # RAG task queue state management, topic ignoring, priority overrides, and queue clear/retry.
 │   ├── routes_search.py               # Multi-source hybrid search API (LanceDB + Tantivy + ZIM + SciSpaCy).
@@ -61,9 +64,9 @@
 │   ├── routes_sources.py              # Source management (PDF, Obsidian, ZIM), wallpaper listing, and background indexer execution.
 │   └── routes_state.py                # Persistent state GET/PUT storage and vendor asset check.
 └── ui/
-    ├── index.html                     # Main SPA HTML shell with responsive subviews and modal containers.
+    ├── index.html                     # Main SPA HTML shell with responsive subviews and modal containers (mirrored at root index.html).
     ├── css/
-    │   ├── main.css                   # Glassmorphism UI tokens, theme CSS variables, grid styles, and utility classes.
+    │   ├── main.css                   # Glassmorphism UI tokens, theme CSS variables, grid styles, MediaWiki overrides, and utility classes.
     │   └── animations.css             # Keyframe animations for transitions, loaders, and badges.
     └── js/
         ├── app.js                     # Root UI navigation, tab switching, dynamic palette extraction, and citation click delegation.
@@ -97,7 +100,7 @@
 - `dummy.py`: `extract_topics(text: str) -> list[str]`
 
 ### Agents Modules (`agents/`)
-- `agents.topic_extractor`: Re-exports `extract_topics`, `extract_topics_local`, `filter_sibling_topics`, `get_topic_aliases`, `generate_candidate_variants`, `canonicalize_clinical_phrase`, `extract_clinical_modifiers`, `extract_all_clinical_modifiers`, `get_ignored_topics_set`, `add_ignored_topic`, `remove_ignored_topic`, `normalize_topic_key`, `resolve_zim_topic`, `get_medspacy_model`.
+- `agents.topic_extractor`: Re-exports `extract_topics`, `extract_topics_local`, `filter_sibling_topics`, `get_topic_aliases`, `generate_candidate_variants`, `canonicalize_clinical_phrase`, `extract_clinical_modifiers`, `extract_all_clinical_modifiers`, `get_ignored_topics_set`, `add_ignored_topic`, `remove_ignored_topic`, `normalize_topic_key`, `resolve_zim_topic`, `get_medspacy_model` from `agents.tema_q.topic_extractor`.
 - `agents.tema_q.topic_extractor`:
   - `extract_topics(text: str, explanation: str = "", strategy: str = "medspacy", use_zim_refinement: bool = False, use_tantivy_refinement: bool = False, **kwargs) -> list[str]`
   - `extract_topics_local(question: str = "", options: Optional[Any] = None, explanation: str = "", strategy: str = "medspacy", use_zim_refinement: bool = False, use_tantivy_refinement: bool = False, text: Optional[str] = None, **kwargs) -> dict[str, Any]`
@@ -155,15 +158,16 @@
 ### Parsers Modules (`parsers/`)
 - `parsers.embedding_engine`:
   - `get_configured_embedding_model(force_refresh: bool = False) -> str`
+  - `set_configured_embedding_model(model_id: str) -> None`
   - `get_embedding_engine(model_id: Optional[str] = None) -> CPUEmbeddingEngine`
   - `is_embedding_model_downloaded(model_id: str) -> bool`
   - `download_embedding_model(model_id: str) -> dict[str, Any]`
   - `class CPUEmbeddingEngine`:
-    - `__init__(model_id: Optional[str] = None)`
+    - `__init__(model_id: Optional[str] = None)` (defers ONNX session creation until first `embed()`)
     - `get_dimension() -> int`
     - `embed(texts: list[str]) -> list[list[float]]`
     - `embed_single(text: str) -> list[float]`
-  - `MODEL_DIMENSIONS: dict[str, int]`
+  - `MODEL_DIMENSIONS: dict[str, int]` (SapBERT `768`, MiniLM `384`)
 - `parsers.lancedb_engine`:
   - `build_lancedb_schema(vector_dim: int = 384) -> pyarrow.Schema`
   - `class LanceDBEngine`:
@@ -183,6 +187,24 @@
   - `extract_structured_layout(file_path: Union[str, Path], page_number: int) -> str`: LRU-cached (maxsize=128) layout markdown extractor for specific pages with graceful fallback to `parsers.pdf_extractor.extract_page_slice()`.
   - `extract_pdf_structure(file_path: Union[str, Path]) -> list[dict]`: Full document parser preserving hierarchical headings, markdown tables, lists, formulas, and text; returns dictionaries strictly conforming to `ChunkDict` (`page`, `page_number`, `heading`, `heading_path`, `subheading`, `text`, `article_length`, `doc_length`).
   - `ingest_to_lancedb(file_path: Union[str, Path], source_article: str, main_topic: str = "") -> int`: Extracts sections and ingests chunks into LanceDB using cached singleton `get_embedding_engine()` and batched ONNX embeddings, enforcing PyArrow schema types.
+- `parsers.docling_v2_parser`:
+  - `is_docling_models_downloaded() -> bool`
+  - `download_docling_models() -> dict[str, Any]`
+  - `clean_pdf_text(text: str) -> str`
+  - `extract_pdf_structure(file_path: Union[str, Path]) -> list[dict[str, Any]]`
+  - `extract_structured_layout(file_path: Union[str, Path], page_number: int) -> str`
+  - `extract_page_with_docling_v2(file_path: Union[str, Path], page_number: int, ocr_engine: str = "auto") -> dict[str, Any]`
+  - `extract_page_with_adaptive_layout(file_path: Union[str, Path], page_number: int) -> dict[str, Any]`
+  - `class AdaptivePdfLayoutEngine`: 5-tier typography profiling, dynamic heading stack tracking, and layout bounding box overlay generator.
+- `parsers.docling_v3_parser`:
+  - `is_docling_models_downloaded() -> bool`
+  - `download_docling_models() -> dict[str, Any]`
+  - `clean_pdf_text(text: str) -> str`
+  - `extract_pdf_structure(file_path: Union[str, Path]) -> list[dict[str, Any]]`
+  - `extract_structured_layout(file_path: Union[str, Path], page_number: int) -> str`
+  - `extract_page_with_docling_v3(file_path: Union[str, Path], page_number: int, ocr_engine: str = "auto") -> dict[str, Any]`
+  - `extract_page_with_adaptive_layout(file_path: Union[str, Path], page_number: int) -> dict[str, Any]`
+  - `class AdaptivePdfLayoutEngine`: Visual page inspector with line-crop PP-OCR ONNX re-reading, dark-pixel de-bleeding, vector chart obstacle isolation, and booktabs table reconstruction.
 - `parsers.pdf_extractor`:
   - `clean_pdf_text(text: str) -> str`: Normalizes typographical ligatures (fi, fl, ffi), repairs line-break hyphenations, strips null bytes and form feeds, and cleans whitespace.
   - `extract_page_slice(file_path: Union[str, Path], page_number: int) -> str`: LRU-cached (maxsize=256) text extraction with natural reading order (`sort=True`) and bounds safety (rejects `page_number < 1`).
@@ -190,6 +212,8 @@
   - `extract_pdf_pages(file_path: Union[str, Path], default_title: str = "") -> list[dict[str, Any]]`: Complete document extractor returning full `ChunkDict` records with deterministic MD5 IDs for Tantivy BM25 and LanceDB indexing when `pdfEngine == 'fitz'`.
   - `extract_pdf_structure(file_path: Union[str, Path]) -> list[dict[str, Any]]`: Drop-in interoperability alias for `extract_pdf_pages()`.
   - `get_pdf_page_count(file_path: Union[str, Path]) -> int`: Fast trailer-based page count reader.
+- `parsers.pdf_parser`:
+  - Re-exports `AdaptivePdfLayoutEngine`, `clean_pdf_text`, and `extract_page_with_adaptive_layout` providing a standalone 6-stage layout reconstruction engine (typography profiling, shaded callout isolation, column splitting, recursive XY-cut ordering, heading stack continuation).
 - `parsers.obsidian_reader`:
   - `read_markdown_body(file_path: Union[str, Path]) -> str`: LRU-cached (maxsize=512) frontmatter, comment, and wikilink stripper; handles Windows UTF-8 BOM (`utf-8-sig`) and returns cleaned plain text.
   - `extract_obsidian_sections(file_path: Union[str, Path]) -> list[dict]`: Layout-aware section extractor; protects fenced code blocks from false heading parsing, suppresses phantom sections, and returns complete dictionaries adhering strictly to `ChunkDict` (`id`, `doc_id`, `text`, `snippet`, `title`, `heading`, `heading_path`, `subheading`, `source="obsidian"`, `file_path`, `page=1`, `page_number=1`, `doc_length`, `article_length`).
@@ -200,25 +224,30 @@
   - `get_archive(zim_path: str) -> Optional[Any]`
   - `resolve_zim_topic(term: str) -> dict[str, Any]`
   - `get_zim_article(zim_path: str, title: str, max_chars: int = 4500) -> str`
-  - `get_zim_article_html(title_or_path: str, zim_path: Optional[str] = None) -> dict[str, Any]`
+  - `get_zim_article_html(title_or_path: str, zim_path: Optional[str] = None) -> dict[str, Any]` (scopes extracted HTML inside `<div class="mw-parser-output">`)
   - `get_zim_asset(asset_path: str, zim_path: str = "") -> Optional[ZimAsset]`
   - `search_zim_articles(query: str, limit: int = 3) -> list[ChunkDict]`
   - `expand_query_via_zim(query: str) -> str`
 - `parsers.reranker`:
   - `get_configured_flashrank_model(force_refresh: bool = False) -> str`
+  - `set_configured_flashrank_model(model_name: str) -> None`
   - `is_flashrank_model_downloaded(model_name: str) -> bool`
   - `download_flashrank_model(model_name: str) -> dict[str, Any]`
   - `get_ranker(model_name: Optional[str] = None) -> Optional[Ranker]`
   - `rerank_chunks(query: str, chunks: list[dict], top_k: int = 5) -> list[dict]`
 - `parsers.scispacy_linker_engine`:
-  - `get_concept_aliases(term: str) -> list[str]`: LRU-cached (maxsize=4096) concept synonym and alias resolver using thread-local SQLite connections with 256 MB MMAP.
+  - `get_concept_aliases(term: str) -> list[str]`: LRU-cached (maxsize=4096) concept synonym and alias resolver using thread-local SQLite covering index connections with 256 MB MMAP.
+  - `get_concept_aliases_batch(terms: Iterable[str]) -> dict[str, list[str]]`: High-throughput batched synonym resolver across biomedical terms.
   - `resolve_ontology_concept(term: str, enable_fuzzy_tfidf: bool = True, min_tfidf_score: float = 0.84) -> dict`: Multi-stage clinical concept resolver; uses B-Tree exact lookups (<0.2ms) followed by cross-matcher argmax TF-IDF evaluation across MeSH, RxNorm, and HPO.
-  - `build_offline_ontology_index(selected_ontologies: Optional[list[str]] = None, target_kbs: Optional[list[str]] = None, force_rebuild: bool = True, progress_callback: Optional[callable] = None, **kwargs) -> dict`: Streams definitions into `ontology_kb.db` in low-RAM batches; clears in-memory caches and applies B-Tree indices.
+  - `resolve_ontology_concepts_batch(terms: Iterable[str], enable_fuzzy_tfidf: bool = True, min_tfidf_score: float = 0.84) -> dict[str, dict]`: Batched concept resolver with vectorized SciPy sparse matrix lookup.
+  - `extract_and_link_entities(text: str, model_id: Optional[str] = None) -> list[dict[str, Any]]`: Combined biomedical entity extractor and ontology concept linker.
+  - `build_offline_ontology_index(selected_ontologies: Optional[list[str]] = None, target_kbs: Optional[list[str]] = None, force_rebuild: bool = True, progress_callback: Optional[callable] = None, **kwargs) -> dict`: Streams definitions into `ontology_kb.db` in low-RAM batches; clears in-memory caches and applies B-Tree covering indices.
   - `build_ontology_database`: Backward-compatible alias for `build_offline_ontology_index`.
   - `load_scispacy_pipeline(model_id: Optional[str] = None) -> list[Any]`: Thread-safe, cached loader for biomedical spaCy pipelines enforcing `spacy.require_cpu()` and zero VRAM allocation.
   - `is_scispacy_model_downloaded(model_id: str) -> bool`: Checks local `data/models/scispacy/` extracted folders and Python packages.
   - `download_scispacy_model(model_id: str) -> dict`: Downloads and extracts models atomically without orphaned temporary files.
   - `get_configured_scispacy_model() -> str`: Reads persistent model selection from `user_state`.
+  - `set_configured_scispacy_model(model_id: str) -> None`: Updates active SciSpaCy model selection and clears pipeline cache.
   - `get_ontology_files_status() -> dict`: Scans local disk definitions and compiled concepts.
   - `normalize_alias(text: str) -> str`: LRU-cached (maxsize=8192) medical syntax canonicalizer (e.g., handles inversion of inverted MeSH descriptors).
 
@@ -262,9 +291,11 @@
   - `POST /api/mcq/batch_generate_references` & `POST /api/mcq/topics/generate_references` -> `batch_generate_references(payload: BatchTopicRequest) -> dict[str, Any]`
   - `POST /api/mcq/batch_generate_explanations` & `POST /api/mcq/topics/generate_explanations` -> `batch_generate_explanations(payload: BatchTopicRequest) -> dict[str, Any]`
 - `server.routes_models`:
-  - `GET /api/models/cpu_embeddings`, `POST /api/models/cpu_embeddings`, `GET /api/models/cpu_embedding_models`, `POST /api/models/cpu_embedding_models` -> `get_cpu_embedding_models() -> dict[str, Any]`: Lists embedding models, disk caching status, and active model selection from `user_state`.
+  - `GET /api/models/cpu_embeddings`, `POST /api/models/cpu_embeddings`, `GET /api/models/cpu_embedding_models`, `POST /api/models/cpu_embedding_models` -> `get_cpu_embedding_models() -> dict[str, Any]`: Lists embedding models (including SapBERT Clinical Fulltext ONNX), disk caching status, and active model selection from `user_state`.
   - `GET /api/models/flashrank_models` & `POST /api/models/flashrank_models` -> `get_flashrank_models() -> dict[str, Any]`: Lists FlashRank cross-encoder reranking models and download status.
   - `GET /api/models/scispacy_models` & `POST /api/models/scispacy_models` -> `get_scispacy_models() -> dict[str, Any]`: Lists SciSpaCy biomedical NER models, RAM footprints, and installation status.
+  - `POST /api/models/set_active` -> `set_active_model(payload: SetActiveModelPayload) -> dict[str, Any]`: Persists choice to `user_state` and invokes engine model setters.
+  - `POST /api/models/download_all` -> `download_all_models(background_tasks: BackgroundTasks) -> dict[str, Any]`: Enqueues background pre-fetching of all catalog models.
   - `POST /api/models/download` -> `download_model(request: ModelDownloadRequest, background_tasks: BackgroundTasks) -> dict[str, Any]`: Downloads embedding, FlashRank, or SciSpaCy models with zero VRAM and thread-safe file handling.
   - `POST /api/models/scispacy/download` -> `download_scispacy_model_direct(request: ModelDownloadRequest, background_tasks: BackgroundTasks) -> dict[str, Any]`: Dedicated alias endpoint for SciSpaCy model downloads.
   - `GET /api/models/scispacy/download_status?model_name=...` -> `get_scispacy_download_status(model_name: str) -> dict[str, Any]`: Polls real-time download and extraction progress for a SciSpaCy model.
@@ -324,7 +355,7 @@
   - `POST /api/sources/open_pdf` -> `open_pdf(payload: OpenPdfPayload) -> dict[str, str]`: Windows deep-link launcher for SumatraPDF using `-reuse-instance` and `-page` flags with `.pdf` path validation and auto-discovery in `%LOCALAPPDATA%` and `%ProgramFiles%`.
   - `GET /api/sources/asset?path=...` -> `get_asset(path: str) -> FileResponse`: Serves Obsidian attachments with path traversal checks (`is_relative_to`) and mimetype sniffing.
   - `POST /api/sources/build_zim_dict` -> `build_zim_dict() -> dict[str, Any]`: Zero-copy C++ B-tree archive inspection updating item counts.
-  - `POST /api/sources/test_pdf_extract` -> `test_pdf_extract(payload: TestPdfExtractPayload) -> dict[str, Any]`: Interactive PDF layout comparator testing Fitz text, heuristic headings, and Docling ML.
+  - `POST /api/sources/test_pdf_extract` -> `test_pdf_extract(payload: TestPdfExtractPayload) -> dict[str, Any]`: Interactive PDF layout comparator testing Fitz text, heuristic headings, Docling v2, and Docling v3 ML layout parsers.
 - `server.routes_state`:
   - `GET /api/state/vendor_status` -> `get_vendor_status() -> dict[str, Any]`: Checks presence and size (>128 bytes) of offline vendor scripts (Tailwind, Marked, DOMPurify, KaTeX) in `ui/vendor/`.
   - `POST /api/state/vendor_download` -> `trigger_vendor_download() -> dict[str, Any]`: Triggers atomic download of vendor assets via `config.ensure_offline_vendor_assets()`.
@@ -339,10 +370,10 @@
   - `DELETE /api/state/{key}` -> `delete_state_key(key: str) -> dict[str, str]`: Deletes state entry from SQLite.
 
 ### Frontend Modules (`ui/js/`)
-- `ui/js/app.js`: `switchTab(tabName: str)`, `extractAndApplyPalette(imgElement: HTMLImageElement)`, `updateThemeAndBackground()`, citation delegation on click (`data-source-type`, `data-file-path`, `data-page`).
+- `ui/js/app.js`: `switchTab(tabName: str)`, `openInspector(forceOpen: bool = true)`, `closeInspector()`, `extractAndApplyPalette(imgElement: HTMLImageElement)`, `updateThemeAndBackground()`, citation delegation on click (`data-source-type`, `data-file-path`, `data-page`).
 - `ui/js/state.js`: `AppPersistence.fetchState()`, `AppPersistence.saveState()`, `AppPersistence.updateState(patch)`
-- `ui/js/quiz.js`: `initQuizSetup()`, `beginQuizRunner()`, `handleSelectOption(optLetter: str)`, `updateInspectorForQuestion(q)`
-- `ui/js/hub.js`: `renderHub()`, `openTopicCarousel(topicKey: str)`, `openSessionReview(sessionId: str)`
+- `ui/js/quiz.js`: `initQuizSetup()`, `beginQuizRunner()`, `handleSelectOption(optLetter: str)`, `updateInspectorForQuestion(q)`, `renderTopicVerificationModalDOM()`
+- `ui/js/hub.js`: `renderHub()`, `openTopicCarousel(topicKey: str)`, `openTopicCarouselForQuiz(topicKey: str)`, `openSessionReview(sessionId: str)`
 - `ui/js/search.js`: `performGlobalSearch(query: str)`, `renderCentralSearchResults(results)`, `renderSearchFilterInspector()`
 - `ui/js/queue.js`: `fetchQueueStatus()`, `renderQueue()`, `initQueueWebSocket()`
 - `ui/js/vault.js`: `fetchSources()`, `renderSources()`, `updateProgressUI(percent, msg)`
@@ -737,6 +768,7 @@ user_state (
       "session_ids": list[str],
   }
   ```
+- `SetActiveModelPayload`: `{ "model_type": "embedding" | "reranker" | "scispacy", "model_id": str }`
 - `FSRS Stats Dict`: `{ "state": int, "difficulty": float, "stability": float, "reps": int, "lapses": int, "interval_seconds": int }`
 
 ### SQLite Enum Values & Serialized JSON Fields
@@ -809,7 +841,7 @@ user_state (
 ## 6. Active Features & Architectural Invariants
 
 ### Architectural Invariants
-1. **Zero VRAM for Backend**: `CUDA_VISIBLE_DEVICES=""` must remain set at application startup (`run.py`, top of `server/app.py`, `parsers/embedding_engine.py`, `parsers/lancedb_engine.py`, `parsers/reranker.py`, `parsers/docling_parser.py`, `parsers/scispacy_linker_engine.py`, `parsers/pdf_extractor.py`, `parsers/obsidian_reader.py`, `agents/tema_q/topic_extractor.py`, `agents/tema_q/auditor.py`, `auditor.py`, `server/routes_search.py`, `server/routes_sources.py`, `server/routes_state.py`, `server/routes_queue.py`, `server/routes_notes.py`, `server/routes_models.py`, `server/routes_csv.py`, `server/routes_csv_loader.py`, `server/ws_manager.py`, `core/database.py`, and `core/reporter.py`). All vector embeddings, reranking, spaCy biomedical pipelines, and Docling ML layout parsing MUST execute strictly on CPU.
+1. **Zero VRAM for Backend**: `CUDA_VISIBLE_DEVICES=""` must remain set at application startup (`run.py`, top of `server/app.py`, `parsers/embedding_engine.py`, `parsers/lancedb_engine.py`, `parsers/reranker.py`, `parsers/docling_parser.py`, `parsers/docling_v2_parser.py`, `parsers/docling_v3_parser.py`, `parsers/scispacy_linker_engine.py`, `parsers/pdf_extractor.py`, `parsers/pdf_parser.py`, `parsers/obsidian_reader.py`, `agents/tema_q/topic_extractor.py`, `agents/tema_q/auditor.py`, `auditor.py`, `server/routes_search.py`, `server/routes_sources.py`, `server/routes_state.py`, `server/routes_queue.py`, `server/routes_notes.py`, `server/routes_models.py`, `server/routes_csv.py`, `server/routes_csv_loader.py`, `server/ws_manager.py`, `core/database.py`, and `core/reporter.py`). All vector embeddings, reranking, spaCy biomedical pipelines, and Docling ML layout parsing MUST execute strictly on CPU.
 2. **Main Thread DLL Pre-warming**: `onnxruntime`, `lancedb`, and `tantivy` MUST be imported at the very top of `server/app.py` to prevent Windows Access Violation segfaults.
 3. **Database Concurrency, Cache Caps & Migration Ordering**:
    - Every SQLite connection returned by `get_db_connection()` MUST apply connection-scoped PRAGMAs (`journal_mode = WAL`, `busy_timeout = 20000`, `foreign_keys = ON`, `synchronous = NORMAL`, `mmap_size = 536870912`, `temp_store = MEMORY`, `cache_size = -64000`).
@@ -818,17 +850,20 @@ user_state (
 4. **Token Caps**: Prompts to LM Studio MUST be tiktoken-bounded to 4096 tokens total context length via `truncate_to_token_limit`.
 5. **DOM & Security Safety**: Frontend vanilla JS MUST NEVER raw-interpolate user strings into `innerHTML`; use `escapeHTML()`, `DOMPurify.sanitize()`, or DOM element construction.
 6. **External Readers Interop & Path Safety**: SumatraPDF invocation MUST validate `.pdf` file extensions and use `-reuse-instance` and `-page <num>`. Obsidian URI invocation MUST use `obsidian://open?vault=...&file=...`.
-7. **Offline Asset Self-Containment**: Vendor scripts (Tailwind, Marked, DOMPurify, KaTeX) MUST be saved under `ui/vendor/` and downloaded using atomic temp-file replacement to avoid 0-byte file corruption.
-8. **Lazy Search Singletons & Vector Dimension Sync**: Embedding models, LanceDB instances, FlashRank rerankers, and Docling converter instances MUST be cached singletons; never re-instantiate them per query to ensure search latency stays < 250ms on CPU. LanceDB table vector dimensions (`384` vs `768`) MUST match `get_embedding_engine().get_dimension()` and trigger `reset_table()` if the configured embedding model dimension changes.
+7. **Offline Asset Self-Containment**: Vendor scripts (Tailwind, Marked, DOMPurify, KaTeX) MUST be saved under `ui/vendor/` and automatically checked and downloaded at startup using atomic temp-file replacement (`config.ensure_offline_vendor_assets()`) to avoid 0-byte file corruption and guarantee complete offline execution.
+8. **Lazy Search Singletons, Active Model Switching & Vector Dimension Sync**: Embedding models, LanceDB instances, FlashRank rerankers, and Docling converter instances MUST be cached singletons; never re-instantiate them per query to ensure search latency stays < 250ms on CPU. Active model switching (`POST /api/models/set_active`) MUST persist choices to `user_state` and clear in-memory caches via `set_configured_embedding_model()`, `set_configured_flashrank_model()`, and `set_configured_scispacy_model()`. LanceDB table vector dimensions (`384` vs `768`) MUST match `get_embedding_engine().get_dimension()` and trigger `reset_table()` if the configured embedding model dimension changes.
 9. **Cross-Encoder Contract**: Any search candidate passed to `parsers/reranker.py` MUST contain an explicit `"text"` key containing the passage body.
 10. **Tantivy Search Result Inspection**: Tantivy search returns a mapping `{"obsidian": [...], "pdf": [...], "zim": []}` (where `"zim"` is an empty list stub populated downstream by `parsers.zim_reader`). Check `any(len(v) > 0 for v in hits.values())` rather than `bool(hits)`.
-11. **ZIM Contract & Cache Protection**: All search hits from `parsers.zim_reader` must satisfy `ChunkDict` (including `source="zim"`, `text`, `id`, `heading_path`, `page_number`). `get_zim_asset` must return a polyfill (`ZimAsset`) supporting both `tuple[bytes, str]` unpacking and dictionary field lookup.
+11. **ZIM Contract & Cache Protection**: All search hits from `parsers.zim_reader` must satisfy `ChunkDict` (including `source="zim"`, `text`, `id`, `heading_path`, `page_number`). `get_zim_asset` must return a polyfill (`ZimAsset`) supporting both `tuple[bytes, str]` unpacking and dictionary field lookup. Extracted ZIM HTML MUST be scoped inside `<div class="mw-parser-output">`.
 12. **Single-File Deduplication Metadata Integrity**: When merging chunks belonging to the same physical file or ZIM entry, `page`, `page_number`, `heading`, `text`, and `snippet` MUST be synchronized atomically to the highest base-scoring passage to avoid desynchronized page citations in downstream document readers.
 13. **Reference Resolution Polymorphism & Safe Inspection**: Endpoints, background workers, and dossier report generators consuming `cached_syntheses.top_references` or search hits (`get_synthesis`, `get_topics_status`, `batch_generate_references`, `generate_topic_report`) MUST inspect references polymorphically across dictionaries (`SearchResultsDict`), lists (`list[ChunkDict]`), or null values without assuming a dictionary structure or calling `.values()`, preventing 500 runtime crashes during RAG report lookups.
 14. **Queue Synthesis Deduplication**: Background topic synthesis triggers (`batch_generate_explanations`, `session_processor`, `prepare_questions`) MUST check `task_queue` for existing active tasks (`status IN ('pending', 'processing')`) under the canonical `task_type = 'SYNTHESIZE_TOPIC'` (assisted by `idx_task_dedup`) before enqueuing to prevent duplicate task flooding.
 15. **Cascade-Safe Parent Upsert Integrity**: SQLite tables referenced by child tables with `FOREIGN KEY ... ON DELETE CASCADE` (specifically `quiz_sessions` referencing `session_questions`) MUST execute `INSERT ... ON CONFLICT(id) DO UPDATE SET` rather than `INSERT OR REPLACE` to prevent unintended cascade-deletion of associated questions when saving sessions or updating metadata.
 16. **Lifespan Non-Blocking Startup/Teardown & Subsystem Cleanup**: FastAPI startup MUST bind the running event loop to `ws_manager` and start `queue_worker.start()`. During shutdown, all thread-blocking background workers (`queue_worker.stop()`) MUST execute off the main asyncio loop via `asyncio.to_thread` to prevent event-loop lockups during process termination, and shared persistent network clients (e.g. `httpx.AsyncClient` in `agents.tema_q.pipeline`) must be explicitly closed via `close_http_client()` to prevent socket resource leaks.
 17. **Tantivy Index Lock & Resource Safety**: Tantivy index writers MUST be isolated from concurrent indexing tasks via an asynchronous lock (`_INDEXING_LOCK`), commits MUST be offloaded to separate threads (`asyncio.to_thread(writer.commit)`), and all exception pathways MUST explicitly release or discard the writer to prevent lingering `.lock` files on `INDEX_PATH`.
-18. **WebSocket Thread & Loop Boundary Isolation**: Background worker threads dispatching live WebSocket notifications MUST use thread-safe dispatchers (`asyncio.run_coroutine_threadsafe`) targeting the primary FastAPI event loop, serialize writes per socket connection, and conform verbatim to canonical message schemas (`type="task_update"`, `type="session_update"`, `type="indexing_progress"`).
+18. **WebSocket Thread & Loop Boundary Isolation**: Background worker threads dispatching live WebSocket notifications MUST use thread-safe dispatchers (`asyncio.run_coroutine_threadsafe`) targeting the primary FastAPI event loop, serialize writes per socket connection, construct WebSocket URLs using `window.location.protocol` (`wss://` or `ws://`) and `window.location.host`, and conform verbatim to canonical message schemas (`type="task_update"`, `type="session_update"`, `type="indexing_progress"`).
 19. **UTF-8 BOM and Code Block Protection in Markdown Parsers**: Obsidian markdown parsers MUST decode using `utf-8-sig` to automatically strip Windows UTF-8 Byte Order Marks, and track fenced code block boundaries (` ``` ` / `~~~`) to prevent code comments (e.g., `# python comment`) from being falsely parsed as document section headings.
 20. **Chunked Database Ingestion & Transaction Boundaries**: Large dataset ingestion operations (e.g. `csv_questions` mass loading) MUST commit records in discrete batches (`BATCH_SIZE <= 1000`) rather than holding long-lived write transactions, preventing SQLite database locks (`busy_timeout`) on concurrent quiz and search worker threads.
+21. **HTML Shell & Deferred Script Integrity**: The application HTML shell files (`ui/index.html` and root `index.html`) MUST remain identical. All vendor and application JavaScript files MUST be included with `defer` attributes, interactive buttons MUST use explicit `type="button"`, and theme persistence MUST initialize immediately via an inline IIFE reading `localStorage.getItem("theme")`.
+22. **Docling Offline Execution Safety**: Docling parsers (`parsers/docling_v2_parser.py`, `parsers/docling_v3_parser.py`) MUST set `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` environment variables when local model files are detected, enforcing 100% offline layout conversion without online Hugging Face Hub hangs.
+23. **Non-Collapsing Inspector on Background Topic Extraction**: In `ui/js/app.js` and `ui/js/quiz.js`, `openInspector(forceOpen)` defaults `forceOpen` to `true`. When called with `forceOpen = false` during automatic background updates (`updateInspectorForQuestion`), inspector content MUST update without reopening the right sidebar if it was collapsed by the user.
