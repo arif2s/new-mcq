@@ -78,8 +78,23 @@ try:
         from docling.datamodel.pipeline_options import EasyOcrOptions
     except Exception:
         EasyOcrOptions = None
+    try:
+        from docling.datamodel.pipeline_options import TesseractOcrOptions
+    except Exception:
+        TesseractOcrOptions = None
+    try:
+        from docling.datamodel.pipeline_options import TesseractCliOcrOptions
+    except Exception:
+        TesseractCliOcrOptions = None
+    try:
+        from docling.datamodel.pipeline_options import OcrMacOptions
+    except Exception:
+        OcrMacOptions = None
 except Exception:
     _DOCLING_AVAILABLE = False
+    TesseractOcrOptions = None
+    TesseractCliOcrOptions = None
+    OcrMacOptions = None
 
 # Lazy singletons for selective line-crop re-OCR (RapidOCR / PP-OCR ONNX and EasyOCR CPU)
 _RAPIDOCR_ENGINE: Any = False
@@ -89,6 +104,7 @@ _OCR_ENGINE_LOCK = threading.RLock()
 logger = logging.getLogger(__name__)
 
 _FITZ_LOCK = threading.RLock()
+_DOCLING_LOCK = threading.RLock()
 _DOCLING_CONVERTERS: Dict[Any, Any] = {}
 
 DOCLING_REQUIRED_MODELS = (
@@ -622,6 +638,12 @@ class _VisualPageInspector:
             return None
 
         crop = self.arr[py0:py1, px0:px1, :]
+
+        if self.ocr_engine in ("indra", "indra_math"):
+            import parsers.indra_parser as indra_p
+            res = indra_p.ocr_image_region(crop, math=(self.ocr_engine == "indra_math"))
+            txt = res.get("text") or res.get("markdown") or ""
+            return txt.strip() if txt.strip() else None
 
         if callable(self.line_ocr_callback):
             try:
@@ -1388,6 +1410,7 @@ class AdaptivePdfLayoutEngine:
                     continue
 
                 best_match = (j_cand, box, line_cells, col_anchors)
+                break
 
             if best_match is None:
                 continue
@@ -3356,8 +3379,9 @@ def _get_docling_converter(
     raw_engine = ocr_engine if (ocr_engine and ocr_engine != "auto") else (kwargs.get("OCR_engine") or kwargs.get("ocr_engine") or ocr_engine or "auto")
     engine_pref = str(raw_engine).strip().lower()
     cache_key = (bool(do_ocr), engine_pref, bool(force_full_page_ocr))
-    if cache_key in _DOCLING_CONVERTERS:
-        return _DOCLING_CONVERTERS[cache_key]
+    with _DOCLING_LOCK:
+        if cache_key in _DOCLING_CONVERTERS:
+            return _DOCLING_CONVERTERS[cache_key]
 
     if HF_CACHE_DIR:
         os.environ["HF_HOME"] = str(HF_CACHE_DIR)
@@ -3383,7 +3407,23 @@ def _get_docling_converter(
                 if hasattr(ocr_opts, "force_full_page_ocr"):
                     ocr_opts.force_full_page_ocr = bool(force_full_page_ocr)
             pipeline_options.ocr_options = ocr_opts
-            logger.info("Docling v3 configured with EasyOcrOptions (force_full_page_ocr=%s)", force_full_page_ocr)
+        elif engine_pref in ("tesseract", "tesseract_cli") and (TesseractOcrOptions is not None or TesseractCliOcrOptions is not None):
+            tess_cls = TesseractOcrOptions if TesseractOcrOptions is not None else TesseractCliOcrOptions
+            try:
+                ocr_opts = tess_cls(force_full_page_ocr=bool(force_full_page_ocr))
+            except Exception:
+                ocr_opts = tess_cls()
+                if hasattr(ocr_opts, "force_full_page_ocr"):
+                    ocr_opts.force_full_page_ocr = bool(force_full_page_ocr)
+            pipeline_options.ocr_options = ocr_opts
+        elif engine_pref in ("mac_ocr", "ocrmac") and OcrMacOptions is not None:
+            try:
+                ocr_opts = OcrMacOptions(force_full_page_ocr=bool(force_full_page_ocr))
+            except Exception:
+                ocr_opts = OcrMacOptions()
+                if hasattr(ocr_opts, "force_full_page_ocr"):
+                    ocr_opts.force_full_page_ocr = bool(force_full_page_ocr)
+            pipeline_options.ocr_options = ocr_opts
         elif RapidOcrOptions is not None:
             try:
                 ocr_opts = RapidOcrOptions(force_full_page_ocr=bool(force_full_page_ocr))
@@ -3392,7 +3432,6 @@ def _get_docling_converter(
                 if hasattr(ocr_opts, "force_full_page_ocr"):
                     ocr_opts.force_full_page_ocr = bool(force_full_page_ocr)
             pipeline_options.ocr_options = ocr_opts
-            logger.info("Docling v3 configured with RapidOcrOptions / PP-OCR ONNX (force_full_page_ocr=%s)", force_full_page_ocr)
 
     try:
         pipeline_options.table_structure_options.do_cell_matching = True
@@ -3545,6 +3584,19 @@ def extract_page_with_docling_v3(
     raw_engine = ocr_engine if (ocr_engine and ocr_engine != "auto") else (kwargs.get("OCR_engine") or kwargs.get("ocr_engine") or ocr_engine or "auto")
     engine_pref = str(raw_engine).strip().lower()
 
+    if engine_pref in ("indra", "indra_math", "indra_ocr"):
+        import parsers.indra_parser as indra_p
+        i_mode = "ocr" if engine_pref == "indra_ocr" else "auto"
+        i_math = (engine_pref == "indra_math")
+        return indra_p.extract_page_with_indra(
+            file_path=norm_path,
+            page_number=page_number,
+            mode=i_mode,
+            math=i_math,
+            default_title=title,
+            initial_heading_stack=initial_heading_stack,
+        )
+
     adaptive_res = extract_page_with_adaptive_layout(
         norm_path,
         page_number,
@@ -3568,7 +3620,8 @@ def extract_page_with_docling_v3(
                 page = doc[page_idx]
                 native_text = page.get_text("text").strip()
                 explicit_ocr_requested = bool(force_ocr) or engine_pref in (
-                    "paddle", "paddleocr", "ppocr", "ppocr_v4", "ppocr_v5", "ppocr_v6", "rapidocr", "easyocr", "easy_ocr", "easy"
+                    "paddle", "paddleocr", "ppocr", "ppocr_v4", "ppocr_v5", "ppocr_v6",
+                    "rapidocr", "easyocr", "easy_ocr", "easy", "tesseract", "tesseract_cli", "mac_ocr", "ocrmac"
                 )
                 do_ocr = (len(native_text) < 40) or explicit_ocr_requested
 
@@ -3726,6 +3779,12 @@ def extract_page_with_adaptive_layout(
             return result
 
 
+@functools.lru_cache(maxsize=128)
+def _cached_structured_layout(norm_path: str, page_number: int, ocr_engine: str) -> str:
+    res = extract_page_with_docling_v3(norm_path, page_number, ocr_engine=ocr_engine)
+    return res.get("extracted_text", "") or res.get("text", "")
+
+
 def extract_structured_layout(
     file_path: Union[str, Path],
     page_number: int,
@@ -3733,6 +3792,8 @@ def extract_structured_layout(
     **kwargs: Any,
 ) -> str:
     """Convenience layout extractor returning Markdown text using Docling v3 (forwards ocr_engine)."""
+    if not kwargs:
+        return _cached_structured_layout(str(Path(file_path).resolve()), int(page_number), str(ocr_engine or "auto"))
     res = extract_page_with_docling_v3(file_path, page_number, ocr_engine=ocr_engine, **kwargs)
     return res.get("extracted_text", "") or res.get("text", "")
 
@@ -3748,6 +3809,18 @@ def extract_pdf_structure(
     """
     if not file_path:
         return []
+
+    raw_engine = ocr_engine if (ocr_engine and ocr_engine != "auto") else (kwargs.get("OCR_engine") or kwargs.get("ocr_engine") or ocr_engine or "auto")
+    engine_pref = str(raw_engine).strip().lower()
+    if engine_pref in ("indra", "indra_math", "indra_ocr"):
+        import parsers.indra_parser as indra_p
+        i_mode = "ocr" if engine_pref == "indra_ocr" else "auto"
+        i_math = (engine_pref == "indra_math")
+        return indra_p.extract_pdf_structure(
+            file_path=file_path,
+            mode=i_mode,
+            math=i_math,
+        )
 
     norm_path = str(Path(file_path).resolve())
     path_obj = Path(norm_path)
@@ -3819,6 +3892,10 @@ def extract_pdf_structure(
                 "parent_id": None,
             })
 
+        total_doc_chars = max(1, sum(int(s.get("length", 0)) for s in sections))
+        for s in sections:
+            s["article_length"] = total_doc_chars
+            s["doc_length"] = total_doc_chars
         return sections
     except Exception as exc:
         logger.error("Docling v3 PDF structure extraction failed for %s: %s", norm_path, exc)

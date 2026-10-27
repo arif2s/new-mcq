@@ -12,6 +12,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const pdfEngineDoclingLabel = document.getElementById('pdf-engine-docling-label');
   const pdfEngineDoclingV2Label = document.getElementById('pdf-engine-docling-v2-label');
   const pdfEngineDoclingV3Label = document.getElementById('pdf-engine-docling-v3-label');
+  const pdfEngineIndraLabel = document.getElementById('pdf-engine-indra-label');
+  const pdfEngineIndraMathLabel = document.getElementById('pdf-engine-indra-math-label');
+  const pdfEngineIndraOcrLabel = document.getElementById('pdf-engine-indra-ocr-label');
   const startIndexingBtn = document.getElementById('start-indexing-btn');
   const indexingBtnText = document.getElementById('indexing-btn-text');
   const indexingIconPlay = document.getElementById('indexing-icon-play');
@@ -79,22 +82,40 @@ document.addEventListener('DOMContentLoaded', () => {
         const bgClass = src.enabled ? 'glass-card' : 'glass-panel opacity-60';
         const toggleIcon = src.enabled ? icons.toggleOn : icons.toggleOff;
         const toggleColor = src.enabled ? 'text-success-500' : 'text-muted';
-        const typeBadge = srcType === 'pdf' && src.pdfEngine ? `${srcType} (${src.pdfEngine})` : srcType;
+        const currentEngine = src.pdfEngine || 'docling_v2';
+        const typeBadge = srcType === 'pdf' ? `pdf (${currentEngine})` : srcType;
         const countFormatted = Number(src.itemCount || 0).toLocaleString();
 
         const el = document.createElement('div');
         el.className = `p-4 rounded-xl border flex items-center justify-between transition-all ${bgClass}`;
+
+        let pdfEngineSelectHTML = '';
+        if (srcType === 'pdf') {
+          pdfEngineSelectHTML = `
+            <select class="pdf-engine-select glass-select text-xs py-1 px-2 rounded font-mono" data-id="${escapeHTML(src.id)}">
+              <option value="fitz" ${currentEngine === 'fitz' ? 'selected' : ''}>fitz — PyMuPDF (Fast Text)</option>
+              <option value="indra" ${currentEngine === 'indra' ? 'selected' : ''}>indra — Indra OCR ONNX (Auto)</option>
+              <option value="indra_math" ${currentEngine === 'indra_math' ? 'selected' : ''}>indra_math — Indra OCR (+ Math)</option>
+              <option value="indra_ocr" ${currentEngine === 'indra_ocr' ? 'selected' : ''}>indra_ocr — Indra OCR (Force Full OCR)</option>
+              <option value="docling_v2" ${currentEngine === 'docling_v2' ? 'selected' : ''}>docling_v2 — Docling v2 Layout</option>
+              <option value="docling_v3" ${currentEngine === 'docling_v3' ? 'selected' : ''}>docling_v3 — Docling v3 Layout</option>
+              <option value="docling" ${currentEngine === 'docling' ? 'selected' : ''}>docling — Docling v1 ML</option>
+            </select>
+          `;
+        }
+
         el.innerHTML = `
           <div class="flex items-center gap-4 min-w-0 flex-1">
             <div class="p-2.5 glass-panel rounded-xl text-brand-400">
               ${icons[srcType] || icons.obsidian}
             </div>
             <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
                 <p class="text-sm font-semibold">${escapeHTML(src.name)}</p>
                 <span class="text-xs px-2 py-0.5 rounded glass-panel text-muted uppercase font-mono">
                   ${escapeHTML(typeBadge)}
                 </span>
+                ${pdfEngineSelectHTML}
               </div>
               <p class="text-xs font-mono text-muted truncate mt-0.5">${escapeHTML(src.path)}</p>
             </div>
@@ -122,6 +143,20 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     sourcesList.querySelectorAll('.delete-btn').forEach(btn => {
       btn.addEventListener('click', () => handleDelete(btn.getAttribute('data-id')));
+    });
+    sourcesList.querySelectorAll('.pdf-engine-select').forEach(sel => {
+      sel.addEventListener('change', (e) => {
+        const id = sel.getAttribute('data-id');
+        const newEngine = e.target.value;
+        if (!id) return;
+        fetch(`/api/sources/${encodeURIComponent(id)}/engine`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pdfEngine: newEngine }),
+        })
+          .then(() => fetchSources())
+          .catch(() => {});
+      });
     });
   }
 
@@ -174,22 +209,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementsByName('pdfEngine').forEach(radio => {
     radio.addEventListener('change', () => {
-      [pdfEngineFitzLabel, pdfEngineDoclingLabel, pdfEngineDoclingV2Label, pdfEngineDoclingV3Label].forEach(label => {
+      [pdfEngineFitzLabel, pdfEngineDoclingLabel, pdfEngineDoclingV2Label, pdfEngineDoclingV3Label, pdfEngineIndraLabel, pdfEngineIndraMathLabel, pdfEngineIndraOcrLabel].forEach(label => {
         label?.classList.remove('bg-brand-600/10', 'border-brand-500');
         label?.classList.add('glass-panel');
       });
-      if (radio.value === 'fitz' && pdfEngineFitzLabel) {
-        pdfEngineFitzLabel.classList.add('bg-brand-600/10', 'border-brand-500');
-        pdfEngineFitzLabel.classList.remove('glass-panel');
-      } else if (radio.value === 'docling' && pdfEngineDoclingLabel) {
-        pdfEngineDoclingLabel.classList.add('bg-brand-600/10', 'border-brand-500');
-        pdfEngineDoclingLabel.classList.remove('glass-panel');
-      } else if (radio.value === 'docling_v2' && pdfEngineDoclingV2Label) {
-        pdfEngineDoclingV2Label.classList.add('bg-brand-600/10', 'border-brand-500');
-        pdfEngineDoclingV2Label.classList.remove('glass-panel');
-      } else if (radio.value === 'docling_v3' && pdfEngineDoclingV3Label) {
-        pdfEngineDoclingV3Label.classList.add('bg-brand-600/10', 'border-brand-500');
-        pdfEngineDoclingV3Label.classList.remove('glass-panel');
+      const activeLabelMap = {
+        'fitz': pdfEngineFitzLabel,
+        'docling': pdfEngineDoclingLabel,
+        'docling_v2': pdfEngineDoclingV2Label,
+        'docling_v3': pdfEngineDoclingV3Label,
+        'indra': pdfEngineIndraLabel,
+        'indra_math': pdfEngineIndraMathLabel,
+        'indra_ocr': pdfEngineIndraOcrLabel,
+      };
+      const activeLbl = activeLabelMap[radio.value];
+      if (activeLbl) {
+        activeLbl.classList.add('bg-brand-600/10', 'border-brand-500');
+        activeLbl.classList.remove('glass-panel');
       }
     });
   });

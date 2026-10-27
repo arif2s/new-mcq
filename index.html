@@ -479,7 +479,7 @@
 
               <div id="pdf-engine-container" class="mt-4 pt-4 border-t border-gray-700/50 hidden">
                 <label class="text-sm font-medium block mb-2">PDF Extraction Engine</label>
-                <div class="flex flex-col sm:flex-row gap-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   <label id="pdf-engine-fitz-label" for="pdf-engine-fitz" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors glass-panel border-gray-700">
                     <input type="radio" id="pdf-engine-fitz" name="pdfEngine" value="fitz" class="mt-1 text-brand-500 focus:ring-brand-500" />
                     <div>
@@ -488,11 +488,27 @@
                     </div>
                   </label>
 
-                  <label id="pdf-engine-docling-label" for="pdf-engine-docling" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors glass-panel border-gray-700">
-                    <input type="radio" id="pdf-engine-docling" name="pdfEngine" value="docling" class="mt-1 text-brand-500 focus:ring-brand-500" />
+                  <label id="pdf-engine-indra-label" for="pdf-engine-indra" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors glass-panel border-gray-700">
+                    <input type="radio" id="pdf-engine-indra" name="pdfEngine" value="indra" class="mt-1 text-brand-500 focus:ring-brand-500" />
                     <div>
-                      <div class="font-medium text-sm">Docling v1 (ML Layout)</div>
-                      <div class="text-xs text-muted mt-1 leading-relaxed">Preserves complex multi-column tables and staging hierarchies.</div>
+                      <div class="font-medium text-sm">Indra OCR ONNX (Auto)</div>
+                      <div class="text-xs text-muted mt-1 leading-relaxed">Datalab Indra OCR ONNX CPU engine for scanned PDFs &amp; images.</div>
+                    </div>
+                  </label>
+
+                  <label id="pdf-engine-indra-math-label" for="pdf-engine-indra-math" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors glass-panel border-gray-700">
+                    <input type="radio" id="pdf-engine-indra-math" name="pdfEngine" value="indra_math" class="mt-1 text-brand-500 focus:ring-brand-500" />
+                    <div>
+                      <div class="font-medium text-sm">Indra OCR (+ Math)</div>
+                      <div class="text-xs text-muted mt-1 leading-relaxed">Indra OCR with LaTeX formula recognition enabled.</div>
+                    </div>
+                  </label>
+
+                  <label id="pdf-engine-indra-ocr-label" for="pdf-engine-indra-ocr" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors glass-panel border-gray-700">
+                    <input type="radio" id="pdf-engine-indra-ocr" name="pdfEngine" value="indra_ocr" class="mt-1 text-brand-500 focus:ring-brand-500" />
+                    <div>
+                      <div class="font-medium text-sm">Indra OCR (Force Full OCR)</div>
+                      <div class="text-xs text-muted mt-1 leading-relaxed">Forces full-page OCR pass ignoring native PDF text layers.</div>
                     </div>
                   </label>
 
@@ -508,7 +524,15 @@
                     <input type="radio" id="pdf-engine-docling-v2" name="pdfEngine" value="docling_v2" class="mt-1 text-brand-500 focus:ring-brand-500" />
                     <div>
                       <div class="font-medium text-sm">Docling v2 (Hybrid Layout)</div>
-                      <div class="text-xs text-muted mt-1 leading-relaxed">Adaptive multi-column DAG layout with typography profiling & callout recovery.</div>
+                      <div class="text-xs text-muted mt-1 leading-relaxed">Adaptive multi-column DAG layout with typography profiling &amp; callout recovery.</div>
+                    </div>
+                  </label>
+
+                  <label id="pdf-engine-docling-label" for="pdf-engine-docling" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors glass-panel border-gray-700">
+                    <input type="radio" id="pdf-engine-docling" name="pdfEngine" value="docling" class="mt-1 text-brand-500 focus:ring-brand-500" />
+                    <div>
+                      <div class="font-medium text-sm">Docling v1 (ML Markdown)</div>
+                      <div class="text-xs text-muted mt-1 leading-relaxed">Standard Docling ML document converter with table &amp; section structure.</div>
                     </div>
                   </label>
                 </div>
@@ -822,6 +846,32 @@
                   <!-- Populated dynamically by settings.js -->
                 </div>
               </div>
+
+              <!-- Datalab Indra OCR Model Card -->
+              <div class="glass-card p-5 rounded-2xl">
+                <div class="flex items-center justify-between mb-3">
+                  <div class="flex items-center gap-2.5">
+                    <div class="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-xs border border-amber-500/30">
+                      👁️
+                    </div>
+                    <div>
+                      <h3 class="font-semibold text-sm text-neutral-100">Datalab Indra OCR (ONNX CPU Engine)</h3>
+                      <p class="text-xs text-neutral-400">Scanned PDF &amp; image OCR engine (~76 MB core + ~20 MB math)</p>
+                    </div>
+                  </div>
+                  <span id="indra-status-badge" class="px-2.5 py-1 rounded-md text-xs font-semibold glass-panel text-neutral-400">
+                    Checking...
+                  </span>
+                </div>
+                <div id="indra-model-details" class="mb-4 text-xs text-neutral-300">
+                  <!-- Populated dynamically by settings.js -->
+                </div>
+                <div class="flex items-center justify-between">
+                  <button type="button" id="btn-download-indra" class="text-xs px-4 py-2 rounded-lg font-bold bg-amber-600 hover:bg-amber-500 text-white transition-colors flex items-center gap-1.5 shadow-md cursor-pointer">
+                    📥 Download Indra OCR Models
+                  </button>
+                </div>
+              </div>
             </div>
 
             <!-- 5. APP PREFERENCES, SYNTHESIS CONTROLS & APPEARANCE -->
@@ -847,6 +897,9 @@
                   <select id="setting-pdf-parser" class="glass-select w-full rounded-lg px-3 py-2 text-xs">
                     <option value="docling_v3">Docling v3 Multi-Engine Layout & OCR</option>
                     <option value="docling_v2">Docling v2 Hybrid Multi-Column Layout</option>
+                    <option value="indra">Indra OCR ONNX (Auto Text + OCR)</option>
+                    <option value="indra_math">Indra OCR ONNX (+ LaTeX Math)</option>
+                    <option value="indra_ocr">Indra OCR ONNX (Force Full OCR)</option>
                     <option value="docling">Docling v1 ML Structural Markdown</option>
                     <option value="fitz">PyMuPDF (Fitz) Fast Text Slicing</option>
                   </select>
@@ -857,6 +910,9 @@
                   <select id="setting-ocr-engine" class="glass-select w-full rounded-lg px-3 py-2 text-xs">
                     <option value="auto">Auto Detect (RapidOCR / PP-OCR fallback)</option>
                     <option value="rapidocr">RapidOCR (PP-OCR v6 ONNX)</option>
+                    <option value="paddle">PaddleOCR (PP-OCR ONNX)</option>
+                    <option value="indra">Indra OCR ONNX (Auto)</option>
+                    <option value="indra_math">Indra OCR ONNX (+ LaTeX Math)</option>
                     <option value="easyocr">EasyOCR Engine</option>
                     <option value="tesseract">Tesseract Engine</option>
                   </select>
@@ -977,7 +1033,7 @@
     </div>
 
     <!-- TOPIC VERIFICATION POPUP MODAL -->
-    <div id="topic-editor-modal" class="modal-backdrop fade-enter" style="display: none;" style="z-index: 150;">
+    <div id="topic-editor-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 150;">
       <div class="glass-modal w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl relative text-left p-0">
         <!-- Populated dynamically by window.openTopicVerificationModal in quiz.js -->
         <div id="topic-editor-questions" class="p-6"></div>
@@ -997,7 +1053,7 @@
     </div>
 
     <!-- REGENERATE CHOICE MODAL -->
-    <div id="regenerate-confirm-modal" class="modal-backdrop fade-enter" style="display: none;" style="z-index: 200;">
+    <div id="regenerate-confirm-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 200;">
       <div class="modal glass-modal text-left">
         <h3 id="regen-modal-title" class="text-lg font-bold mb-2">Generate Topic Data</h3>
         <p id="regen-modal-desc" class="text-sm text-muted mb-6">Choose whether to process all topics or only topics without generated data.</p>
@@ -1016,7 +1072,7 @@
     </div>
 
     <!-- HELP MODAL -->
-    <div id="help-modal" class="modal-backdrop fade-enter" style="display: none;" style="z-index: 200;">
+    <div id="help-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 200;">
       <div class="modal glass-modal w-full max-w-3xl max-h-[85vh] flex flex-col text-left p-0">
         <div class="flex items-center justify-between p-4 border-b border-gray-700 glass-panel rounded-t-24">
           <h2 class="text-xl font-bold flex items-center gap-2">📚 Help &amp; Platform Guide</h2>

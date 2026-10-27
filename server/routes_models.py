@@ -242,8 +242,8 @@ def _download_all_defaults_worker() -> None:
         # Step 4: Default Docling v2 Layout Models
         with _download_lock:
             _download_all_state.update({
-                "progress": 75.0,
-                "message": "Downloading Docling v2 layout & table models...",
+                "progress": 70.0,
+                "message": "Downloading Docling layout & table models...",
             })
         try:
             from parsers.docling_v3_parser import download_docling_models
@@ -251,10 +251,19 @@ def _download_all_defaults_worker() -> None:
             from parsers.docling_v2_parser import download_docling_models
         download_docling_models()
 
-        # Step 5: UI Vendor Assets
+        # Step 5: Indra OCR ONNX Models
         with _download_lock:
             _download_all_state.update({
-                "progress": 90.0,
+                "progress": 85.0,
+                "message": "Downloading Indra OCR ONNX models...",
+            })
+        from parsers.indra_parser import download_indra_models
+        download_indra_models(include_math=True)
+
+        # Step 6: UI Vendor Assets
+        with _download_lock:
+            _download_all_state.update({
+                "progress": 95.0,
                 "message": "Caching offline UI vendor libraries (Tailwind, Marked, KaTeX)...",
             })
         from config import ensure_offline_vendor_assets
@@ -911,6 +920,18 @@ async def get_flashrank_models() -> Dict[str, Any]:
     return {"models": models, "active": active_model}
 
 
+@router.get("/indra_status")
+async def get_indra_status() -> Dict[str, Any]:
+    """Returns the download status and configuration of Indra OCR ONNX weights (~76 MB core + ~20 MB math)."""
+    from parsers.indra_parser import INDRA_MODELS_DIR, is_indra_models_downloaded
+    return {
+        "downloaded": is_indra_models_downloaded(include_math=False),
+        "math_downloaded": is_indra_models_downloaded(include_math=True),
+        "model_dir": str(INDRA_MODELS_DIR),
+        "repo_id": "datalab-to/indra-ocr",
+    }
+
+
 @router.get("/scispacy_models")
 @router.post("/scispacy_models")
 async def get_scispacy_models() -> Dict[str, Any]:
@@ -973,15 +994,15 @@ async def set_active_model(payload: SetActiveModelRequest) -> Dict[str, Any]:
     if m_type == "embedding":
         from parsers.embedding_engine import set_configured_embedding_model
         active = await asyncio.to_thread(set_configured_embedding_model, m_id)
-        return {"status": "success", "model_type": m_type, "active": active}
-    elif m_type == "flashrank":
+        return {"status": "success", "model_type": m_type, "active": active or m_id}
+    elif m_type in ("flashrank", "reranker"):
         from parsers.reranker import set_configured_flashrank_model
         active = await asyncio.to_thread(set_configured_flashrank_model, m_id)
-        return {"status": "success", "model_type": m_type, "active": active}
+        return {"status": "success", "model_type": m_type, "active": active or m_id}
     elif m_type == "scispacy":
         from parsers.scispacy_linker_engine import set_configured_scispacy_model
         active = await asyncio.to_thread(set_configured_scispacy_model, m_id)
-        return {"status": "success", "model_type": m_type, "active": active}
+        return {"status": "success", "model_type": m_type, "active": active or m_id}
     else:
         raise HTTPException(
             status_code=400, detail=f"Invalid model_type '{m_type}'"
@@ -1071,10 +1092,43 @@ async def download_model(
             "message": f"Background installation started for {m_name}.",
         }
 
+    elif m_type in ("indra", "indra_ocr") or m_name in ("indra", "indra_ocr", "datalab-to/indra-ocr"):
+        try:
+            from parsers.indra_parser import download_indra_models
+            res = await asyncio.to_thread(download_indra_models, include_math=True)
+            return {
+                "status": "success",
+                "message": "Indra OCR models downloaded successfully.",
+                "result": res,
+            }
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed downloading Indra OCR models: {exc}",
+            )
+
+    elif m_type in ("docling", "docling_v2", "docling_v3"):
+        try:
+            try:
+                from parsers.docling_v3_parser import download_docling_models
+            except Exception:
+                from parsers.docling_v2_parser import download_docling_models
+            res = await asyncio.to_thread(download_docling_models)
+            return {
+                "status": "success",
+                "message": "Docling layout models downloaded successfully.",
+                "result": res,
+            }
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed downloading Docling models: {exc}",
+            )
+
     else:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid model_type '{m_type}'. Must be 'embedding', 'flashrank', or 'scispacy'.",
+            detail=f"Invalid model_type '{m_type}'. Must be 'embedding', 'flashrank', 'scispacy', 'indra', or 'docling'.",
         )
 
 
@@ -1345,7 +1399,7 @@ async def diagnostic_tantivy() -> Dict[str, Any]:
 @router.get("/diagnostic/all")
 @router.get("/diagnostics/all")
 async def diagnostic_all() -> Dict[str, Any]:
-    """Runs parallel offline health checks across LM Studio, SQLite, SumatraPDF, Tantivy, and Ontologies."""
+    """Runs parallel offline health checks across LM Studio, SQLite, SumatraPDF, Tantivy, Ontologies, and Indra OCR."""
     lm_task = diagnostic_lm_studio()
     db_task = diagnostic_database()
     sumatra_task = diagnostic_sumatrapdf()
@@ -1356,6 +1410,14 @@ async def diagnostic_all() -> Dict[str, Any]:
         lm_task, db_task, sumatra_task, tantivy_task, linkers_task
     )
 
+    from parsers.indra_parser import INDRA_MODELS_DIR, is_indra_models_downloaded
+    indra_status = {
+        "downloaded": is_indra_models_downloaded(include_math=False),
+        "math_downloaded": is_indra_models_downloaded(include_math=True),
+        "model_dir": str(INDRA_MODELS_DIR),
+        "repo_id": "datalab-to/indra-ocr",
+    }
+
     return {
         "timestamp": time.time(),
         "lm_studio": lm,
@@ -1363,6 +1425,7 @@ async def diagnostic_all() -> Dict[str, Any]:
         "sumatrapdf": sumatra,
         "tantivy": tantivy,
         "linkers": linkers,
+        "indra_ocr": indra_status,
     }
 
 

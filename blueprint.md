@@ -5,7 +5,7 @@
 - **Core Purpose**: Offline-first medical MCQ, spaced repetition, RAG search & local AI synthesis platform.
 - **Runtime Environment**: Python 3.10+ async backend (FastAPI/Uvicorn), SQLite (WAL mode), pywebview (Windows Edge Chromium) or browser client, Vanilla HTML5/JS/CSS frontend.
 - **Tech Stack**:
-  - *Backend*: FastAPI, Uvicorn, SQLite3, Tantivy (BM25 lexical index), LanceDB (CPU vector + FTS hybrid search), ONNX Runtime (SapBERT 768d / MiniLM 384d), FlashRank (ms-marco-TinyBERT-L-2-v2 / ms-marco-MiniLM-L-6-v2 CPU cross-encoder reranking), SciSpaCy (UMLS/MeSH ontologies & SciPy sparse TF-IDF matcher), Docling v2 & Docling v3 (visual layout, booktabs reconstruction, OCR line-crop re-reading & PP-OCR ONNX layout parser) & PyMuPDF / AdaptivePdfLayoutEngine (PDF text extraction), LibZim (ZIM reader), Tiktoken.
+  - *Backend*: FastAPI, Uvicorn, SQLite3, Tantivy (BM25 lexical index), LanceDB (CPU vector + FTS hybrid search), ONNX Runtime (SapBERT 768d / MiniLM 384d), FlashRank (ms-marco-TinyBERT-L-2-v2 / ms-marco-MiniLM-L-6-v2 CPU cross-encoder reranking), SciSpaCy (UMLS/MeSH ontologies & SciPy sparse TF-IDF matcher), Docling v2 & Docling v3 (visual layout, booktabs reconstruction, OCR line-crop re-reading & PP-OCR ONNX layout parser), Datalab Indra OCR ONNX (CPU text/math/scanned PDF parser), & PyMuPDF / AdaptivePdfLayoutEngine (PDF text extraction), LibZim (ZIM reader), Tiktoken.
   - *Frontend*: Vanilla HTML5/JS (ES6+), CSS3 with glassmorphism theme CSS variables (`ui/css/main.css`), Marked.js, KaTeX, DOMPurify. Local offline vendor fallback assets automatically checked and cached under `ui/vendor/`.
   - *External Readers / Bridges*: SumatraPDF (`-reuse-instance`), Obsidian URI protocol (`obsidian://`), LM Studio API (`http://127.0.0.1:1234/v1`).
 - **Strict Hardware & Performance Budgets**:
@@ -44,6 +44,7 @@
 │   ├── docling_parser.py              # Layout-aware PDF textbook section & table extractor using Docling ML / PyMuPDF.
 │   ├── docling_v2_parser.py           # Standalone Docling v2 layout parser with AdaptivePdfLayoutEngine base64/SVG rendering.
 │   ├── docling_v3_parser.py           # Standalone Docling v3 layout engine with dark-pixel de-bleeding & PP-OCR ONNX re-reading.
+│   ├── indra_parser.py                # Standalone Datalab Indra OCR ONNX CPU parser with LaTeX math & layout block extraction.
 │   ├── pdf_extractor.py               # Lightweight PyMuPDF fallback fast text slicer with page heading detection.
 │   ├── pdf_parser.py                  # Standalone 6-stage layout reconstruction pipeline (PyMuPDF AdaptivePdfLayoutEngine).
 │   ├── obsidian_reader.py             # Obsidian markdown frontmatter stripper, wikilink cleaner, and section reader.
@@ -191,20 +192,30 @@
   - `is_docling_models_downloaded() -> bool`
   - `download_docling_models() -> dict[str, Any]`
   - `clean_pdf_text(text: str) -> str`
-  - `extract_pdf_structure(file_path: Union[str, Path]) -> list[dict[str, Any]]`
-  - `extract_structured_layout(file_path: Union[str, Path], page_number: int) -> str`
-  - `extract_page_with_docling_v2(file_path: Union[str, Path], page_number: int, ocr_engine: str = "auto") -> dict[str, Any]`
-  - `extract_page_with_adaptive_layout(file_path: Union[str, Path], page_number: int) -> dict[str, Any]`
-  - `class AdaptivePdfLayoutEngine`: 5-tier typography profiling, dynamic heading stack tracking, and layout bounding box overlay generator.
+  - `extract_pdf_structure(file_path: Union[str, Path], ocr_engine: str = "auto", **kwargs) -> list[dict[str, Any]]`
+  - `extract_structured_layout(file_path: Union[str, Path], page_number: int, ocr_engine: str = "auto", **kwargs) -> str`
+  - `extract_page_with_docling_v2(file_path: Union[str, Path], page_number: int, default_title: str = "", initial_heading_stack: Optional[dict[int, str]] = None, page_toc: Optional[list[tuple[int, str]]] = None, ocr_engine: str = "auto", **kwargs) -> dict[str, Any]`
+  - `extract_page_with_adaptive_layout(file_path: Union[str, Path], page_number: int, default_title: str = "", promote_headings: bool = False, initial_heading_stack: Optional[dict[int, str]] = None, page_toc: Optional[list[tuple[int, str]]] = None, ocr_engine: str = "auto", **kwargs) -> dict[str, Any]`
+  - `class AdaptivePdfLayoutEngine`: 5-tier typography profiling, dynamic heading stack tracking, booktabs table reconstruction, and layout bounding box overlay generator.
 - `parsers.docling_v3_parser`:
   - `is_docling_models_downloaded() -> bool`
   - `download_docling_models() -> dict[str, Any]`
   - `clean_pdf_text(text: str) -> str`
-  - `extract_pdf_structure(file_path: Union[str, Path]) -> list[dict[str, Any]]`
-  - `extract_structured_layout(file_path: Union[str, Path], page_number: int) -> str`
-  - `extract_page_with_docling_v3(file_path: Union[str, Path], page_number: int, ocr_engine: str = "auto") -> dict[str, Any]`
-  - `extract_page_with_adaptive_layout(file_path: Union[str, Path], page_number: int) -> dict[str, Any]`
-  - `class AdaptivePdfLayoutEngine`: Visual page inspector with line-crop PP-OCR ONNX re-reading, dark-pixel de-bleeding, vector chart obstacle isolation, and booktabs table reconstruction.
+  - `extract_pdf_structure(file_path: Union[str, Path], ocr_engine: str = "auto", **kwargs) -> list[dict[str, Any]]`
+  - `extract_structured_layout(file_path: Union[str, Path], page_number: int, ocr_engine: str = "auto", **kwargs) -> str`
+  - `extract_page_with_docling_v3(file_path: Union[str, Path], page_number: int, default_title: str = "", initial_heading_stack: Optional[dict[int, str]] = None, page_toc: Optional[list[tuple[int, str]]] = None, ocr_engine: str = "auto", force_ocr: bool = False, **kwargs) -> dict[str, Any]`
+  - `extract_page_with_adaptive_layout(file_path: Union[str, Path], page_number: int, default_title: str = "", promote_headings: bool = False, initial_heading_stack: Optional[dict[int, str]] = None, page_toc: Optional[list[tuple[int, str]]] = None, ocr_engine: str = "auto", **kwargs) -> dict[str, Any]`
+  - `class AdaptivePdfLayoutEngine`: Visual page inspector with line-crop PP-OCR/EasyOCR/Indra re-reading, dark-pixel de-bleeding, vector chart obstacle isolation, and booktabs table reconstruction.
+- `parsers.indra_parser`:
+  - `get_indra_models_dir() -> Path`
+  - `is_indra_models_downloaded(include_math: bool = False) -> bool`
+  - `download_indra_models(include_math: bool = True) -> dict[str, Any]`
+  - `get_indra_converter(mode: str = "auto", math: bool = False, furniture: bool = False, dpi: int = 200, threads: int = 4, image_ocr: bool = True) -> Any`
+  - `ocr_image_region(gray_or_bgr_image: np.ndarray, math: bool = False, threads: int = 4) -> dict[str, Any]`
+  - `extract_page_with_indra(file_path: Union[str, Path], page_number: int, mode: str = "auto", math: bool = False, furniture: bool = False, dpi: int = 200, threads: int = 4, default_title: str = "", initial_heading_stack: Optional[dict[int, str]] = None, **kwargs) -> dict[str, Any]`
+  - `extract_structured_layout(file_path: Union[str, Path], page_number: int, mode: str = "auto", math: bool = False) -> str`
+  - `extract_pdf_structure(file_path: Union[str, Path], default_title: str = "", mode: str = "auto", math: bool = False, furniture: bool = False, dpi: int = 200, threads: int = 4, **kwargs) -> list[dict[str, Any]]`
+  - `ingest_to_lancedb(file_path: Union[str, Path], source_article: str, main_topic: str = "", mode: str = "auto", math: bool = False) -> int`
 - `parsers.pdf_extractor`:
   - `clean_pdf_text(text: str) -> str`: Normalizes typographical ligatures (fi, fl, ffi), repairs line-break hyphenations, strips null bytes and form feeds, and cleans whitespace.
   - `extract_page_slice(file_path: Union[str, Path], page_number: int) -> str`: LRU-cached (maxsize=256) text extraction with natural reading order (`sort=True`) and bounds safety (rejects `page_number < 1`).
@@ -294,8 +305,10 @@
   - `GET /api/models/cpu_embeddings`, `POST /api/models/cpu_embeddings`, `GET /api/models/cpu_embedding_models`, `POST /api/models/cpu_embedding_models` -> `get_cpu_embedding_models() -> dict[str, Any]`: Lists embedding models (including SapBERT Clinical Fulltext ONNX), disk caching status, and active model selection from `user_state`.
   - `GET /api/models/flashrank_models` & `POST /api/models/flashrank_models` -> `get_flashrank_models() -> dict[str, Any]`: Lists FlashRank cross-encoder reranking models and download status.
   - `GET /api/models/scispacy_models` & `POST /api/models/scispacy_models` -> `get_scispacy_models() -> dict[str, Any]`: Lists SciSpaCy biomedical NER models, RAM footprints, and installation status.
-  - `POST /api/models/set_active` -> `set_active_model(payload: SetActiveModelPayload) -> dict[str, Any]`: Persists choice to `user_state` and invokes engine model setters.
-  - `POST /api/models/download_all` -> `download_all_models(background_tasks: BackgroundTasks) -> dict[str, Any]`: Enqueues background pre-fetching of all catalog models.
+  - `GET /api/models/indra_status` -> `get_indra_status() -> dict[str, Any]`: Reports local download state of Datalab Indra OCR core and LaTeX math ONNX models.
+  - `POST /api/models/set_active` & `POST /api/models/select` -> `set_active_model(payload: SetActiveModelRequest) -> dict[str, Any]`: Persists choice to `user_state` and invokes engine model setters.
+  - `POST /api/models/download_all` & `POST /api/models/download_all_defaults` -> `download_all_defaults(background_tasks: BackgroundTasks) -> dict[str, Any]`: Enqueues background pre-fetching of default embedding, FlashRank, SciSpaCy, Docling, Indra OCR, and UI vendor assets.
+  - `GET /api/models/download_all_status` -> `get_download_all_status() -> dict[str, Any]`: Polls real-time progress of the one-click offline bundle installer.
   - `POST /api/models/download` -> `download_model(request: ModelDownloadRequest, background_tasks: BackgroundTasks) -> dict[str, Any]`: Downloads embedding, FlashRank, or SciSpaCy models with zero VRAM and thread-safe file handling.
   - `POST /api/models/scispacy/download` -> `download_scispacy_model_direct(request: ModelDownloadRequest, background_tasks: BackgroundTasks) -> dict[str, Any]`: Dedicated alias endpoint for SciSpaCy model downloads.
   - `GET /api/models/scispacy/download_status?model_name=...` -> `get_scispacy_download_status(model_name: str) -> dict[str, Any]`: Polls real-time download and extraction progress for a SciSpaCy model.
@@ -350,6 +363,7 @@
   - `GET /api/sources` -> `get_sources() -> list[dict[str, Any]]`: Queries configured sources from `knowledge_sources` table.
   - `POST /api/sources` -> `add_source(payload: SourcePayload) -> dict[str, str]`: Upserts knowledge source record into SQLite.
   - `POST /api/sources/{source_id}/toggle` -> `toggle_source(source_id: str) -> dict[str, Any]`: Toggles source `enabled` state.
+  - `PATCH /api/sources/{source_id}/engine` & `POST /api/sources/{source_id}/engine` -> `update_source_engine(source_id: str, payload: EnginePayload) -> dict[str, Any]`: Updates `pdfEngine` (`fitz`, `docling`, `docling_v2`, `docling_v3`, `indra`, `indra_math`, `indra_ocr`) on a configured PDF source.
   - `DELETE /api/sources/{source_id}` -> `delete_source(source_id: str) -> dict[str, str]`: Deletes source from SQLite.
   - `POST /api/sources/index` -> `index_sources(background_tasks: BackgroundTasks) -> dict[str, str]`: Concurrency-guarded background indexer trigger (returns `status="busy"` if already running).
   - `POST /api/sources/open_pdf` -> `open_pdf(payload: OpenPdfPayload) -> dict[str, str]`: Windows deep-link launcher for SumatraPDF using `-reuse-instance` and `-page` flags with `.pdf` path validation and auto-discovery in `%LOCALAPPDATA%` and `%ProgramFiles%`.
@@ -841,7 +855,7 @@ user_state (
 ## 6. Active Features & Architectural Invariants
 
 ### Architectural Invariants
-1. **Zero VRAM for Backend**: `CUDA_VISIBLE_DEVICES=""` must remain set at application startup (`run.py`, top of `server/app.py`, `parsers/embedding_engine.py`, `parsers/lancedb_engine.py`, `parsers/reranker.py`, `parsers/docling_parser.py`, `parsers/docling_v2_parser.py`, `parsers/docling_v3_parser.py`, `parsers/scispacy_linker_engine.py`, `parsers/pdf_extractor.py`, `parsers/pdf_parser.py`, `parsers/obsidian_reader.py`, `agents/tema_q/topic_extractor.py`, `agents/tema_q/auditor.py`, `auditor.py`, `server/routes_search.py`, `server/routes_sources.py`, `server/routes_state.py`, `server/routes_queue.py`, `server/routes_notes.py`, `server/routes_models.py`, `server/routes_csv.py`, `server/routes_csv_loader.py`, `server/ws_manager.py`, `core/database.py`, and `core/reporter.py`). All vector embeddings, reranking, spaCy biomedical pipelines, and Docling ML layout parsing MUST execute strictly on CPU.
+1. **Zero VRAM for Backend**: `CUDA_VISIBLE_DEVICES=""` must remain set at application startup (`run.py`, top of `server/app.py`, `parsers/embedding_engine.py`, `parsers/lancedb_engine.py`, `parsers/reranker.py`, `parsers/docling_parser.py`, `parsers/docling_v2_parser.py`, `parsers/docling_v3_parser.py`, `parsers/indra_parser.py`, `parsers/scispacy_linker_engine.py`, `parsers/pdf_extractor.py`, `parsers/pdf_parser.py`, `parsers/obsidian_reader.py`, `agents/tema_q/topic_extractor.py`, `agents/tema_q/auditor.py`, `auditor.py`, `server/routes_search.py`, `server/routes_sources.py`, `server/routes_state.py`, `server/routes_queue.py`, `server/routes_notes.py`, `server/routes_models.py`, `server/routes_csv.py`, `server/routes_csv_loader.py`, `server/ws_manager.py`, `core/database.py`, and `core/reporter.py`). All vector embeddings, reranking, spaCy biomedical pipelines, and Docling ML layout parsing MUST execute strictly on CPU.
 2. **Main Thread DLL Pre-warming**: `onnxruntime`, `lancedb`, and `tantivy` MUST be imported at the very top of `server/app.py` to prevent Windows Access Violation segfaults.
 3. **Database Concurrency, Cache Caps & Migration Ordering**:
    - Every SQLite connection returned by `get_db_connection()` MUST apply connection-scoped PRAGMAs (`journal_mode = WAL`, `busy_timeout = 20000`, `foreign_keys = ON`, `synchronous = NORMAL`, `mmap_size = 536870912`, `temp_store = MEMORY`, `cache_size = -64000`).
@@ -865,5 +879,5 @@ user_state (
 19. **UTF-8 BOM and Code Block Protection in Markdown Parsers**: Obsidian markdown parsers MUST decode using `utf-8-sig` to automatically strip Windows UTF-8 Byte Order Marks, and track fenced code block boundaries (` ``` ` / `~~~`) to prevent code comments (e.g., `# python comment`) from being falsely parsed as document section headings.
 20. **Chunked Database Ingestion & Transaction Boundaries**: Large dataset ingestion operations (e.g. `csv_questions` mass loading) MUST commit records in discrete batches (`BATCH_SIZE <= 1000`) rather than holding long-lived write transactions, preventing SQLite database locks (`busy_timeout`) on concurrent quiz and search worker threads.
 21. **HTML Shell & Deferred Script Integrity**: The application HTML shell files (`ui/index.html` and root `index.html`) MUST remain identical. All vendor and application JavaScript files MUST be included with `defer` attributes, interactive buttons MUST use explicit `type="button"`, and theme persistence MUST initialize immediately via an inline IIFE reading `localStorage.getItem("theme")`.
-22. **Docling Offline Execution Safety**: Docling parsers (`parsers/docling_v2_parser.py`, `parsers/docling_v3_parser.py`) MUST set `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` environment variables when local model files are detected, enforcing 100% offline layout conversion without online Hugging Face Hub hangs.
+22. **Docling & Indra Offline Execution Safety**: Layout and OCR parsers (`parsers/docling_v2_parser.py`, `parsers/docling_v3_parser.py`, `parsers/indra_parser.py`) MUST set `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` (plus `INDRA_OCR_MODEL_DIR` for Indra) when local model weights are detected, enforcing 100% offline execution without online Hugging Face Hub hangs.
 23. **Non-Collapsing Inspector on Background Topic Extraction**: In `ui/js/app.js` and `ui/js/quiz.js`, `openInspector(forceOpen)` defaults `forceOpen` to `true`. When called with `forceOpen = false` during automatic background updates (`updateInspectorForQuestion`), inspector content MUST update without reopening the right sidebar if it was collapsed by the user.

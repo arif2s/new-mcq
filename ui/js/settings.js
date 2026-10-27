@@ -601,6 +601,75 @@
   }
 
   /* =========================================================================
+   * 3.5 Indra OCR Model Status & Downloader
+   * ========================================================================= */
+
+  async function loadIndraModelStatus() {
+    const badge = $("indra-status-badge");
+    const details = $("indra-model-details");
+    const btn = $("btn-download-indra");
+
+    if (!badge) return;
+
+    try {
+      const res = await fetch("/api/models/indra_status");
+      if (!res.ok) throw new Error("Failed to load Indra status");
+      const data = await res.json();
+
+      if (data.downloaded) {
+        badge.className = "px-2.5 py-1 rounded-md text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5";
+        badge.innerHTML = `<svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Downloaded (${data.math_downloaded ? 'Core + Math' : 'Core Only'})`;
+        if (details) {
+          details.innerHTML = `<p class="text-xs text-neutral-300">Location: <code class="bg-gray-800 px-1 py-0.5 rounded">${escapeHTML(data.model_dir)}</code> | Repository: <b>${escapeHTML(data.repo_id)}</b></p>`;
+        }
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "✓ Re-download / Update Indra Weights";
+        }
+      } else {
+        badge.className = "px-2.5 py-1 rounded-md text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30";
+        badge.textContent = "Not Downloaded";
+        if (details) {
+          details.innerHTML = `<p class="text-xs text-neutral-400">Models not detected in <code class="bg-gray-800 px-1 py-0.5 rounded">${escapeHTML(data.model_dir)}</code>. Download weights to enable Indra OCR.</p>`;
+        }
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "📥 Download Indra OCR Models";
+        }
+      }
+    } catch (err) {
+      if (badge) badge.textContent = "Error";
+      if (details) details.innerHTML = `<span class="text-rose-400 text-xs">${escapeHTML(err.message)}</span>`;
+    }
+  }
+
+  function initIndraEvents() {
+    const btn = $("btn-download-indra");
+    if (!btn || btn.dataset.bound) return;
+    btn.dataset.bound = "1";
+
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      btn.innerHTML = `<svg class="animate-spin w-4 h-4 text-white inline mr-1" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg> Downloading Indra Models...`;
+
+      try {
+        const res = await fetch("/api/models/download", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model_type: "indra", model_name: "indra" }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Download failed");
+
+        await loadIndraModelStatus();
+      } catch (err) {
+        alert(`Indra OCR download failed: ${err.message}`);
+        await loadIndraModelStatus();
+      }
+    });
+  }
+
+  /* =========================================================================
    * 4. Offline Ontology Linkers (UMLS, MeSH, RxNorm, HPO, GO) Controller
    * ========================================================================= */
 
@@ -937,12 +1006,17 @@
       }
 
       // 5. Vendor Assets Offline Readiness Check
-      const vendorRes = await fetch("/api/state/verify_vendor");
+      let vendorRes = await fetch("/api/state/vendor_status");
+      let vData = vendorRes.ok ? await vendorRes.json() : {};
+      if (vData.offline_ready === undefined && vData.all_present === undefined) {
+        vendorRes = await fetch("/api/state/verify_vendor");
+        if (vendorRes.ok) vData = await vendorRes.json();
+      }
       if (vendorRes.ok) {
-        const vData = await vendorRes.json();
+        const isVendorReady = Boolean(vData.offline_ready || vData.all_present || vData.ready);
         const vendorEl = $("diag-vendor-status");
         if (vendorEl) {
-          if (vData.offline_ready) {
+          if (isVendorReady) {
             vendorEl.innerHTML = `
               <div class="flex items-center gap-2">
                 <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
@@ -1048,6 +1122,7 @@
           await loadEmbeddingModels();
           await loadFlashrankModels();
           await loadScispacyModels();
+          await loadIndraModelStatus();
           await loadDiagnostics();
         } else if (data.status === "failed") {
           clearInterval(_downloadAllPollTimer);
@@ -1071,6 +1146,8 @@
     loadFlashrankModels();
     loadScispacyModels();
     initScispacyEvents();
+    loadIndraModelStatus();
+    initIndraEvents();
     loadLinkersStatus();
     initLinkersEvents();
     initDownloadAllEvents();

@@ -118,6 +118,9 @@
                         <label for="pdf-engine-select" class="text-xs font-bold text-muted mb-1 block">Parser Engine</label>
                         <select id="pdf-engine-select" class="glass-input text-xs w-full py-2">
                             <option value="fitz">Fitz (Fast Slicer)</option>
+                            <option value="indra">Indra OCR ONNX (Auto Text + OCR)</option>
+                            <option value="indra_math">Indra OCR ONNX (+ LaTeX Math)</option>
+                            <option value="indra_ocr">Indra OCR ONNX (Force Full OCR)</option>
                             <option value="adaptive">Adaptive Geometric (PyMuPDF)</option>
                             <option value="docling_v2">Docling v2 (Fast Geometric + Hybrid)</option>
                             <option value="docling_v3" selected>Docling v3 (Visual Self-Correction + Multi-OCR)</option>
@@ -131,13 +134,25 @@
                             <option value="auto">Auto Detect</option>
                             <option value="paddle">Paddle (PP-OCR / RapidOCR ONNX)</option>
                             <option value="rapidocr">RapidOCR (PP-OCR v6 ONNX)</option>
+                            <option value="indra">Indra OCR ONNX</option>
+                            <option value="indra_math">Indra OCR (+ LaTeX Math)</option>
                             <option value="easyocr">EasyOCR Engine</option>
                             <option value="tesseract">Tesseract Engine</option>
                             <option value="mac_ocr">Mac Native OCR</option>
                         </select>
                     </div>
                 </div>
-                <div class="mt-4 flex justify-end gap-2">
+                <div class="mt-3 flex items-center justify-between">
+                    <div class="flex items-center gap-4 text-xs text-muted">
+                        <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                            <input type="checkbox" id="indra-math-chk" class="rounded glass-input">
+                            <span>Indra LaTeX Math (--math)</span>
+                        </label>
+                        <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                            <input type="checkbox" id="indra-furniture-chk" class="rounded glass-input">
+                            <span>Keep Furniture/Headers (--keep-furniture)</span>
+                        </label>
+                    </div>
                     <button type="button" id="run-pdf-extract-btn" class="primary-btn text-xs px-6 py-2 cursor-pointer">
                         Extract &amp; Compare Page
                     </button>
@@ -390,6 +405,8 @@
             const engine = engineSelect.value;
             const ocrEngineSelect = document.getElementById('pdf-ocr-engine-select');
             const ocrEngine = ocrEngineSelect ? ocrEngineSelect.value : 'auto';
+            const indraMath = document.getElementById('indra-math-chk')?.checked || false;
+            const indraFurniture = document.getElementById('indra-furniture-chk')?.checked || false;
 
             runBtn.disabled = true;
             runBtn.textContent = 'Extracting Page...';
@@ -399,7 +416,14 @@
                 const res = await fetch('/api/sources/test_pdf_extract', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ file_path: selectedPath, page_number: page, engine: engine, ocr_engine: ocrEngine })
+                    body: JSON.stringify({
+                        file_path: selectedPath,
+                        page_number: page,
+                        engine: engine,
+                        ocr_engine: ocrEngine,
+                        indra_math: indraMath,
+                        indra_furniture: indraFurniture,
+                    })
                 });
                 const data = await res.json();
 
@@ -411,7 +435,7 @@
                             <p><strong class="text-brand-300">File Name:</strong> ${escapeHTML(data.file_name)}</p>
                             <p><strong class="text-brand-300">File Path:</strong> <code class="text-xs bg-gray-800 px-1 py-0.5 rounded">${escapeHTML(data.file_path)}</code></p>
                             <p><strong class="text-brand-300">Page:</strong> ${data.page_number} / ${data.total_pages}</p>
-                            <p><strong class="text-brand-300">Engine Selected:</strong> ${escapeHTML(String(data.engine || '').toUpperCase())}</p>
+                            <p><strong class="text-brand-300">Engine Selected:</strong> ${escapeHTML(String(data.engine || '').toUpperCase())} ${data.ocr_engine ? `<span class="text-muted">(OCR: ${escapeHTML(data.ocr_engine)})</span>` : ''} ${data.elapsed_ms ? `<span class="text-emerald-400 font-mono">[${escapeHTML(data.elapsed_ms)} ms]</span>` : ''}</p>
                             ${data.heading_path ? `<p><strong class="text-brand-300">Detected Heading Path:</strong> <span class="text-emerald-400 font-mono">${escapeHTML(data.heading_path)}</span></p>` : ''}
                             ${data.subheading ? `<p><strong class="text-brand-300">Subheading:</strong> ${escapeHTML(data.subheading)}</p>` : ''}
                             <p><strong class="text-brand-300">Layout Elements Detected:</strong> ${(data.layout_boxes || []).length} boxes</p>

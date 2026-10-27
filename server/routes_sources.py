@@ -99,12 +99,19 @@ class OpenPdfPayload(BaseModel):
     page_number: Optional[int] = None
 
 
+class EnginePayload(BaseModel):
+    pdfEngine: str = "fitz"
+
+
 class TestPdfExtractPayload(BaseModel):
     file_path: Optional[str] = None
     page_number: int = 1
-    engine: str = "adaptive"       # "fitz" | "adaptive" | "docling" | "docling_v2" | "docling_v3"
+    engine: str = "adaptive"       # "fitz" | "adaptive" | "docling" | "docling_v2" | "docling_v3" | "indra" | "indra_ocr" | "indra_math"
     ocr_engine: str = "auto"       # "auto" | "paddle" | "rapidocr" | "easyocr"
     force_ocr: bool = False
+    indra_mode: str = "auto"       # "auto" | "ocr" | "text"
+    indra_math: bool = False
+    indra_furniture: bool = False
 
 
 def find_sumatra_executable() -> Optional[str]:
@@ -263,6 +270,29 @@ def toggle_source(source_id: str) -> Dict[str, Any]:
     return {"status": "success", "enabled": is_enabled}
 
 
+@router.patch("/{source_id}/engine")
+@router.post("/{source_id}/engine")
+def update_source_engine(source_id: str, payload: EnginePayload) -> Dict[str, Any]:
+    """Updates the PDF parsing engine on an existing knowledge source."""
+    new_engine = payload.pdfEngine.strip().lower()
+    allowed_engines = ("fitz", "docling", "docling_v2", "docling_v3", "indra", "indra_math", "indra_ocr")
+    if new_engine not in allowed_engines:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid pdfEngine '{new_engine}'. Allowed options: {', '.join(allowed_engines)}"
+        )
+
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE knowledge_sources SET pdfEngine = ? WHERE id = ?",
+            (new_engine, source_id),
+        )
+        conn.commit()
+
+    return {"status": "success", "source_id": source_id, "pdfEngine": new_engine}
+
+
 @router.delete("/{source_id}")
 def delete_source(source_id: str) -> Dict[str, str]:
     """Removes a knowledge source record from SQLite."""
@@ -300,10 +330,33 @@ async def run_indexing() -> None:
         )
 
         try:
+            default_pdf_parser = "docling_v2"
+            default_ocr_engine = "auto"
             with closing(get_db_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT * FROM knowledge_sources WHERE enabled = 1")
                 sources = [dict(r) for r in cursor.fetchall()]
+                try:
+                    cursor.execute(
+                        "SELECT key, value FROM user_state WHERE key IN ('pdfParser', 'ocrEngine', 'app_state')"
+                    )
+                    for st_row in cursor.fetchall():
+                        k_name = str(st_row["key"])
+                        v_raw = str(st_row["value"] or "").strip()
+                        if k_name == "pdfParser" and v_raw:
+                            default_pdf_parser = v_raw.strip('"').lower()
+                        elif k_name == "ocrEngine" and v_raw:
+                            default_ocr_engine = v_raw.strip('"').lower()
+                        elif k_name == "app_state" and v_raw.startswith("{"):
+                            import json
+                            st_obj = json.loads(v_raw)
+                            if isinstance(st_obj, dict):
+                                if st_obj.get("pdfParser"):
+                                    default_pdf_parser = str(st_obj["pdfParser"]).lower()
+                                if st_obj.get("ocrEngine"):
+                                    default_ocr_engine = str(st_obj["ocrEngine"]).lower()
+                except Exception:
+                    pass
 
             if not sources:
                 await ws_manager.broadcast_indexing_progress(
@@ -522,8 +575,8 @@ async def run_indexing() -> None:
                             )
                         )
                         total_files = len(pdf_files)
-                        pdf_engine = str(src.get("pdfEngine", "docling_v2") or "docling_v2").lower()
-                        ocr_engine = str(src.get("ocrEngine", "auto") or "auto").lower()
+                        pdf_engine = str(src.get("pdfEngine") or default_pdf_parser or "docling_v2").lower()
+                        ocr_engine = str(src.get("ocrEngine") or default_ocr_engine or "auto").lower()
 
                         for file_idx, file_path in enumerate(pdf_files):
                             await asyncio.sleep(0)
@@ -539,7 +592,31 @@ async def run_indexing() -> None:
 
                             try:
                                 sections = []
-                                if pdf_engine == "docling_v3":
+                                if pdf_engine in ("indra", "indra_math", "indra_ocr"):
+                                    import parsers.indra_parser as indra_p
+                                    i_mode = "ocr" if pdf_engine == "indra_ocr" else "auto"
+                                    i_math = (pdf_engine == "indra_math")
+                                    try:
+                                        sections = await asyncio.to_thread(
+                                            indra_p.extract_pdf_structure,
+                                            str(file_path),
+                                            mode=i_mode,
+                                            math=i_math,
+                                        )
+                                    except Exception as indra_err:
+                                        logger.error(
+                                            "Indra OCR extraction failed for %s: %s",
+                                            file_path,
+                                            indra_err,
+                                        )
+                                        await ws_manager.broadcast_indexing_progress(
+                                            source_id=src["id"],
+                                            percent=file_pct,
+                                            message=f"Indra OCR warning on {file_path.name}: {indra_err}",
+                                            status="running",
+                                        )
+                                        raise indra_err
+                                elif pdf_engine == "docling_v3":
                                     try:
                                         from parsers.docling_v3_parser import (
                                             extract_pdf_structure as extract_pdf_v3,
@@ -585,12 +662,14 @@ async def run_indexing() -> None:
                                             d_err,
                                         )
 
-                                if not sections:
+                                if not sections and pdf_engine not in ("indra", "indra_math", "indra_ocr"):
                                     sections = await asyncio.to_thread(
                                         extract_pdf_pages,
                                         str(file_path),
                                         file_path.stem,
                                     )
+                                elif not sections:
+                                    continue
 
                                 if not sections:
                                     continue
@@ -1023,12 +1102,13 @@ async def build_zim_dict() -> Dict[str, Any]:
 
 
 @router.post("/test_pdf_extract")
-def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
+async def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
     """
     Tests PDF extraction engines (PyMuPDF Fitz, Docling ML, or PyMuPDF Heuristic Headings)
     page-by-page for side-by-side verification and manual optimization.
     Returns JSON strictly conforming to the frontend API contract.
     """
+    from parsers.docling_v2_parser import extract_page_with_adaptive_layout
     import parsers.docling_parser as docling_ext
     import parsers.pdf_extractor as pdf_ext
 
@@ -1080,16 +1160,55 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
         }
 
     try:
-        page_count = pdf_ext.get_pdf_page_count(str(target_path))
+        page_count = await asyncio.to_thread(pdf_ext.get_pdf_page_count, str(target_path))
         page_num = max(
             1, min(int(payload.page_number or 1), page_count if page_count > 0 else 1)
         )
         engine_choice = (payload.engine or "adaptive").strip().lower()
         ocr_choice = (payload.ocr_engine or "auto").strip().lower()
 
-        if engine_choice in ("docling_v3", "v3"):
+        if engine_choice in ("indra", "indra_ocr", "indra_math"):
+            import parsers.indra_parser as indra_p
+            i_mode = "ocr" if engine_choice == "indra_ocr" else (getattr(payload, "indra_mode", "auto") or "auto")
+            i_math = True if engine_choice == "indra_math" else bool(getattr(payload, "indra_math", False))
+            i_furniture = bool(getattr(payload, "indra_furniture", False))
+
+            result = await asyncio.to_thread(
+                indra_p.extract_page_with_indra,
+                str(target_path),
+                page_num,
+                mode=i_mode,
+                math=i_math,
+                furniture=i_furniture,
+                default_title=target_path.stem,
+            )
+            return {
+                "status": "success",
+                "file_name": target_path.name,
+                "file_path": str(target_path),
+                "page_number": page_num,
+                "total_pages": page_count,
+                "engine": engine_choice,
+                "ocr_engine": ocr_choice,
+                "available_pdfs": available_pdfs,
+                "heading_path": result.get("heading_path", target_path.stem),
+                "subheading": result.get("subheading", target_path.stem),
+                "extracted_text": result.get("extracted_text") or result.get("markdown") or result.get("text", ""),
+                "page_image_base64": result.get("page_image_base64") or result.get("page_image_b64", ""),
+                "layout_boxes": result.get("layout_boxes") or result.get("blocks", []),
+                "hierarchy_tree": result.get("hierarchy_tree", []),
+                "lines": result.get("lines", []),
+                "svg_overlay": result.get("svg_overlay", ""),
+                "timings": result.get("timings", {}),
+                "elapsed_ms": result.get("elapsed_ms", 0.0),
+                "page_width": result.get("page_width", 612.0),
+                "page_height": result.get("page_height", 792.0),
+            }
+
+        elif engine_choice in ("docling_v3", "v3"):
             from parsers.docling_v3_parser import extract_page_with_docling_v3
-            result = extract_page_with_docling_v3(
+            result = await asyncio.to_thread(
+                extract_page_with_docling_v3,
                 str(target_path),
                 page_num,
                 ocr_engine=ocr_choice,
@@ -1109,7 +1228,8 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
 
         elif engine_choice in ("docling_v2", "v2"):
             from parsers.docling_v2_parser import extract_page_with_docling_v2
-            result = extract_page_with_docling_v2(
+            result = await asyncio.to_thread(
+                extract_page_with_docling_v2,
                 str(target_path),
                 page_num,
                 ocr_engine=ocr_choice,
@@ -1127,8 +1247,8 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
             }
 
         elif engine_choice == "adaptive":
-            from parsers.docling_v2_parser import extract_page_with_adaptive_layout
-            result = extract_page_with_adaptive_layout(
+            result = await asyncio.to_thread(
+                extract_page_with_adaptive_layout,
                 str(target_path),
                 page_num,
                 ocr_engine=ocr_choice,
@@ -1146,11 +1266,14 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
             }
 
         elif engine_choice == "docling":
-            extracted_text = docling_ext.extract_structured_layout(
-                str(target_path), page_num
+            extracted_text = await asyncio.to_thread(
+                docling_ext.extract_structured_layout, str(target_path), page_num
             )
-            res = extract_page_with_adaptive_layout(
-                str(target_path), page_num, default_title=target_path.stem
+            res = await asyncio.to_thread(
+                extract_page_with_adaptive_layout,
+                str(target_path),
+                page_num,
+                default_title=target_path.stem,
             )
             heading_path = res.get("heading_path", target_path.stem)
             subheading = res.get("subheading", target_path.stem)
@@ -1179,8 +1302,12 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
             }
 
         elif engine_choice == "headings":
-            res = extract_page_with_adaptive_layout(
-                str(target_path), page_num, default_title=target_path.stem, promote_headings=True
+            res = await asyncio.to_thread(
+                extract_page_with_adaptive_layout,
+                str(target_path),
+                page_num,
+                default_title=target_path.stem,
+                promote_headings=True,
             )
             extracted_text = res.get("extracted_text", "")
             heading_path = res.get("heading_path", target_path.stem)
@@ -1210,8 +1337,12 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
             }
 
         else:
-            res = extract_page_with_adaptive_layout(
-                str(target_path), page_num, default_title=target_path.stem, promote_headings=False
+            res = await asyncio.to_thread(
+                extract_page_with_adaptive_layout,
+                str(target_path),
+                page_num,
+                default_title=target_path.stem,
+                promote_headings=False,
             )
             extracted_text = res.get("extracted_text", "")
             heading_path = res.get("heading_path", target_path.stem)
