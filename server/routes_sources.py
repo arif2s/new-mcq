@@ -102,8 +102,9 @@ class OpenPdfPayload(BaseModel):
 class TestPdfExtractPayload(BaseModel):
     file_path: Optional[str] = None
     page_number: int = 1
-    engine: str = "fitz"
-    ocr_engine: Optional[str] = "auto"
+    engine: str = "adaptive"       # "fitz" | "adaptive" | "docling" | "docling_v2" | "docling_v3"
+    ocr_engine: str = "auto"       # "auto" | "paddle" | "rapidocr" | "easyocr"
+    force_ocr: bool = False
 
 
 def find_sumatra_executable() -> Optional[str]:
@@ -522,6 +523,7 @@ async def run_indexing() -> None:
                         )
                         total_files = len(pdf_files)
                         pdf_engine = str(src.get("pdfEngine", "docling_v2") or "docling_v2").lower()
+                        ocr_engine = str(src.get("ocrEngine", "auto") or "auto").lower()
 
                         for file_idx, file_path in enumerate(pdf_files):
                             await asyncio.sleep(0)
@@ -540,11 +542,11 @@ async def run_indexing() -> None:
                                 if pdf_engine == "docling_v3":
                                     try:
                                         from parsers.docling_v3_parser import (
-                                            extract_pdf_structure,
+                                            extract_pdf_structure as extract_pdf_v3,
                                         )
 
                                         sections = await asyncio.to_thread(
-                                            extract_pdf_structure, str(file_path)
+                                            extract_pdf_v3, str(file_path), ocr_engine=ocr_engine
                                         )
                                     except Exception as d_err:
                                         logger.warning(
@@ -555,11 +557,11 @@ async def run_indexing() -> None:
                                 elif pdf_engine == "docling_v2":
                                     try:
                                         from parsers.docling_v2_parser import (
-                                            extract_pdf_structure,
+                                            extract_pdf_structure as extract_pdf_v2,
                                         )
 
                                         sections = await asyncio.to_thread(
-                                            extract_pdf_structure, str(file_path)
+                                            extract_pdf_v2, str(file_path), ocr_engine=ocr_engine
                                         )
                                     except Exception as d_err:
                                         logger.warning(
@@ -1082,46 +1084,68 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
         page_num = max(
             1, min(int(payload.page_number or 1), page_count if page_count > 0 else 1)
         )
-        engine_used = (payload.engine or "fitz").lower().strip()
-        extracted_text = ""
-        heading_path = ""
-        subheading = ""
+        engine_choice = (payload.engine or "adaptive").strip().lower()
+        ocr_choice = (payload.ocr_engine or "auto").strip().lower()
 
-        page_image_base64 = ""
-        layout_boxes = []
-        hierarchy_tree = []
-        page_width = 612.0
-        page_height = 792.0
-
-        if engine_used == "docling_v3":
-            import parsers.docling_v3_parser as docling_v3_ext
-
-            res = docling_v3_ext.extract_page_with_docling_v3(
-                str(target_path), page_num, default_title=target_path.stem, ocr_engine=payload.ocr_engine or "auto"
+        if engine_choice in ("docling_v3", "v3"):
+            from parsers.docling_v3_parser import extract_page_with_docling_v3
+            result = extract_page_with_docling_v3(
+                str(target_path),
+                page_num,
+                ocr_engine=ocr_choice,
+                force_ocr=bool(payload.force_ocr),
             )
-            extracted_text = res.get("extracted_text", "") or res.get("text", "")
-            heading_path = res.get("heading_path", target_path.stem)
-            subheading = res.get("subheading", target_path.stem)
-            page_image_base64 = res.get("page_image_base64", "")
-            layout_boxes = res.get("layout_boxes", [])
-            hierarchy_tree = res.get("hierarchy_tree", [])
-            page_width = res.get("page_width", 612.0)
-            page_height = res.get("page_height", 792.0)
-        elif engine_used == "docling_v2":
-            import parsers.docling_v2_parser as docling_v2_ext
+            return {
+                "status": "success",
+                "file_name": target_path.name,
+                "file_path": str(target_path),
+                "page_number": page_num,
+                "total_pages": page_count,
+                "engine": "docling_v3",
+                "ocr_engine": ocr_choice,
+                "available_pdfs": available_pdfs,
+                **result,
+            }
 
-            res = docling_v2_ext.extract_page_with_docling_v2(
-                str(target_path), page_num, default_title=target_path.stem, ocr_engine=payload.ocr_engine or "auto"
+        elif engine_choice in ("docling_v2", "v2"):
+            from parsers.docling_v2_parser import extract_page_with_docling_v2
+            result = extract_page_with_docling_v2(
+                str(target_path),
+                page_num,
+                ocr_engine=ocr_choice,
             )
-            extracted_text = res.get("extracted_text", "") or res.get("text", "")
-            heading_path = res.get("heading_path", target_path.stem)
-            subheading = res.get("subheading", target_path.stem)
-            page_image_base64 = res.get("page_image_base64", "")
-            layout_boxes = res.get("layout_boxes", [])
-            hierarchy_tree = res.get("hierarchy_tree", [])
-            page_width = res.get("page_width", 612.0)
-            page_height = res.get("page_height", 792.0)
-        elif engine_used == "docling":
+            return {
+                "status": "success",
+                "file_name": target_path.name,
+                "file_path": str(target_path),
+                "page_number": page_num,
+                "total_pages": page_count,
+                "engine": "docling_v2",
+                "ocr_engine": ocr_choice,
+                "available_pdfs": available_pdfs,
+                **result,
+            }
+
+        elif engine_choice == "adaptive":
+            from parsers.docling_v2_parser import extract_page_with_adaptive_layout
+            result = extract_page_with_adaptive_layout(
+                str(target_path),
+                page_num,
+                ocr_engine=ocr_choice,
+            )
+            return {
+                "status": "success",
+                "file_name": target_path.name,
+                "file_path": str(target_path),
+                "page_number": page_num,
+                "total_pages": page_count,
+                "engine": "adaptive",
+                "ocr_engine": ocr_choice,
+                "available_pdfs": available_pdfs,
+                **result,
+            }
+
+        elif engine_choice == "docling":
             extracted_text = docling_ext.extract_structured_layout(
                 str(target_path), page_num
             )
@@ -1135,7 +1159,26 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
             hierarchy_tree = res.get("hierarchy_tree", [])
             page_width = res.get("page_width", 612.0)
             page_height = res.get("page_height", 792.0)
-        elif engine_used == "headings":
+            return {
+                "status": "success",
+                "file_name": target_path.name,
+                "file_path": str(target_path),
+                "page_number": page_num,
+                "total_pages": page_count,
+                "engine": "docling",
+                "ocr_engine": ocr_choice,
+                "heading_path": heading_path,
+                "subheading": subheading,
+                "extracted_text": extracted_text,
+                "available_pdfs": available_pdfs,
+                "page_image_base64": page_image_base64,
+                "layout_boxes": layout_boxes,
+                "hierarchy_tree": hierarchy_tree,
+                "page_width": page_width,
+                "page_height": page_height,
+            }
+
+        elif engine_choice == "headings":
             res = extract_page_with_adaptive_layout(
                 str(target_path), page_num, default_title=target_path.stem, promote_headings=True
             )
@@ -1147,8 +1190,26 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
             hierarchy_tree = res.get("hierarchy_tree", [])
             page_width = res.get("page_width", 612.0)
             page_height = res.get("page_height", 792.0)
+            return {
+                "status": "success",
+                "file_name": target_path.name,
+                "file_path": str(target_path),
+                "page_number": page_num,
+                "total_pages": page_count,
+                "engine": "headings",
+                "ocr_engine": ocr_choice,
+                "heading_path": heading_path,
+                "subheading": subheading,
+                "extracted_text": extracted_text,
+                "available_pdfs": available_pdfs,
+                "page_image_base64": page_image_base64,
+                "layout_boxes": layout_boxes,
+                "hierarchy_tree": hierarchy_tree,
+                "page_width": page_width,
+                "page_height": page_height,
+            }
+
         else:
-            engine_used = "fitz"
             res = extract_page_with_adaptive_layout(
                 str(target_path), page_num, default_title=target_path.stem, promote_headings=False
             )
@@ -1160,24 +1221,24 @@ def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
             hierarchy_tree = res.get("hierarchy_tree", [])
             page_width = res.get("page_width", 612.0)
             page_height = res.get("page_height", 792.0)
-
-        return {
-            "status": "success",
-            "file_name": target_path.name,
-            "file_path": str(target_path),
-            "page_number": page_num,
-            "total_pages": page_count,
-            "engine": engine_used,
-            "heading_path": heading_path,
-            "subheading": subheading,
-            "extracted_text": extracted_text,
-            "available_pdfs": available_pdfs,
-            "page_image_base64": page_image_base64,
-            "layout_boxes": layout_boxes,
-            "hierarchy_tree": hierarchy_tree,
-            "page_width": page_width,
-            "page_height": page_height,
-        }
+            return {
+                "status": "success",
+                "file_name": target_path.name,
+                "file_path": str(target_path),
+                "page_number": page_num,
+                "total_pages": page_count,
+                "engine": "fitz",
+                "ocr_engine": ocr_choice,
+                "heading_path": heading_path,
+                "subheading": subheading,
+                "extracted_text": extracted_text,
+                "available_pdfs": available_pdfs,
+                "page_image_base64": page_image_base64,
+                "layout_boxes": layout_boxes,
+                "hierarchy_tree": hierarchy_tree,
+                "page_width": page_width,
+                "page_height": page_height,
+            }
     except Exception as exc:
         logger.error("test_pdf_extract error: %s", exc)
         return {

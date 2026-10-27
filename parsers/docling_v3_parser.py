@@ -1,14 +1,15 @@
 """
-Adaptive Multi-Column Medical Layout Engine for PyMuPDF (fitz) and Docling v2 Hybrid Recovery.
+Adaptive Multi-Column Medical Layout Engine for PyMuPDF (fitz) and Docling v3 Hybrid Recovery.
 Implements per-page typography & modal color profiling, pixel-level visual inspection & OCR self-correction
 (foreground ink color recovery, shaded banner/callout box detection on scanned pages, stroke-density bold
-recovery, dark-pixel projection bbox de-bleeding & column gutter verification, selective line-crop re-OCR),
-vector ruling barriers, vector chart obstacle isolation, booktabs horizontal-rule table reconstruction,
-raster image obstacle detection, shaded callout isolation, multi-line & under-image caption tethering,
-local zone-based XY-cut column gutter detection, image-wrapped & cross-column paragraph continuation,
-multi-tier hierarchy detection (H1-H5 + colored headings + small-caps numbered run-in headings), inline
-bold/italic emphasis preservation, multi-line and colon-aligned bullet list reconstruction, PDF page pixmap
-rendering (base64 PNG), and Docling v2 (Heron RT-DETRv2 + RapidOCR/EasyOCR) memory-safe single-page extraction.
+recovery, dark-pixel projection bbox de-bleeding & column gutter verification, selective line-crop re-OCR
+via RapidOCR/PP-OCR ONNX or EasyOCR), vector ruling barriers, vector chart obstacle isolation, booktabs
+horizontal-rule table reconstruction, raster image obstacle detection, shaded callout isolation, multi-line
+& under-image caption tethering, local zone-based XY-cut column gutter detection, image-wrapped & cross-column
+paragraph continuation, multi-tier hierarchy detection (H1-H5 + colored headings + small-caps numbered
+run-in headings), inline bold/italic emphasis preservation, multi-line and colon-aligned bullet list
+reconstruction, PDF page pixmap rendering (base64 PNG), and Docling v3 (Heron RT-DETRv2 + explicit
+RapidOCR/PaddleOCR or EasyOCR selection with force_full_page_ocr) memory-safe single-page extraction.
 """
 
 from __future__ import annotations
@@ -80,9 +81,10 @@ try:
 except Exception:
     _DOCLING_AVAILABLE = False
 
-# Optional lightweight ONNX line-crop OCR engine (RapidOCR / PP-OCR) for selective span self-correction
+# Lazy singletons for selective line-crop re-OCR (RapidOCR / PP-OCR ONNX and EasyOCR CPU)
 _RAPIDOCR_ENGINE: Any = False
-_RAPIDOCR_LOCK = threading.RLock()
+_EASYOCR_ENGINE: Any = False
+_OCR_ENGINE_LOCK = threading.RLock()
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +101,7 @@ DOCLING_REQUIRED_MODELS = (
 def _get_rapidocr_line_engine() -> Any:
     """Lazy-initializes a CPU-only RapidOCR (PP-OCR ONNX) instance for selective line-crop re-OCR."""
     global _RAPIDOCR_ENGINE
-    with _RAPIDOCR_LOCK:
+    with _OCR_ENGINE_LOCK:
         if _RAPIDOCR_ENGINE is not False:
             return _RAPIDOCR_ENGINE
         for mod_name in ("rapidocr_onnxruntime", "rapidocr"):
@@ -108,11 +110,29 @@ def _get_rapidocr_line_engine() -> Any:
                 cls = getattr(mod, "RapidOCR", None)
                 if cls is not None:
                     _RAPIDOCR_ENGINE = cls()
+                    logger.info("Initialized RapidOCR (PP-OCR ONNX) line engine for Docling v3.")
                     return _RAPIDOCR_ENGINE
             except Exception:
                 continue
         _RAPIDOCR_ENGINE = None
         return None
+
+
+def _get_easyocr_line_engine() -> Any:
+    """Lazy-initializes a CPU-only EasyOCR Reader instance when user explicitly selects EasyOCR."""
+    global _EASYOCR_ENGINE
+    with _OCR_ENGINE_LOCK:
+        if _EASYOCR_ENGINE is not False:
+            return _EASYOCR_ENGINE
+        try:
+            import easyocr
+            _EASYOCR_ENGINE = easyocr.Reader(["en"], gpu=False, verbose=False)
+            logger.info("Initialized EasyOCR (CPU) line engine for Docling v3.")
+            return _EASYOCR_ENGINE
+        except Exception as exc:
+            logger.debug("EasyOCR not installed or failed to initialize: %s", exc)
+            _EASYOCR_ENGINE = None
+            return None
 
 
 def is_docling_models_downloaded() -> bool:
@@ -380,6 +400,7 @@ class _VisualPageInspector:
       2. Background fill RGB sampling -> detects shaded section banners and clinical callout boxes baked into images.
       3. Glyph stroke-density (ink fill ratio) profiling -> recovers `is_bold` when OCR strips font weights.
       4. Dark-pixel vertical projection profiling -> splits merged cross-gutter OCR spans and verifies column gutters.
+      5. Selective line-crop re-OCR via RapidOCR (PaddleOCR ONNX) or EasyOCR depending on `ocr_engine`.
     """
 
     def __init__(
@@ -388,10 +409,12 @@ class _VisualPageInspector:
         page_width: float,
         page_height: float,
         line_ocr_callback: Optional[Any] = None,
+        ocr_engine: str = "auto",
     ):
         self.page_width = max(1.0, float(page_width))
         self.page_height = max(1.0, float(page_height))
         self.line_ocr_callback = line_ocr_callback
+        self.ocr_engine = str(ocr_engine or "auto").strip().lower()
         self.arr: Optional[Any] = None
         self.img_w: int = 0
         self.img_h: int = 0
@@ -589,7 +612,7 @@ class _VisualPageInspector:
     def recognize_line_crop(self, bbox: Tuple[float, float, float, float]) -> Optional[str]:
         """
         Crops a single suspicious span/line `[x0, y0, x1, y1]` from the rendered page image
-        and runs lightweight line recognition (via `line_ocr_callback` or `RapidOCR`).
+        and runs lightweight line recognition (via `line_ocr_callback`, `EasyOCR`, or `RapidOCR`).
         """
         if not self.available:
             return None
@@ -608,6 +631,18 @@ class _VisualPageInspector:
             except Exception as exc:
                 logger.debug("Custom line_ocr_callback error: %s", exc)
 
+        if self.ocr_engine in ("easyocr", "easy_ocr", "easy"):
+            easy_reader = _get_easyocr_line_engine()
+            if easy_reader is not None:
+                try:
+                    easy_out = easy_reader.readtext(crop, detail=0, paragraph=True)
+                    if easy_out:
+                        parts = [str(x).strip() for x in easy_out if str(x).strip()]
+                        if parts:
+                            return " ".join(parts)
+                except Exception as exc:
+                    logger.debug("EasyOCR line crop error: %s", exc)
+
         engine = _get_rapidocr_line_engine()
         if engine is not None:
             try:
@@ -624,7 +659,7 @@ class _VisualPageInspector:
 
 class AdaptivePdfLayoutEngine:
     """
-    Deterministic Adaptive Multi-Column Medical Layout Engine with Visual Context:
+    Deterministic Adaptive Multi-Column Medical Layout Engine with Visual Context (V3):
     1. Per-page typography baseline (mu_w, mu_h, mu_size, body_color) and heading size tiers
     2. Pixel-level visual inspection & OCR self-correction (ink color recovery, shaded banner/box detection,
        stroke-density bold recovery, projection-profile bbox de-bleeding, and selective line-crop re-OCR)
@@ -645,6 +680,8 @@ class AdaptivePdfLayoutEngine:
         page_toc: Optional[List[Tuple[int, str]]] = None,
         pixmap: Optional[Any] = None,
         line_ocr_callback: Optional[Any] = None,
+        ocr_engine: str = "auto",
+        **kwargs: Any,
     ):
         self.page = page
         self.default_title = str(default_title or "").strip() or "Untitled"
@@ -660,11 +697,14 @@ class AdaptivePdfLayoutEngine:
 
         raw_pixmap = pixmap if pixmap is not None else getattr(page, "_visual_pixmap", None)
         ocr_cb = line_ocr_callback if line_ocr_callback is not None else getattr(page, "line_ocr_callback", None)
+        raw_eng = ocr_engine if (ocr_engine and ocr_engine != "auto") else (kwargs.get("OCR_engine") or kwargs.get("ocr_engine") or ocr_engine or "auto")
+        self.ocr_engine = str(raw_eng).strip().lower()
         self.visual_inspector = _VisualPageInspector(
             raw_pixmap,
             self.page_width,
             self.page_height,
             line_ocr_callback=ocr_cb,
+            ocr_engine=self.ocr_engine,
         )
 
         # Typography & Color Profile Defaults
@@ -3299,15 +3339,23 @@ class AdaptivePdfLayoutEngine:
         }
 
 
-def _get_docling_converter(do_ocr: bool, ocr_engine: str = "auto") -> Any:
+def _get_docling_converter(
+    do_ocr: bool = True,
+    ocr_engine: Optional[str] = "auto",
+    force_full_page_ocr: bool = False,
+    **kwargs: Any,
+) -> Any:
     """
     Initializes and caches a CPU-only Docling DocumentConverter instance (using Heron RT-DETRv2 layout model).
-    When `do_ocr=True`, prefers RapidOCR (PP-OCR ONNX Runtime) for 5x-8x faster CPU OCR before falling back to EasyOCR.
+    Explicitly routes to RapidOcrOptions (PP-OCR ONNX Runtime) or EasyOcrOptions based on `ocr_engine`
+    and sets `force_full_page_ocr=True` when an OCR engine is explicitly selected by the user.
     """
     if not _DOCLING_AVAILABLE:
         return None
 
-    cache_key = (bool(do_ocr), str(ocr_engine or "auto").lower())
+    raw_engine = ocr_engine if (ocr_engine and ocr_engine != "auto") else (kwargs.get("OCR_engine") or kwargs.get("ocr_engine") or ocr_engine or "auto")
+    engine_pref = str(raw_engine).strip().lower()
+    cache_key = (bool(do_ocr), engine_pref, bool(force_full_page_ocr))
     if cache_key in _DOCLING_CONVERTERS:
         return _DOCLING_CONVERTERS[cache_key]
 
@@ -3322,22 +3370,29 @@ def _get_docling_converter(do_ocr: bool, ocr_engine: str = "auto") -> Any:
     accelerator = AcceleratorOptions(num_threads=4, device=AcceleratorDevice.CPU)
     pipeline_options = PdfPipelineOptions()
     pipeline_options.accelerator_options = accelerator
-    pipeline_options.do_ocr = do_ocr
+    pipeline_options.do_ocr = bool(do_ocr)
     pipeline_options.images_scale = 2.0  # 144 DPI for dense multi-column recognition
     pipeline_options.do_table_structure = True
 
     if do_ocr:
-        engine_pref = str(ocr_engine or "auto").lower()
-        if engine_pref in ("auto", "rapidocr", "paddle", "ppocr") and RapidOcrOptions is not None:
+        if engine_pref in ("easyocr", "easy_ocr", "easy") and EasyOcrOptions is not None:
             try:
-                pipeline_options.ocr_options = RapidOcrOptions()
+                ocr_opts = EasyOcrOptions(force_full_page_ocr=bool(force_full_page_ocr))
             except Exception:
-                pass
-        elif engine_pref == "easyocr" and EasyOcrOptions is not None:
+                ocr_opts = EasyOcrOptions()
+                if hasattr(ocr_opts, "force_full_page_ocr"):
+                    ocr_opts.force_full_page_ocr = bool(force_full_page_ocr)
+            pipeline_options.ocr_options = ocr_opts
+            logger.info("Docling v3 configured with EasyOcrOptions (force_full_page_ocr=%s)", force_full_page_ocr)
+        elif RapidOcrOptions is not None:
             try:
-                pipeline_options.ocr_options = EasyOcrOptions()
+                ocr_opts = RapidOcrOptions(force_full_page_ocr=bool(force_full_page_ocr))
             except Exception:
-                pass
+                ocr_opts = RapidOcrOptions()
+                if hasattr(ocr_opts, "force_full_page_ocr"):
+                    ocr_opts.force_full_page_ocr = bool(force_full_page_ocr)
+            pipeline_options.ocr_options = ocr_opts
+            logger.info("Docling v3 configured with RapidOcrOptions / PP-OCR ONNX (force_full_page_ocr=%s)", force_full_page_ocr)
 
     try:
         pipeline_options.table_structure_options.do_cell_matching = True
@@ -3475,15 +3530,20 @@ def extract_page_with_docling_v3(
     initial_heading_stack: Optional[Dict[int, str]] = None,
     page_toc: Optional[List[Tuple[int, str]]] = None,
     ocr_engine: str = "auto",
+    force_ocr: bool = False,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
     """
     Docling v3 Memory-Safe Single-Page Extraction:
     - Slices requested page into a temporary 1-page PDF buffer wrapped in DocumentStream
-    - Auto-detects whether OCR is necessary
-    - Calibrates headings, booktabs tables, and image-wrapped text against AdaptivePdfLayoutEngine
+    - Runs visual pixmap inspection & selective line-crop re-OCR in AdaptivePdfLayoutEngine
+    - Actively honors explicit `ocr_engine` selections ('paddle'/'rapidocr' or 'easyocr') by setting
+      `do_ocr=True` and `force_full_page_ocr=True` so Docling runs the selected OCR engine over the page
     """
     norm_path = str(Path(file_path).resolve())
     title = default_title or Path(norm_path).stem
+    raw_engine = ocr_engine if (ocr_engine and ocr_engine != "auto") else (kwargs.get("OCR_engine") or kwargs.get("ocr_engine") or ocr_engine or "auto")
+    engine_pref = str(raw_engine).strip().lower()
 
     adaptive_res = extract_page_with_adaptive_layout(
         norm_path,
@@ -3491,10 +3551,11 @@ def extract_page_with_docling_v3(
         default_title=title,
         initial_heading_stack=initial_heading_stack,
         page_toc=page_toc,
+        ocr_engine=engine_pref,
     )
 
     if not _DOCLING_AVAILABLE or DocumentStream is None:
-        logger.info("Docling library not installed; cleanly falling back to Adaptive Multi-Column Layout.")
+        logger.info("Docling library not installed; cleanly falling back to Adaptive Visual Layout Engine.")
         return adaptive_res
 
     try:
@@ -3506,10 +3567,12 @@ def extract_page_with_docling_v3(
 
                 page = doc[page_idx]
                 native_text = page.get_text("text").strip()
-                do_ocr = len(native_text) < 40
+                explicit_ocr_requested = bool(force_ocr) or engine_pref in (
+                    "paddle", "paddleocr", "ppocr", "ppocr_v4", "ppocr_v5", "ppocr_v6", "rapidocr", "easyocr", "easy_ocr", "easy"
+                )
+                do_ocr = (len(native_text) < 40) or explicit_ocr_requested
 
-                # When native/OCR text layer exists on the PDF page, prefer AdaptivePdfLayoutEngine's
-                # deterministic hierarchy, booktabs table, and paragraph reconstruction
+                # Only short-circuit to adaptive_res when NO explicit OCR engine was forced AND native text is present
                 if not do_ocr and adaptive_res.get("extracted_text", "").strip():
                     return adaptive_res
 
@@ -3518,7 +3581,11 @@ def extract_page_with_docling_v3(
                 pdf_bytes = single_doc.write()
                 single_doc.close()
 
-        converter = _get_docling_converter(do_ocr=do_ocr, ocr_engine=ocr_engine)
+        converter = _get_docling_converter(
+            do_ocr=do_ocr,
+            ocr_engine=engine_pref,
+            force_full_page_ocr=explicit_ocr_requested,
+        )
         if converter is None:
             return adaptive_res
 
@@ -3535,7 +3602,7 @@ def extract_page_with_docling_v3(
 
         adaptive_md = adaptive_res.get("extracted_text", "")
         if not raw_docling_md or len(raw_docling_md.strip()) < 0.25 * len(adaptive_md):
-            logger.info("Docling output sparse; augmenting with adaptive multi-column recovery.")
+            logger.info("Docling v3 output sparse; augmenting with adaptive visual multi-column recovery.")
             return adaptive_res
 
         formatted_md = clean_pdf_text(raw_docling_md)
@@ -3577,6 +3644,10 @@ def extract_page_with_docling_v3(
         return adaptive_res
 
 
+# Interoperable alias so callers invoking extract_page_with_docling_v2 on docling_v3_parser work seamlessly
+extract_page_with_docling_v2 = extract_page_with_docling_v3
+
+
 def extract_page_with_adaptive_layout(
     file_path: Union[str, Path],
     page_number: int,
@@ -3584,8 +3655,10 @@ def extract_page_with_adaptive_layout(
     promote_headings: bool = False,
     initial_heading_stack: Optional[Dict[int, str]] = None,
     page_toc: Optional[List[Tuple[int, str]]] = None,
+    ocr_engine: str = "auto",
+    **kwargs: Any,
 ) -> Dict[str, Any]:
-    """Helper executing the Adaptive Multi-Column Geometric Engine on a specific PDF page, including Base64 PNG pixmap."""
+    """Helper executing the Adaptive Visual Multi-Column Engine on a specific PDF page, including Base64 PNG pixmap."""
     if fitz is None:
         logger.warning("PyMuPDF (fitz) is not installed; cannot execute adaptive layout engine.")
         return {
@@ -3602,6 +3675,8 @@ def extract_page_with_adaptive_layout(
 
     norm_path = str(Path(file_path).resolve())
     title = default_title or Path(norm_path).stem
+    raw_engine = ocr_engine if (ocr_engine and ocr_engine != "auto") else (kwargs.get("OCR_engine") or kwargs.get("ocr_engine") or ocr_engine or "auto")
+    engine_pref = str(raw_engine).strip().lower()
 
     with _FITZ_LOCK:
         with fitz.open(norm_path) as doc:
@@ -3642,6 +3717,7 @@ def extract_page_with_adaptive_layout(
                 initial_heading_stack=initial_heading_stack,
                 page_toc=page_toc,
                 pixmap=pix,
+                ocr_engine=engine_pref,
             )
             result = engine.run(promote_headings=promote_headings)
             result["page_image_base64"] = page_image_b64
@@ -3650,15 +3726,24 @@ def extract_page_with_adaptive_layout(
             return result
 
 
-def extract_structured_layout(file_path: Union[str, Path], page_number: int, ocr_engine: str = "auto") -> str:
-    """Convenience layout extractor returning Markdown text using Docling v2."""
-    res = extract_page_with_docling_v2(file_path, page_number)
+def extract_structured_layout(
+    file_path: Union[str, Path],
+    page_number: int,
+    ocr_engine: str = "auto",
+    **kwargs: Any,
+) -> str:
+    """Convenience layout extractor returning Markdown text using Docling v3 (forwards ocr_engine)."""
+    res = extract_page_with_docling_v3(file_path, page_number, ocr_engine=ocr_engine, **kwargs)
     return res.get("extracted_text", "") or res.get("text", "")
 
 
-def extract_pdf_structure(file_path: Union[str, Path], ocr_engine: str = "auto") -> List[Dict[str, Any]]:
+def extract_pdf_structure(
+    file_path: Union[str, Path],
+    ocr_engine: str = "auto",
+    **kwargs: Any,
+) -> List[Dict[str, Any]]:
     """
-    Extracts structured sections from a PDF for Tantivy BM25 and LanceDB indexing using Docling v2.
+    Extracts structured sections from a PDF for Tantivy BM25 and LanceDB indexing using Docling v3.
     Conforms strictly to the Section 4 ChunkDict contract.
     """
     if not file_path:
@@ -3697,6 +3782,7 @@ def extract_pdf_structure(file_path: Union[str, Path], ocr_engine: str = "auto")
                 initial_heading_stack=running_stack,
                 page_toc=toc_by_page.get(p_num, []),
                 ocr_engine=ocr_engine,
+                **kwargs,
             )
             running_stack = p_res.get("active_heading_stack", running_stack)
             text_content = str(p_res.get("extracted_text", "") or p_res.get("text", "")).strip()
@@ -3735,5 +3821,5 @@ def extract_pdf_structure(file_path: Union[str, Path], ocr_engine: str = "auto")
 
         return sections
     except Exception as exc:
-        logger.error("Docling v2 PDF structure extraction failed for %s: %s", norm_path, exc)
+        logger.error("Docling v3 PDF structure extraction failed for %s: %s", norm_path, exc)
         return []

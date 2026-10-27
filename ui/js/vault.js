@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const pdfEngineFitzLabel = document.getElementById('pdf-engine-fitz-label');
   const pdfEngineDoclingLabel = document.getElementById('pdf-engine-docling-label');
   const pdfEngineDoclingV2Label = document.getElementById('pdf-engine-docling-v2-label');
+  const pdfEngineDoclingV3Label = document.getElementById('pdf-engine-docling-v3-label');
   const startIndexingBtn = document.getElementById('start-indexing-btn');
   const indexingBtnText = document.getElementById('indexing-btn-text');
   const indexingIconPlay = document.getElementById('indexing-icon-play');
@@ -186,6 +187,9 @@ document.addEventListener('DOMContentLoaded', () => {
       } else if (radio.value === 'docling_v2' && pdfEngineDoclingV2Label) {
         pdfEngineDoclingV2Label.classList.add('bg-brand-600/10', 'border-brand-500');
         pdfEngineDoclingV2Label.classList.remove('glass-panel');
+      } else if (radio.value === 'docling_v3' && pdfEngineDoclingV3Label) {
+        pdfEngineDoclingV3Label.classList.add('bg-brand-600/10', 'border-brand-500');
+        pdfEngineDoclingV3Label.classList.remove('glass-panel');
       }
     });
   });

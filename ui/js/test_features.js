@@ -117,17 +117,19 @@
                     <div>
                         <label for="pdf-engine-select" class="text-xs font-bold text-muted mb-1 block">Parser Engine</label>
                         <select id="pdf-engine-select" class="glass-input text-xs w-full py-2">
-                            <option value="docling_v3" selected>Docling v3 Multi-Engine Layout & OCR</option>
-                            <option value="docling_v2">Docling v2 Hybrid Multi-Column Layout</option>
+                            <option value="fitz">Fitz (Fast Slicer)</option>
+                            <option value="adaptive">Adaptive Geometric (PyMuPDF)</option>
+                            <option value="docling_v2">Docling v2 (Fast Geometric + Hybrid)</option>
+                            <option value="docling_v3" selected>Docling v3 (Visual Self-Correction + Multi-OCR)</option>
                             <option value="docling">Docling v1 ML Structural Markdown</option>
-                            <option value="fitz">PyMuPDF (Fitz) Fast Text Slicing</option>
                             <option value="headings">PyMuPDF Heuristic Headings</option>
                         </select>
                     </div>
                     <div>
                         <label for="pdf-ocr-engine-select" class="text-xs font-bold text-muted mb-1 block">OCR Engine</label>
                         <select id="pdf-ocr-engine-select" class="glass-input text-xs w-full py-2">
-                            <option value="auto">Auto Detect (RapidOCR / PP-OCR fallback)</option>
+                            <option value="auto">Auto Detect</option>
+                            <option value="paddle">Paddle (PP-OCR / RapidOCR ONNX)</option>
                             <option value="rapidocr">RapidOCR (PP-OCR v6 ONNX)</option>
                             <option value="easyocr">EasyOCR Engine</option>
                             <option value="tesseract">Tesseract Engine</option>
@@ -386,6 +388,8 @@
             const selectedPath = customPath.value.trim() || pdfSelect.value;
             const page = parseInt(pageNum.value, 10) || 1;
             const engine = engineSelect.value;
+            const ocrEngineSelect = document.getElementById('pdf-ocr-engine-select');
+            const ocrEngine = ocrEngineSelect ? ocrEngineSelect.value : 'auto';
 
             runBtn.disabled = true;
             runBtn.textContent = 'Extracting Page...';
@@ -395,7 +399,7 @@
                 const res = await fetch('/api/sources/test_pdf_extract', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ file_path: selectedPath, page_number: page, engine: engine })
+                    body: JSON.stringify({ file_path: selectedPath, page_number: page, engine: engine, ocr_engine: ocrEngine })
                 });
                 const data = await res.json();
 
