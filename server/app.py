@@ -38,6 +38,7 @@ from core.database import get_db_connection, initialize_database
 from core.queue_manager import queue_worker
 
 # API Routers
+from server.routes_analysis import router as analysis_router
 from server.routes_csv import router as csv_router
 from server.routes_mcq import router as mcq_router
 from server.routes_models import router as models_router
@@ -145,6 +146,7 @@ app.add_middleware(
 
 # Register API routes
 routers = [
+    analysis_router,
     mcq_router,
     sources_router,
     csv_router,
