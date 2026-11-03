@@ -36,6 +36,7 @@ except ImportError:
         "purify.min.js": "https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js",
         "katex.min.js": "https://cdn.jsdelivr.net/npm/katex/dist/katex.min.js",
         "katex.min.css": "https://cdn.jsdelivr.net/npm/katex/dist/katex.min.css",
+        "interact.min.js": "https://cdnjs.cloudflare.com/ajax/libs/interact.js/1.10.27/interact.min.js",
     }
 
 from core.database import get_db_connection

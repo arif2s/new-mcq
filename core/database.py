@@ -339,6 +339,35 @@ def initialize_database() -> None:
                 value TEXT NOT NULL,
                 updated_at REAL DEFAULT (unixepoch('now'))
             );
+
+            -- 13. Layout Analysis Progress (PDF Layout & Page State Tracking)
+            CREATE TABLE IF NOT EXISTS layout_analysis_progress (
+                file_path TEXT PRIMARY KEY,
+                status TEXT DEFAULT 'pending',
+                total_pages INTEGER DEFAULT 0,
+                reviewed_pages_json TEXT DEFAULT '[]',
+                active_profile TEXT DEFAULT 'native_digital',
+                final_markdown_override TEXT DEFAULT NULL,
+                updated_at REAL DEFAULT (unixepoch('now'))
+            );
+
+            -- 14. User Annotated Bounding Boxes
+            CREATE TABLE IF NOT EXISTS user_annotated_bboxes (
+                id TEXT PRIMARY KEY,
+                file_path TEXT NOT NULL,
+                page_number INTEGER NOT NULL,
+                x0 REAL,
+                y0 REAL,
+                x1 REAL,
+                y1 REAL,
+                element_type TEXT NOT NULL,
+                heading_level INTEGER DEFAULT 0,
+                display_order INTEGER NOT NULL,
+                raw_text TEXT DEFAULT '',
+                is_custom_drawn INTEGER DEFAULT 0,
+                updated_at REAL DEFAULT (unixepoch('now')),
+                FOREIGN KEY(file_path) REFERENCES layout_analysis_progress(file_path) ON DELETE CASCADE
+            );
         """)
 
         # STAGE 2: Idempotent Column Additions & Schema Migrations (BEFORE Index Creation)
@@ -387,6 +416,32 @@ def initialize_database() -> None:
         ):
             _safe_add_column(conn, "task_queue", col_def)
 
+        for col_def in (
+            "status TEXT DEFAULT 'pending'",
+            "total_pages INTEGER DEFAULT 0",
+            "reviewed_pages_json TEXT DEFAULT '[]'",
+            "active_profile TEXT DEFAULT 'native_digital'",
+            "final_markdown_override TEXT DEFAULT NULL",
+            "updated_at REAL DEFAULT (unixepoch('now'))",
+        ):
+            _safe_add_column(conn, "layout_analysis_progress", col_def)
+
+        for col_def in (
+            "file_path TEXT NOT NULL DEFAULT ''",
+            "page_number INTEGER NOT NULL DEFAULT 1",
+            "x0 REAL",
+            "y0 REAL",
+            "x1 REAL",
+            "y1 REAL",
+            "element_type TEXT NOT NULL DEFAULT 'text'",
+            "heading_level INTEGER DEFAULT 0",
+            "display_order INTEGER NOT NULL DEFAULT 0",
+            "raw_text TEXT DEFAULT ''",
+            "is_custom_drawn INTEGER DEFAULT 0",
+            "updated_at REAL DEFAULT (unixepoch('now'))",
+        ):
+            _safe_add_column(conn, "user_annotated_bboxes", col_def)
+
         _migrate_task_queue_schema(conn)
 
         # STAGE 3: Create All Required Performance & Deduplication Indices
@@ -399,6 +454,7 @@ def initialize_database() -> None:
             CREATE INDEX IF NOT EXISTS idx_task_dedup ON task_queue (task_type, topic_name, status);
             CREATE INDEX IF NOT EXISTS idx_session_questions_sid ON session_questions (session_id);
             CREATE INDEX IF NOT EXISTS idx_extracted_topics_qid ON extracted_topics (question_id);
+            CREATE INDEX IF NOT EXISTS idx_annotated_bboxes_page ON user_annotated_bboxes (file_path, page_number);
         """)
 
         # STAGE 4: Rebuild FTS5 index if csv_questions has data but FTS5 docsize shadow table is empty
@@ -414,3 +470,109 @@ def initialize_database() -> None:
                 )
         except sqlite3.OperationalError as exc:
             logger.warning("FTS5 synchronization check skipped: %s", exc)
+
+
+def upsert_layout_analysis_progress(
+    file_path: str,
+    status: str = "pending",
+    total_pages: int = 0,
+    reviewed_pages_json: str = "[]",
+    active_profile: str = "native_digital",
+    final_markdown_override: str | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    """Upserts a record into layout_analysis_progress adhering to Invariant 15.
+
+    Uses `INSERT ... ON CONFLICT(file_path) DO UPDATE SET` logic to preserve
+    child cascade references in user_annotated_bboxes and avoid unintended deletions.
+    Ensures connection-scoped WAL/MMAP PRAGMAs via get_db_connection().
+    """
+    query = """
+        INSERT INTO layout_analysis_progress (
+            file_path, status, total_pages, reviewed_pages_json,
+            active_profile, final_markdown_override, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, unixepoch('now'))
+        ON CONFLICT(file_path) DO UPDATE SET
+            status = excluded.status,
+            total_pages = excluded.total_pages,
+            reviewed_pages_json = excluded.reviewed_pages_json,
+            active_profile = excluded.active_profile,
+            final_markdown_override = excluded.final_markdown_override,
+            updated_at = excluded.updated_at
+    """
+    params = (
+        file_path,
+        status,
+        total_pages,
+        reviewed_pages_json,
+        active_profile,
+        final_markdown_override,
+    )
+    if conn is not None:
+        conn.execute(query, params)
+    else:
+        with get_db_connection() as local_conn:
+            local_conn.execute(query, params)
+
+
+def upsert_user_annotated_bbox(
+    bbox_id: str,
+    file_path: str,
+    page_number: int,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    element_type: str,
+    heading_level: int = 0,
+    display_order: int = 0,
+    raw_text: str = "",
+    is_custom_drawn: int = 0,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    """Upserts a user annotated bounding box adhering to Invariant 15.
+
+    Uses `INSERT ... ON CONFLICT(id) DO UPDATE SET` logic and ensures
+    connection-scoped WAL/MMAP PRAGMAs.
+    """
+    query = """
+        INSERT INTO user_annotated_bboxes (
+            id, file_path, page_number, x0, y0, x1, y1,
+            element_type, heading_level, display_order, raw_text,
+            is_custom_drawn, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))
+        ON CONFLICT(id) DO UPDATE SET
+            file_path = excluded.file_path,
+            page_number = excluded.page_number,
+            x0 = excluded.x0,
+            y0 = excluded.y0,
+            x1 = excluded.x1,
+            y1 = excluded.y1,
+            element_type = excluded.element_type,
+            heading_level = excluded.heading_level,
+            display_order = excluded.display_order,
+            raw_text = excluded.raw_text,
+            is_custom_drawn = excluded.is_custom_drawn,
+            updated_at = excluded.updated_at
+    """
+    params = (
+        bbox_id,
+        file_path,
+        page_number,
+        x0,
+        y0,
+        x1,
+        y1,
+        element_type,
+        heading_level,
+        display_order,
+        raw_text,
+        is_custom_drawn,
+    )
+    if conn is not None:
+        conn.execute(query, params)
+    else:
+        with get_db_connection() as local_conn:
+            local_conn.execute(query, params)

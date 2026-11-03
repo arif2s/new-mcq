@@ -585,6 +585,36 @@ user_state (
   value TEXT NOT NULL,
   updated_at REAL DEFAULT (unixepoch('now'))
 );
+
+-- Layout Analysis Progress (PDF Layout & Page State Tracking)
+layout_analysis_progress (
+  file_path TEXT PRIMARY KEY,
+  status TEXT DEFAULT 'pending',
+  total_pages INTEGER DEFAULT 0,
+  reviewed_pages_json TEXT DEFAULT '[]',
+  active_profile TEXT DEFAULT 'native_digital',
+  final_markdown_override TEXT DEFAULT NULL,
+  updated_at REAL DEFAULT (unixepoch('now'))
+);
+
+-- User Annotated Bounding Boxes
+user_annotated_bboxes (
+  id TEXT PRIMARY KEY,
+  file_path TEXT NOT NULL,
+  page_number INTEGER NOT NULL,
+  x0 REAL,
+  y0 REAL,
+  x1 REAL,
+  y1 REAL,
+  element_type TEXT NOT NULL,
+  heading_level INTEGER DEFAULT 0,
+  display_order INTEGER NOT NULL,
+  raw_text TEXT DEFAULT '',
+  is_custom_drawn INTEGER DEFAULT 0,
+  updated_at REAL DEFAULT (unixepoch('now')),
+  FOREIGN KEY(file_path) REFERENCES layout_analysis_progress(file_path) ON DELETE CASCADE
+);
+CREATE INDEX idx_annotated_bboxes_page ON user_annotated_bboxes (file_path, page_number);
 ```
 
 ### LanceDB Index Schema (`parsers/lancedb_engine.py`)
@@ -864,7 +894,7 @@ user_state (
 4. **Token Caps**: Prompts to LM Studio MUST be tiktoken-bounded to 4096 tokens total context length via `truncate_to_token_limit`.
 5. **DOM & Security Safety**: Frontend vanilla JS MUST NEVER raw-interpolate user strings into `innerHTML`; use `escapeHTML()`, `DOMPurify.sanitize()`, or DOM element construction.
 6. **External Readers Interop & Path Safety**: SumatraPDF invocation MUST validate `.pdf` file extensions and use `-reuse-instance` and `-page <num>`. Obsidian URI invocation MUST use `obsidian://open?vault=...&file=...`.
-7. **Offline Asset Self-Containment**: Vendor scripts (Tailwind, Marked, DOMPurify, KaTeX) MUST be saved under `ui/vendor/` and automatically checked and downloaded at startup using atomic temp-file replacement (`config.ensure_offline_vendor_assets()`) to avoid 0-byte file corruption and guarantee complete offline execution.
+7. **Offline Asset Self-Containment**: Vendor scripts (Tailwind, Marked, DOMPurify, KaTeX, interact.js) MUST be saved under `ui/vendor/` and automatically checked and downloaded at startup using atomic temp-file replacement (`config.ensure_offline_vendor_assets()`) to avoid 0-byte file corruption and guarantee complete offline execution.
 8. **Lazy Search Singletons, Active Model Switching & Vector Dimension Sync**: Embedding models, LanceDB instances, FlashRank rerankers, and Docling converter instances MUST be cached singletons; never re-instantiate them per query to ensure search latency stays < 250ms on CPU. Active model switching (`POST /api/models/set_active`) MUST persist choices to `user_state` and clear in-memory caches via `set_configured_embedding_model()`, `set_configured_flashrank_model()`, and `set_configured_scispacy_model()`. LanceDB table vector dimensions (`384` vs `768`) MUST match `get_embedding_engine().get_dimension()` and trigger `reset_table()` if the configured embedding model dimension changes.
 9. **Cross-Encoder Contract**: Any search candidate passed to `parsers/reranker.py` MUST contain an explicit `"text"` key containing the passage body.
 10. **Tantivy Search Result Inspection**: Tantivy search returns a mapping `{"obsidian": [...], "pdf": [...], "zim": []}` (where `"zim"` is an empty list stub populated downstream by `parsers.zim_reader`). Check `any(len(v) > 0 for v in hits.values())` rather than `bool(hits)`.

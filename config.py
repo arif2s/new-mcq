@@ -110,6 +110,7 @@ VENDOR_ASSETS: dict[str, str] = {
     "katex.min.js": "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js",
     "katex.min.css": "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css",
     "auto-render.min.js": "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js",
+    "interact.min.js": "https://cdnjs.cloudflare.com/ajax/libs/interact.js/1.10.27/interact.min.js",
 }
 
 # SciSpaCy S3 Model Catalog & Metadata
