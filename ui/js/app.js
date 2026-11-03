@@ -730,6 +730,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                     window.renderStudyTopicsInspector(null, true);
                 }
             }
+            if (targetId === 'layout-analysis-screen' && typeof window.initAnalysisWorkspace === 'function') {
+                window.initAnalysisWorkspace();
+            }
         });
     });
 

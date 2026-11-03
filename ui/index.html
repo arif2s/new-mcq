@@ -39,6 +39,11 @@
       defer
       onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js';"
     ></script>
+    <script
+      src="/vendor/interact.min.js"
+      defer
+      onerror="this.onerror=null;this.src='https://cdnjs.cloudflare.com/ajax/libs/interact.js/1.10.27/interact.min.js';"
+    ></script>
     <script>
       window.tailwind = {
         config: {
@@ -147,6 +152,12 @@
             <button type="button" class="nav-btn" data-target="queue-view" title="Processing Queue">
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
               <span class="sidebar-text">Processing Queue</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="nav-btn" data-target="layout-analysis-screen" title="Layout Analysis">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="12" y1="3" x2="12" y2="21"></line><path d="M3 9h9"></path><path d="M3 15h9"></path></svg>
+              <span class="sidebar-text">Layout Analysis</span>
             </button>
           </li>
           <li>
@@ -623,6 +634,126 @@
                 </div>
               </div>
               <div id="queue-tasks-list" class="max-h-[450px] overflow-y-auto"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- LAYOUT ANALYSIS VIEW (DUAL-PANE WORKSPACE) -->
+        <section id="layout-analysis-screen" class="view-section fade-enter">
+          <div class="analysis-workspace-container flex flex-col h-full w-full">
+            <!-- Top Control Bar -->
+            <div id="analysis-top-bar" class="analysis-control-bar glass-panel flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-2xl mb-4 shrink-0 shadow-lg border border-gray-700/50">
+              <!-- Left Controls: PDF selection, page navigation, profile -->
+              <div class="flex flex-wrap items-center gap-2">
+                <div class="flex items-center gap-1.5">
+                  <label for="analysis-file-select" class="text-xs font-semibold text-muted">File:</label>
+                  <select id="analysis-file-select" class="glass-select text-xs py-1.5 px-2.5 rounded-lg border border-gray-700 max-w-[200px] truncate" aria-label="Select PDF File">
+                    <option value="">Select PDF...</option>
+                  </select>
+                </div>
+
+                <div class="flex items-center gap-1.5">
+                  <button type="button" id="analysis-prev-page-btn" class="secondary-btn text-xs px-2.5 py-1.5 rounded-lg" title="Previous Page" aria-label="Previous Page">&larr;</button>
+                  <span id="analysis-page-indicator" class="text-xs font-semibold text-brand-300 min-w-[65px] text-center">Page 1 / 1</span>
+                  <button type="button" id="analysis-next-page-btn" class="secondary-btn text-xs px-2.5 py-1.5 rounded-lg" title="Next Page" aria-label="Next Page">&rarr;</button>
+                </div>
+
+                <div class="h-5 w-[1px] bg-gray-700 mx-1"></div>
+
+                <!-- Profile Settings -->
+                <div class="flex items-center gap-1.5">
+                  <label for="analysis-profile-select" class="text-xs font-semibold text-muted" title="Profile Settings">Profile:</label>
+                  <select id="analysis-profile-select" class="glass-select text-xs py-1.5 px-2.5 rounded-lg border border-gray-700" aria-label="Profile Settings">
+                    <option value="native_digital">Native Digital</option>
+                    <option value="scanned_two_column_textbook">Scanned 2-Column</option>
+                    <option value="illustrated_booklet">Illustrated Booklet</option>
+                    <option value="academic_article">Academic Article</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Center Controls: Pointer Mode, Draw Box Mode, Reorder Flow -->
+              <div class="flex items-center gap-1.5 bg-black/20 p-1 rounded-xl border border-gray-700/60">
+                <button type="button" id="tool-pointer-mode" class="analysis-tool-btn active flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all" title="Pointer Mode (Drag & Resize Boxes)">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"></path><path d="m13 13 6 6"></path></svg>
+                  <span>Pointer Mode</span>
+                </button>
+                <button type="button" id="tool-draw-mode" class="analysis-tool-btn flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all" title="Draw Box Mode (Click & Drag to Create Box)">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><line x1="9" y1="3" x2="9" y2="21" stroke-dasharray="2 2"></line></svg>
+                  <span>Draw Box Mode</span>
+                </button>
+                <button type="button" id="tool-reorder-flow" class="analysis-tool-btn flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all" title="Reorder Flow (Sequential Click Reordering)">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="10" y1="6" x2="21" y2="6"></line><line x1="10" y1="12" x2="21" y2="12"></line><line x1="10" y1="18" x2="21" y2="18"></line><path d="M4 6h1v4"></path><path d="M4 10h2"></path><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"></path></svg>
+                  <span>Reorder Flow</span>
+                </button>
+              </div>
+
+              <!-- Right Controls: Categorical Element Selectors & Margin Toggle -->
+              <div class="flex flex-wrap items-center gap-1.5">
+                <span class="text-xs font-semibold text-muted mr-1">Category:</span>
+                <button type="button" class="category-badge-btn category-text active text-xs px-2.5 py-1 rounded-md font-semibold border transition-all" data-category="text" title="Set element to Text">Text</button>
+                <button type="button" class="category-badge-btn category-table text-xs px-2.5 py-1 rounded-md font-semibold border transition-all" data-category="table" title="Set element to Table">Table</button>
+                <button type="button" class="category-badge-btn category-heading text-xs px-2.5 py-1 rounded-md font-semibold border transition-all" data-category="header" title="Set element to Heading">Heading</button>
+                <button type="button" class="category-badge-btn category-picture text-xs px-2.5 py-1 rounded-md font-semibold border transition-all" data-category="figure" title="Set element to Picture">Picture</button>
+                <button type="button" class="category-badge-btn category-ignore text-xs px-2.5 py-1 rounded-md font-semibold border transition-all" data-category="ignore" title="Ignore element from output">Ignore</button>
+
+                <div class="h-5 w-[1px] bg-gray-700 mx-1"></div>
+
+                <!-- Margin suppression toggle -->
+                <label class="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-muted hover:text-white transition-colors" title="Suppress header & footer running margins">
+                  <input type="checkbox" id="toggle-running-margins" class="rounded text-brand-500 focus:ring-brand-500 cursor-pointer" />
+                  <span>Suppress Margins</span>
+                </label>
+
+                <!-- Save Status Indicator -->
+                <span id="analysis-save-status" class="text-[11px] font-mono text-emerald-400 ml-2 hidden">✓ Auto-saved</span>
+              </div>
+            </div>
+
+            <!-- Responsive Dual-Pane Layout -->
+            <div class="analysis-dual-pane flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 min-h-0 overflow-hidden">
+              <!-- Left Side Pane: Dynamic Canvas & Transparent Interaction Workspace -->
+              <div class="analysis-left-pane glass-panel rounded-2xl p-4 flex flex-col items-center justify-start min-h-0 overflow-auto relative border border-gray-700/50">
+                <div class="workspace-viewport relative flex items-center justify-center min-w-full min-h-full">
+                  <div id="analysis-workspace-stage" class="relative shadow-2xl rounded-lg overflow-hidden bg-neutral-900/40 select-none">
+                    <!-- Dynamic HTML5 Canvas stacked beneath -->
+                    <canvas id="analysis-page-canvas" class="block w-full h-full pointer-events-none"></canvas>
+                    <!-- Interactive transparent interaction workspace for pages stacked on top -->
+                    <div id="analysis-interaction-layer" class="analysis-interaction-div absolute inset-0 w-full h-full pointer-events-auto">
+                      <!-- Rendered .bbox-overlay-element instances injected dynamically -->
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Right Side Pane: Comprehensive Editable Textarea / Rich Markdown Content Editor -->
+              <div class="analysis-right-pane glass-panel rounded-2xl p-4 flex flex-col min-h-0 relative border border-gray-700/50">
+                <div class="flex items-center justify-between pb-3 mb-3 border-b border-gray-700/50 shrink-0">
+                  <div class="flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                    <h3 class="text-sm font-bold text-brand-300">Compiled Markdown Output &amp; Editor</h3>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <button type="button" id="analysis-recompile-btn" class="secondary-btn text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5" title="Recompile text from layout boxes in reading order">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+                      Recompile From Boxes
+                    </button>
+                    <button type="button" id="analysis-save-md-btn" class="primary-btn text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5" title="Force Save Markdown Now">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                      Save Override
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Full-height editable textarea block -->
+                <textarea
+                  id="analysis-markdown-editor"
+                  class="w-full flex-1 p-4 rounded-xl font-mono text-xs leading-relaxed glass-input resize-none focus:outline-none focus:ring-1 focus:ring-brand-500 overflow-y-auto"
+                  placeholder="# Compiled Document Content&#10;&#10;Final adjustments, editing, cutting, pasting, and typing corrections of compiled layout text..."
+                  aria-label="Compiled Markdown Content Editor"
+                  spellcheck="false"
+                ></textarea>
+              </div>
             </div>
           </div>
         </section>
@@ -1146,6 +1277,7 @@
     <script src="/js/vault.js" defer></script>
     <script src="/js/search.js" defer></script>
     <script src="/js/reader.js" defer></script>
+    <script src="/js/analysis.js" defer></script>
     <script>
       document.addEventListener("DOMContentLoaded", function () {
         var qInput = document.getElementById("set-q-target");
