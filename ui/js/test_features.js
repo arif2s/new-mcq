@@ -493,9 +493,16 @@
                         <input type="text" id="db-query-input" class="glass-input text-xs w-full py-2" value="amyloidosis" placeholder="Enter term or topic to search..." />
                     </div>
                     <div>
-                        <label for="db-target-select" class="text-xs font-bold text-muted mb-1 block">Database Target</label>
-                        <select id="db-target-select" class="glass-input text-xs w-full py-2">
-                            <option value="all">Hybrid Search (LanceDB + Tantivy + ZIM)</option>
+                        <label class="text-xs font-bold text-muted mb-1 block">Database Target</label>
+                        <div class="segmented-group w-full flex flex-wrap" id="db-target-group" role="radiogroup" aria-label="Database Target Selection">
+                            <button type="button" class="segmented-btn btn-sm flex-1 active" data-value="all" role="radio" aria-checked="true">All</button>
+                            <button type="button" class="segmented-btn btn-sm flex-1" data-value="lancedb" role="radio" aria-checked="false">LanceDB</button>
+                            <button type="button" class="segmented-btn btn-sm flex-1" data-value="pdf" role="radio" aria-checked="false">PDF</button>
+                            <button type="button" class="segmented-btn btn-sm flex-1" data-value="obsidian" role="radio" aria-checked="false">Obsidian</button>
+                            <button type="button" class="segmented-btn btn-sm flex-1" data-value="zim" role="radio" aria-checked="false">ZIM</button>
+                        </div>
+                        <select id="db-target-select" class="hidden" aria-hidden="true">
+                            <option value="all" selected>Hybrid Search</option>
                             <option value="lancedb">LanceDB Vector &amp; FTS</option>
                             <option value="pdf">PDF Textbooks Only</option>
                             <option value="obsidian">Obsidian Vaults Only</option>
@@ -503,8 +510,8 @@
                         </select>
                     </div>
                     <div>
-                        <button type="button" id="run-db-search-btn" class="primary-btn text-xs py-2 w-full cursor-pointer">
-                            Search Database
+                        <button type="button" id="run-db-search-btn" class="primary-btn text-xs py-2 w-full cursor-pointer flex items-center justify-center gap-1.5 shadow-md">
+                            <span>🔍</span> Search Target
                         </button>
                     </div>
                 </div>
@@ -523,7 +530,21 @@
 
         const queryInput = document.getElementById('db-query-input');
         const targetSelect = document.getElementById('db-target-select');
+        const targetGroup = document.getElementById('db-target-group');
         const searchBtn = document.getElementById('run-db-search-btn');
+
+        if (targetGroup && targetSelect) {
+            targetGroup.querySelectorAll('.segmented-btn').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const val = btn.dataset.value;
+                    targetGroup.querySelectorAll('.segmented-btn').forEach((b) => {
+                        b.classList.toggle('active', b === btn);
+                        b.setAttribute('aria-checked', b === btn ? 'true' : 'false');
+                    });
+                    targetSelect.value = val;
+                });
+            });
+        }
         const statsEl = document.getElementById('db-search-stats');
         const resultsContainer = document.getElementById('db-results-container');
 

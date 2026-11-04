@@ -1499,3 +1499,185 @@ body.dark-theme .moon-icon { display: none; }
   font-weight: 800;
   font-size: 14px;
 }
+
+
+/* =========================================================
+   SEGMENTED BUTTON GROUPS & ERGONOMIC CONTROLS
+   Replaces buried select dropdowns with clean, modern button groups
+   ========================================================= */
+
+.segmented-group {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(15, 23, 42, 0.45);
+  border: 1px solid var(--panel-border, rgba(255, 255, 255, 0.12));
+  border-radius: 12px;
+  padding: 3px;
+  gap: 3px;
+  max-width: 100%;
+  overflow-x: auto;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.segmented-group::-webkit-scrollbar {
+  display: none;
+}
+
+.segmented-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted, #94a3b8);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  outline: none;
+  user-select: none;
+}
+
+.segmented-btn:hover:not(.active):not(:disabled) {
+  color: var(--text-primary, #f8fafc);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.segmented-btn.active {
+  color: #ffffff;
+  background: var(--c-brand-600, #7c3aed);
+  border-color: rgba(255, 255, 255, 0.2);
+  font-weight: 600;
+  box-shadow: 0 2px 6px -1px rgba(124, 58, 237, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.segmented-btn:focus-visible {
+  outline: 2px solid var(--c-brand-400, #a78bfa);
+  outline-offset: 1px;
+}
+
+.segmented-btn.btn-sm {
+  padding: 0.25rem 0.55rem;
+  font-size: 0.7rem;
+}
+
+/* Accessible and standardized range sliders */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+  outline: none;
+  transition: background 180ms ease;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--c-brand-500, #8b5cf6);
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  transition: transform 150ms ease, background-color 150ms ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.18);
+  background: var(--c-brand-400, #a78bfa);
+}
+
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--c-brand-400, #a78bfa);
+  outline-offset: 2px;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--c-brand-500, #8b5cf6);
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+/* =========================================================
+   TEXT VIEWING & DOCUMENT READER READABILITY OPTIMIZATION
+   ========================================================= */
+
+.overlay-content,
+#zim-content-area {
+  line-height: 1.7;
+  font-size: 1rem;
+  letter-spacing: -0.011em;
+  color: var(--text-primary);
+  max-width: 900px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  scroll-behavior: smooth;
+}
+
+#zim-content-area h1,
+#zim-content-area h2,
+#zim-content-area h3 {
+  letter-spacing: -0.02em;
+  margin-top: 1.5em;
+  margin-bottom: 0.75em;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+#zim-content-area p {
+  margin-bottom: 1.25em;
+  line-height: 1.75;
+}
+
+#hub-carousel-content {
+  line-height: 1.72;
+  font-size: 0.975rem;
+  color: var(--text-primary);
+}
+
+#hub-carousel-content p {
+  margin-bottom: 1.15em;
+}
+
+#hub-carousel-content h1,
+#hub-carousel-content h2,
+#hub-carousel-content h3 {
+  margin-top: 1.4em;
+  margin-bottom: 0.6em;
+  font-weight: 700;
+}
+
+/* Ensure focus outline is sharp and visible */
+:focus-visible {
+  outline: 2px solid var(--c-brand-400, #a78bfa) !important;
+  outline-offset: 2px !important;
+}
+
+/* Responsive view container padding */
+.view-section {
+  padding: 24px;
+}
+
+@media (min-width: 1024px) {
+  .view-section {
+    padding: 28px 32px;
+  }
+}
+
+#layout-analysis-screen,
+#layout-toc-screen {
+  height: 100%;
+  overflow: hidden;
+}

@@ -466,11 +466,22 @@
               <h3 class="text-lg font-semibold mb-4">➕ Add New Offline Knowledge Directory / File</h3>
               <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                 <div>
-                  <label for="new-source-type" class="text-xs text-muted block mb-1">Source Type</label>
-                  <select id="new-source-type" class="w-full glass-select rounded-lg px-3 py-2 text-sm" aria-label="Source Type">
-                    <option value="obsidian">Obsidian Vault (Folder)</option>
-                    <option value="pdf">PDF Textbooks (File / Folder)</option>
-                    <option value="zim">ZIM Archive (.zim File)</option>
+                  <label class="text-xs text-muted block mb-1">Source Type</label>
+                  <div class="segmented-group w-full flex" id="new-source-type-group" role="radiogroup" aria-label="Source Type Selection">
+                    <button type="button" class="segmented-btn flex-1 active" data-value="obsidian" role="radio" aria-checked="true">
+                      <span>🟣</span> Obsidian
+                    </button>
+                    <button type="button" class="segmented-btn flex-1" data-value="pdf" role="radio" aria-checked="false">
+                      <span>📕</span> PDF
+                    </button>
+                    <button type="button" class="segmented-btn flex-1" data-value="zim" role="radio" aria-checked="false">
+                      <span>🌐</span> ZIM
+                    </button>
+                  </div>
+                  <select id="new-source-type" class="hidden" aria-hidden="true">
+                    <option value="obsidian" selected>Obsidian Vault</option>
+                    <option value="pdf">PDF Textbooks</option>
+                    <option value="zim">ZIM Archive</option>
                   </select>
                 </div>
                 <div>
@@ -625,12 +636,18 @@
             </div>
 
             <div class="card glass-card">
-              <div class="flex justify-between items-center mb-10">
-                <h3 id="queue-total">Recent Tasks</h3>
-                <div class="flex gap-2">
-                  <button type="button" id="queue-retry-btn" class="secondary-btn text-xs cursor-pointer">Retry Failed</button>
-                  <button type="button" id="queue-clear-completed-btn" class="secondary-btn text-xs cursor-pointer">Clear Completed</button>
-                  <button type="button" id="queue-clear-btn" class="secondary-btn text-xs cursor-pointer" style="color: #ef4444; border-color: #ef4444;">Clear Failed</button>
+              <div class="flex justify-between items-center mb-4 pb-2 border-b border-gray-700/50">
+                <h3 id="queue-total" class="text-base font-semibold">Recent Tasks</h3>
+                <div class="flex items-center gap-2">
+                  <button type="button" id="queue-retry-btn" class="secondary-btn text-xs px-3 py-1.5 rounded-lg cursor-pointer flex items-center gap-1.5" title="Retry Failed Tasks">
+                    <span>🔄</span> Retry Failed
+                  </button>
+                  <button type="button" id="queue-clear-completed-btn" class="secondary-btn text-xs px-3 py-1.5 rounded-lg cursor-pointer flex items-center gap-1.5" title="Clear Completed Tasks">
+                    <span>🧹</span> Clear Done
+                  </button>
+                  <button type="button" id="queue-clear-btn" class="secondary-btn text-xs px-3 py-1.5 rounded-lg cursor-pointer flex items-center gap-1.5 text-danger-400 border-danger-500/50 hover:bg-danger-500/10" title="Clear Failed Tasks">
+                    <span>🗑️</span> Clear Failed
+                  </button>
                 </div>
               </div>
               <div id="queue-tasks-list" class="max-h-[450px] overflow-y-auto"></div>
@@ -661,10 +678,16 @@
                 <div class="h-5 w-[1px] bg-gray-700 mx-1"></div>
 
                 <!-- Profile Settings -->
-                <div class="flex items-center gap-1.5">
-                  <label for="analysis-profile-select" class="text-xs font-semibold text-muted" title="Profile Settings">Profile:</label>
-                  <select id="analysis-profile-select" class="glass-select text-xs py-1.5 px-2.5 rounded-lg border border-gray-700" aria-label="Profile Settings">
-                    <option value="native_digital">Native Digital</option>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-semibold text-muted">Profile:</span>
+                  <div class="segmented-group" id="analysis-profile-group" role="radiogroup" aria-label="Layout Profile">
+                    <button type="button" class="segmented-btn btn-sm active" data-value="native_digital" role="radio" aria-checked="true">Digital</button>
+                    <button type="button" class="segmented-btn btn-sm" data-value="scanned_two_column_textbook" role="radio" aria-checked="false">2-Col</button>
+                    <button type="button" class="segmented-btn btn-sm" data-value="illustrated_booklet" role="radio" aria-checked="false">Booklet</button>
+                    <button type="button" class="segmented-btn btn-sm" data-value="academic_article" role="radio" aria-checked="false">Article</button>
+                  </div>
+                  <select id="analysis-profile-select" class="hidden" aria-hidden="true">
+                    <option value="native_digital" selected>Native Digital</option>
                     <option value="scanned_two_column_textbook">Scanned 2-Column</option>
                     <option value="illustrated_booklet">Illustrated Booklet</option>
                     <option value="academic_article">Academic Article</option>
@@ -1132,10 +1155,18 @@
                 </div>
 
                 <div class="form-group pt-2">
-                  <label for="setting-obsidian-mode" class="text-xs text-neutral-300 block mb-1">Obsidian Note Click Behavior:</label>
-                  <select id="setting-obsidian-mode" class="glass-select w-full rounded-lg px-3 py-2 text-xs">
-                    <option value="browser">Render in Browser (LaTeX, Tables, HTML, Images)</option>
-                    <option value="app">Open in Obsidian Desktop App (obsidian://)</option>
+                  <label class="text-xs text-neutral-300 block mb-1.5">Obsidian Note Click Behavior:</label>
+                  <div class="segmented-group w-full flex" id="setting-obsidian-mode-group" role="radiogroup" aria-label="Obsidian Note Click Behavior">
+                    <button type="button" class="segmented-btn flex-1 active" data-value="browser" role="radio" aria-checked="true">
+                      <span>🌐</span> In-App Reader
+                    </button>
+                    <button type="button" class="segmented-btn flex-1" data-value="app" role="radio" aria-checked="false">
+                      <span>💎</span> Desktop App
+                    </button>
+                  </div>
+                  <select id="setting-obsidian-mode" class="hidden" aria-hidden="true">
+                    <option value="browser" selected>Render in Browser</option>
+                    <option value="app">Open in Obsidian Desktop App</option>
                   </select>
                 </div>
 
@@ -1174,21 +1205,30 @@
                 </div>
 
                 <div class="form-group pt-1">
-                  <label for="setting-wallpaper-timer" class="text-xs text-neutral-300 block mb-1">Wallpaper Rotation Duration:</label>
-                  <div class="flex gap-2.5 items-center">
-                    <select id="setting-wallpaper-timer" class="glass-select flex-1 rounded-lg px-3 py-2 text-xs">
-                      <option value="5">Every 5 Minutes</option>
-                      <option value="15">Every 15 Minutes</option>
-                      <option value="30" selected>Every 30 Minutes</option>
-                      <option value="60">Every 1 Hour</option>
-                      <option value="120">Every 2 Hours</option>
-                      <option value="360">Every 6 Hours</option>
-                      <option value="0">Never (Manual Only)</option>
-                    </select>
-                    <button type="button" id="btn-rotate-wallpaper-now" class="text-xs px-3.5 py-2 rounded-lg font-medium secondary-btn transition-colors whitespace-nowrap cursor-pointer">
+                  <div class="flex justify-between items-center mb-1.5">
+                    <label class="text-xs text-neutral-300 mb-0">Wallpaper Rotation Duration:</label>
+                    <button type="button" id="btn-rotate-wallpaper-now" class="text-xs px-2.5 py-1 rounded-lg font-medium secondary-btn transition-colors whitespace-nowrap cursor-pointer" title="Trigger immediate wallpaper change">
                       🖼️ Change Now
                     </button>
                   </div>
+                  <div class="segmented-group w-full flex flex-wrap" id="setting-wallpaper-timer-group" role="radiogroup" aria-label="Wallpaper Rotation Duration">
+                    <button type="button" class="segmented-btn btn-sm flex-1" data-value="5" role="radio" aria-checked="false">5m</button>
+                    <button type="button" class="segmented-btn btn-sm flex-1" data-value="15" role="radio" aria-checked="false">15m</button>
+                    <button type="button" class="segmented-btn btn-sm flex-1 active" data-value="30" role="radio" aria-checked="true">30m</button>
+                    <button type="button" class="segmented-btn btn-sm flex-1" data-value="60" role="radio" aria-checked="false">1h</button>
+                    <button type="button" class="segmented-btn btn-sm flex-1" data-value="120" role="radio" aria-checked="false">2h</button>
+                    <button type="button" class="segmented-btn btn-sm flex-1" data-value="360" role="radio" aria-checked="false">6h</button>
+                    <button type="button" class="segmented-btn btn-sm flex-1" data-value="0" role="radio" aria-checked="false">Off</button>
+                  </div>
+                  <select id="setting-wallpaper-timer" class="hidden" aria-hidden="true">
+                    <option value="5">Every 5 Minutes</option>
+                    <option value="15">Every 15 Minutes</option>
+                    <option value="30" selected>Every 30 Minutes</option>
+                    <option value="60">Every 1 Hour</option>
+                    <option value="120">Every 2 Hours</option>
+                    <option value="360">Every 6 Hours</option>
+                    <option value="0">Never</option>
+                  </select>
                 </div>
               </div>
             </div>

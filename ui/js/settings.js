@@ -43,8 +43,18 @@
     }
 
     const obsidianSelect = $("setting-obsidian-mode");
+    const obsidianGroup = $("setting-obsidian-mode-group");
+    const syncObsidianButtons = (val) => {
+      if (!obsidianGroup) return;
+      obsidianGroup.querySelectorAll('.segmented-btn').forEach((b) => {
+        const match = b.dataset.value === val;
+        b.classList.toggle('active', match);
+        b.setAttribute('aria-checked', match ? 'true' : 'false');
+      });
+    };
     if (obsidianSelect) {
       obsidianSelect.value = state.obsidianOpenMode || "browser";
+      syncObsidianButtons(obsidianSelect.value);
     }
 
     const pdfParserSelect = $("setting-pdf-parser");
@@ -93,10 +103,19 @@
     }
 
     const wpTimerSelect = $("setting-wallpaper-timer");
+    const wpTimerGroup = $("setting-wallpaper-timer-group");
+    const syncWpButtons = (val) => {
+      if (!wpTimerGroup) return;
+      wpTimerGroup.querySelectorAll('.segmented-btn').forEach((b) => {
+        const match = b.dataset.value === String(val);
+        b.classList.toggle('active', match);
+        b.setAttribute('aria-checked', match ? 'true' : 'false');
+      });
+    };
     if (wpTimerSelect) {
-      wpTimerSelect.value = String(
-        state.wallpaperIntervalMinutes !== undefined ? state.wallpaperIntervalMinutes : 30
-      );
+      const val = state.wallpaperIntervalMinutes !== undefined ? state.wallpaperIntervalMinutes : 30;
+      wpTimerSelect.value = String(val);
+      syncWpButtons(val);
     }
   }
 
@@ -120,8 +139,29 @@
 
     // Obsidian Open Mode (In-Browser Reader vs obsidian:// Protocol)
     const obsidianSelect = $("setting-obsidian-mode");
+    const obsidianGroup = $("setting-obsidian-mode-group");
+    if (obsidianGroup && obsidianSelect) {
+      obsidianGroup.querySelectorAll('.segmented-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const val = btn.dataset.value;
+          obsidianGroup.querySelectorAll('.segmented-btn').forEach((b) => {
+            b.classList.toggle('active', b === btn);
+            b.setAttribute('aria-checked', b === btn ? 'true' : 'false');
+          });
+          obsidianSelect.value = val;
+          obsidianSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      });
+    }
     if (obsidianSelect) {
       obsidianSelect.addEventListener("change", (e) => {
+        if (obsidianGroup) {
+          obsidianGroup.querySelectorAll('.segmented-btn').forEach((b) => {
+            const match = b.dataset.value === e.target.value;
+            b.classList.toggle('active', match);
+            b.setAttribute('aria-checked', match ? 'true' : 'false');
+          });
+        }
         if (window.AppState && window.AppState.update) {
           window.AppState.update({ obsidianOpenMode: e.target.value });
         }
@@ -219,8 +259,29 @@
 
     // Wallpaper Timer Interval
     const wpTimerSelect = $("setting-wallpaper-timer");
+    const wpTimerGroup = $("setting-wallpaper-timer-group");
+    if (wpTimerGroup && wpTimerSelect) {
+      wpTimerGroup.querySelectorAll('.segmented-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const val = btn.dataset.value;
+          wpTimerGroup.querySelectorAll('.segmented-btn').forEach((b) => {
+            b.classList.toggle('active', b === btn);
+            b.setAttribute('aria-checked', b === btn ? 'true' : 'false');
+          });
+          wpTimerSelect.value = val;
+          wpTimerSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      });
+    }
     if (wpTimerSelect) {
       wpTimerSelect.addEventListener("change", (e) => {
+        if (wpTimerGroup) {
+          wpTimerGroup.querySelectorAll('.segmented-btn').forEach((b) => {
+            const match = b.dataset.value === String(e.target.value);
+            b.classList.toggle('active', match);
+            b.setAttribute('aria-checked', match ? 'true' : 'false');
+          });
+        }
         if (window.AppState && window.AppState.update) {
           window.AppState.update({
             wallpaperIntervalMinutes: parseInt(e.target.value, 10),

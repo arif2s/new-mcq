@@ -211,7 +211,30 @@ document.addEventListener('DOMContentLoaded', () => {
     if (addSourceBtn) addSourceBtn.disabled = newSourcePath.value.trim() === '';
   });
 
+  // Sync segmented buttons with hidden select for Source Type
+  const sourceTypeGroup = document.getElementById('new-source-type-group');
+  if (sourceTypeGroup && newSourceType) {
+    sourceTypeGroup.querySelectorAll('.segmented-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const val = btn.dataset.value;
+        sourceTypeGroup.querySelectorAll('.segmented-btn').forEach((b) => {
+          b.classList.toggle('active', b === btn);
+          b.setAttribute('aria-checked', b === btn ? 'true' : 'false');
+        });
+        newSourceType.value = val;
+        newSourceType.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    });
+  }
+
   newSourceType?.addEventListener('change', () => {
+    if (sourceTypeGroup) {
+      sourceTypeGroup.querySelectorAll('.segmented-btn').forEach((b) => {
+        const match = b.dataset.value === newSourceType.value;
+        b.classList.toggle('active', match);
+        b.setAttribute('aria-checked', match ? 'true' : 'false');
+      });
+    }
     if (newSourceType.value === 'pdf') {
       pdfEngineContainer?.classList.remove('hidden');
     } else {

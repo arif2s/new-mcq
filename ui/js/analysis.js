@@ -102,7 +102,7 @@
                     dom.fileSelect.value = state.files[0].file_path;
                     state.currentFilePath = state.files[0].file_path;
                     state.activeProfile = state.files[0].active_profile || "native_digital";
-                    if (dom.profileSelect) dom.profileSelect.value = state.activeProfile;
+                    if (dom.profileSelect) { dom.profileSelect.value = state.activeProfile; syncProfileButtons?.(state.activeProfile); }
                     await loadPageData(1);
                 }
             }
@@ -754,7 +754,7 @@
                 if (fileObj) {
                     state.totalPages = Math.max(1, fileObj.total_pages || 1);
                     state.activeProfile = fileObj.active_profile || "native_digital";
-                    if (dom.profileSelect) dom.profileSelect.value = state.activeProfile;
+                    if (dom.profileSelect) { dom.profileSelect.value = state.activeProfile; syncProfileButtons?.(state.activeProfile); }
                 }
                 await loadPageData(1);
             });
@@ -791,10 +791,33 @@
             });
         }
 
+        // Profile segmented button group synchronization
+        const profileGroup = document.getElementById("analysis-profile-group");
+        const syncProfileButtons = (val) => {
+            if (!profileGroup) return;
+            profileGroup.querySelectorAll('.segmented-btn').forEach((btn) => {
+                const match = btn.dataset.value === val;
+                btn.classList.toggle('active', match);
+                btn.setAttribute('aria-checked', match ? 'true' : 'false');
+            });
+        };
+
+        if (profileGroup && dom.profileSelect) {
+            profileGroup.querySelectorAll('.segmented-btn').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const val = btn.dataset.value;
+                    syncProfileButtons(val);
+                    dom.profileSelect.value = val;
+                    dom.profileSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                });
+            });
+        }
+
         // Profile select
         if (dom.profileSelect) {
             dom.profileSelect.addEventListener("change", async (e) => {
                 state.activeProfile = e.target.value;
+                syncProfileButtons(state.activeProfile);
                 if (state.currentFilePath) {
                     await fetch("/api/analysis/initialize", {
                         method: "POST",
