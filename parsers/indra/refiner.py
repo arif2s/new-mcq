@@ -201,6 +201,7 @@ class IndraHybridLayoutRefiner:
                 ],
                 "bbox_norm": e.bbox_norm,
                 "role": e.role,
+                "heading_level": e.heading_level if e.role == "heading" else 0,
             }
             for e in ir.elements
             if not e.is_suppressed_furniture

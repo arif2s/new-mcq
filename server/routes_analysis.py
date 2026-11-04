@@ -498,6 +498,11 @@ async def get_page_data(
             elif role == "footer":
                 el_type = "footer"
 
+            line_lvl = line.get("heading_level")
+            if line_lvl is not None and line_lvl > 0:
+                heading_lvl = int(line_lvl)
+                el_type = "header"
+
             elem_id = f"auto_{page_number}_{idx}_{uuid.uuid4().hex[:8]}"
             elements.append({
                 "id": elem_id,

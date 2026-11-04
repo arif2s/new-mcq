@@ -236,11 +236,12 @@ class LayoutStrategy:
             el.heading_confidence = score
             # Disambiguate structured headings with prefixes vs list items
             # If size is larger than body text (e.g. rel_size >= 1.20) or bold, it's a heading
-            if (score >= weights.min_heading_confidence or el.rel_size >= weights.h2_min_rel_size or (el.is_bold and el.rel_size >= 1.15)) and len(text.split()) <= 15 and not text.lstrip().startswith(("-", "•")):
+            is_prior_heading_label = (el.role == "heading")
+            if (is_prior_heading_label or score >= weights.min_heading_confidence or el.rel_size >= weights.h2_min_rel_size or (el.is_bold and el.rel_size >= 1.15)) and len(text.split()) <= 15 and not text.lstrip().startswith(("-", "•")):
                 el.role = "heading"
-                if el.rel_size >= weights.h1_min_rel_size or el.in_banner:
+                if el.rel_size >= weights.h1_min_rel_size or el.in_banner or is_prior_heading_label and el.rel_size >= 1.20:
                     el.heading_level = 1
-                elif el.rel_size >= weights.h2_min_rel_size:
+                elif el.rel_size >= weights.h2_min_rel_size or is_prior_heading_label:
                     el.heading_level = 2
                 elif el.rel_size >= weights.h3_min_rel_size:
                     el.heading_level = 3

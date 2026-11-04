@@ -47,19 +47,10 @@ INDRA_MODELS_DIR: Path = getattr(
 )
 
 REQUIRED_CORE_FILES: tuple[str, ...] = (
-    "config.json",
-    "meta.json",
     "det.onnx",
-    "orient.onnx",
-    "order.onnx",
-    "script.onnx",
     "rec.onnx",
-    "rec_cjk.onnx",
-    "rec_rtl.onnx",
-    "rec_world.onnx",
-    "lm.npz",
-    "lm_cjk.npz",
-    "lm_world.npz",
+    "order.onnx",
+    "meta.json",
 )
 
 REQUIRED_MATH_FILES: tuple[str, ...] = (
@@ -174,14 +165,13 @@ def get_indra_converter(
                 )
 
             conv = indra_ocr.load(
+                path=str(model_dir),
                 mode=mode,
                 math=math,
                 furniture=furniture,
-                dpi=dpi,
+                dpi=float(dpi),
                 threads=threads,
                 image_ocr=image_ocr,
-                table_heads=table_heads,
-                model_dir=str(model_dir),
             )
             _CONVERTER_CACHE[key] = conv
             return conv
@@ -432,53 +422,20 @@ class IndraModularEngine:
 
         src_doc = pdfium.PdfDocument(str(path))
         try:
-            page_obj = src_doc[page_number - 1]
+            page_idx = page_number - 1
+            if page_idx < 0 or page_idx >= len(src_doc):
+                return None
+
+            page_obj = src_doc[page_idx]
             scale = float(self.dpi) / 72.0
             bitmap = page_obj.render(scale=scale)
             pil_img = bitmap.to_pil()
             bitmap.close()
-            page_obj.close()
             w_px, h_px = float(pil_img.size[0]), float(pil_img.size[1])
-            rgb_arr = np.asarray(pil_img.convert("RGB"), dtype=np.uint8).copy()
             pil_img.close()
-            gray_arr = np.ascontiguousarray(
-                (
-                    (77 * rgb_arr[:, :, 0].astype(np.uint16)
-                    + 150 * rgb_arr[:, :, 1].astype(np.uint16)
-                    + 29 * rgb_arr[:, :, 2].astype(np.uint16))
-                    >> 8
-                ).astype(np.uint8)
-            )
-            indra_page = None
-            if self.mode != "ocr":
-                single_pdf = pdfium.PdfDocument.new()
-                single_pdf.import_pages(src_doc, pages=[page_number - 1])
-                tmp_fd, tmp_str = tempfile.mkstemp(suffix=".pdf", prefix="indra_p_")
-                os.close(tmp_fd)
-                tmp_path = Path(tmp_str)
-                try:
-                    single_pdf.save(str(tmp_path))
-                    single_pdf.close()
-                    gen = conv.convert(str(tmp_path), max_pages=1)
-                    try:
-                        for _, p_res in gen:
-                            indra_page = p_res
-                            break
-                    finally:
-                        if hasattr(gen, "close"):
-                            gen.close()
-                        del gen
-                finally:
-                    if single_pdf is not None:
-                        try:
-                            single_pdf.close()
-                        except Exception:
-                            pass
-                    tmp_path.unlink(missing_ok=True)
 
-            if indra_page is None or not (getattr(indra_page, "lines", None) or getattr(indra_page, "blocks", None)):
-                indra_page = conv.ocr(gray_arr)
-            del gray_arr
+            # Execute native Indra OCR through its pdf_page pipeline
+            indra_page = conv.pdf_page(str(path), src_doc, page_idx)
         finally:
             src_doc.close()
 
@@ -487,10 +444,18 @@ class IndraModularEngine:
         ser_blocks = []
         ser_tables = []
         for blk in getattr(indra_page, "blocks", []):
-            ser_blocks.append({
-                "label": getattr(blk, "label", "Text"),
-                "bbox": list(getattr(blk, "bbox", [])),
-            })
+            if isinstance(blk, dict):
+                ser_blocks.append({
+                    "label": blk.get("label", "Text"),
+                    "bbox": list(blk.get("bbox", [])),
+                    "text": str(blk.get("text", "")).strip(),
+                })
+            else:
+                ser_blocks.append({
+                    "label": getattr(blk, "label", "Text"),
+                    "bbox": list(getattr(blk, "bbox", [])),
+                    "text": str(getattr(blk, "text", "")).strip(),
+                })
         for ln in getattr(indra_page, "lines", []):
             bx = getattr(ln, "bbox", getattr(ln, "box", [0, 0, 0, 0]))
             t = str(getattr(ln, "text", "")).strip()
@@ -526,6 +491,9 @@ class IndraModularEngine:
                 "conf": item.get("conf", 1.0),
             })
 
+        actual_source = getattr(indra_page, "source", "indra_ocr")
+        if actual_source == "ocr":
+            actual_source = "indra_ocr"
         return {
             "width": w_pt,
             "height": h_pt,
@@ -533,12 +501,13 @@ class IndraModularEngine:
             "height_px": h_px,
             "has_spans": getattr(indra_page, "source", "") == "text",
             "lines": lines,
+            "blocks": ser_blocks,
             "tables": ser_tables,
             "figures": [],
             "banners": [],
             "underlines": [],
             "callouts": [],
-            "source": "indra_ocr",
+            "source": actual_source,
         }
 
     def _ingest_via_pdfplumber(self, path: Path, page_number: int) -> Optional[dict[str, Any]]:
@@ -744,6 +713,21 @@ class IndraModularEngine:
                 for ban_bb, _ in raw.get("banners", [])
             )
 
+            raw_role = ln.get("role")
+            if not raw_role and "blocks" in raw:
+                # Check if this line is encompassed by a classified block from native OCR/order model
+                for blk in raw.get("blocks", []):
+                    b_lbl = blk.get("label", "")
+                    b_box = blk.get("bbox", [])
+                    if len(b_box) == 4 and b_lbl in ("Section-Header", "Title", "Header"):
+                        # Check overlap with block
+                        b_w = float(raw.get("width_px") or w_ref)
+                        b_h = float(raw.get("height_px") or h_ref)
+                        blk_norm = (b_box[0] / b_w, b_box[1] / b_h, b_box[2] / b_w, b_box[3] / b_h)
+                        if overlap_ratio(bb, blk_norm) >= 0.50:
+                            raw_role = "heading"
+                            break
+
             el = PageElement(
                 element_id=idx + 1,
                 text=t,
@@ -755,6 +739,7 @@ class IndraModularEngine:
                 is_bold=is_b,
                 is_italic=is_i,
                 font_family=ln.get("font_family", "serif"),
+                role=raw_role or "paragraph",
             )
             elements.append(el)
 
