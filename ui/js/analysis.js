@@ -65,6 +65,7 @@
             markdownEditor: document.getElementById("analysis-markdown-editor"),
             recompileBtn: document.getElementById("analysis-recompile-btn"),
             saveMdBtn: document.getElementById("analysis-save-md-btn"),
+            finishReviewBtn: document.getElementById("btn-finish-layout-review"),
         };
     }
 
@@ -635,6 +636,21 @@
         if (dom.nextPageBtn) {
             dom.nextPageBtn.disabled = state.currentPage >= state.totalPages;
         }
+        updateFinishReviewButton();
+    }
+
+    // Check if all pages are reviewed and toggle Finish Layout Review button
+    function updateFinishReviewButton() {
+        if (!dom.finishReviewBtn) return;
+        const currFile = state.files.find((f) => f.file_path === state.currentFilePath);
+        const reviewedPages = currFile ? currFile.reviewed_pages || [] : [];
+        const isAllReviewed = state.totalPages > 0 && reviewedPages.length >= state.totalPages;
+
+        if (isAllReviewed) {
+            dom.finishReviewBtn.classList.remove("hidden");
+        } else {
+            dom.finishReviewBtn.classList.add("hidden");
+        }
     }
 
     // Debounced Auto-Save System (3 seconds idle time)
@@ -682,6 +698,15 @@
 
             if (resp.ok) {
                 showSaveStatus("✓ Page layout saved");
+                const resData = await resp.json().catch(() => null);
+                if (resData && resData.reviewed_pages) {
+                    const currFile = state.files.find((f) => f.file_path === state.currentFilePath);
+                    if (currFile) {
+                        currFile.reviewed_pages = resData.reviewed_pages;
+                        currFile.reviewed_pages_count = resData.reviewed_pages.length;
+                    }
+                    updateFinishReviewButton();
+                }
             }
         } catch (err) {
             console.error("Auto-save page failed:", err);
@@ -747,6 +772,21 @@
             dom.nextPageBtn.addEventListener("click", async () => {
                 if (state.currentPage < state.totalPages) {
                     await loadPageData(state.currentPage + 1);
+                }
+            });
+        }
+
+        // Finish Layout Review Transition Button
+        if (dom.finishReviewBtn) {
+            dom.finishReviewBtn.addEventListener("click", () => {
+                // Advance to Table of Contents Validation Screen
+                if (typeof window.openTocValidation === "function") {
+                    window.openTocValidation(state.currentFilePath, state.currentPage);
+                } else {
+                    const tocScreen = document.getElementById("layout-toc-screen");
+                    const layoutScreen = document.getElementById("layout-analysis-screen");
+                    if (layoutScreen) layoutScreen.classList.remove("active");
+                    if (tocScreen) tocScreen.classList.add("active");
                 }
             });
         }

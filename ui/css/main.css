@@ -1395,3 +1395,107 @@ body.dark-theme .moon-icon { display: none; }
   pointer-events: none;
   z-index: 50;
 }
+
+/* =========================================================
+   Table of Contents Validation Screen & Calibration UI
+   ========================================================= */
+
+#layout-toc-screen {
+  height: calc(100vh - 5rem);
+}
+
+.toc-workspace-container {
+  height: 100%;
+}
+
+.toc-node-item {
+  position: relative;
+  transition: all 0.15s ease-in-out;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.toc-node-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(99, 102, 241, 0.4);
+}
+
+.toc-node-item.selected {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: #6366f1;
+  box-shadow: 0 0 12px rgba(99, 102, 241, 0.25);
+}
+
+/* Indentation Depth by Tier */
+.toc-tier-1 { margin-left: 0; font-weight: 700; }
+.toc-tier-2 { margin-left: 1.25rem; font-weight: 600; }
+.toc-tier-3 { margin-left: 2.5rem; font-weight: 500; }
+.toc-tier-4 { margin-left: 3.75rem; }
+.toc-tier-5 { margin-left: 5rem; }
+.toc-tier-6 { margin-left: 6.25rem; }
+
+/* Tier Badges */
+.toc-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: monospace;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  min-width: 26px;
+  text-transform: uppercase;
+}
+.toc-badge-h1 { background: #6366f1; color: #ffffff; }
+.toc-badge-h2 { background: #0284c7; color: #ffffff; }
+.toc-badge-h3 { background: #059669; color: #ffffff; }
+.toc-badge-h4 { background: #d97706; color: #ffffff; }
+.toc-badge-h5 { background: #db2777; color: #ffffff; }
+.toc-badge-h6 { background: #64748b; color: #ffffff; }
+
+/* Shift arrow button controls */
+.toc-arrow-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.12s;
+}
+
+.toc-arrow-btn:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.3);
+  color: #ffffff;
+  border-color: #6366f1;
+}
+
+.toc-arrow-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Page canvas selection boundary highlight */
+.toc-highlight-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #6366f1;
+  background: rgba(99, 102, 241, 0.25);
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 20;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.source-validation-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #10b981;
+  margin-left: 0.25rem;
+  font-weight: 800;
+  font-size: 14px;
+}

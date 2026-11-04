@@ -8,6 +8,7 @@ Verifies all 5 analysis endpoints:
 - POST /api/analysis/save-markdown
 """
 
+from contextlib import closing
 import json
 from pathlib import Path
 import tempfile
@@ -195,3 +196,97 @@ def test_save_markdown_override(client, sample_pdf):
         assert row is not None
         assert row["final_markdown_override"] == markdown_content
         assert row["status"] == "completed"
+
+
+def test_toc_update_heading_and_finalize(client, tmp_path):
+    # Setup test file in layout_analysis_progress and user_annotated_bboxes
+    test_pdf = tmp_path / "doc_test.pdf"
+    test_pdf.write_bytes(b"%PDF-1.4 mock content")
+    norm_path = str(test_pdf.resolve())
+
+    with closing(get_db_connection()) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO layout_analysis_progress
+            (file_path, status, total_pages, reviewed_pages_json, active_profile)
+            VALUES (?, 'in_progress', 2, '[1, 2]', 'native_digital')
+            """,
+            (norm_path,),
+        )
+        conn.execute("DELETE FROM user_annotated_bboxes WHERE file_path = ?", (norm_path,))
+        conn.execute(
+            """
+            INSERT INTO user_annotated_bboxes
+            (id, file_path, page_number, x0, y0, x1, y1, element_type, heading_level, display_order, raw_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (f"h1_{norm_path}", norm_path, 1, 0.1, 0.1, 0.9, 0.2, "heading", 1, 0, "Chapter 1: Intro"),
+        )
+        conn.execute(
+            """
+            INSERT INTO user_annotated_bboxes
+            (id, file_path, page_number, x0, y0, x1, y1, element_type, heading_level, display_order, raw_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (f"h2_{norm_path}", norm_path, 1, 0.1, 0.25, 0.9, 0.35, "heading", 2, 1, "Section 1.1: Background"),
+        )
+        conn.execute(
+            """
+            INSERT INTO user_annotated_bboxes
+            (id, file_path, page_number, x0, y0, x1, y1, element_type, heading_level, display_order, raw_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (f"p_{norm_path}", norm_path, 1, 0.1, 0.4, 0.9, 0.8, "text", 0, 2, "This is the body content."),
+        )
+        conn.commit()
+
+    # 1. Test GET /api/analysis/toc
+    resp = client.get(f"/api/analysis/toc?file_path={norm_path}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert len(data["headings"]) == 2
+    h1 = data["headings"][0]
+    h2 = data["headings"][1]
+    assert h1["title"] == "Chapter 1: Intro"
+    assert h1["heading_level"] == 1
+    assert h1["parent_index"] is None
+    assert h2["title"] == "Section 1.1: Background"
+    assert h2["heading_level"] == 2
+    assert h2["parent_index"] == 0
+    assert h2["breadcrumb"] == "Chapter 1: Intro > Section 1.1: Background"
+
+    # 2. Test POST /api/analysis/update-heading (promote h2 to h1)
+    resp2 = client.post("/api/analysis/update-heading", json={"id": f"h2_{norm_path}", "heading_level": 1})
+    assert resp2.status_code == 200
+    assert resp2.json()["heading_level"] == 1
+
+    # Verify updated TOC
+    resp3 = client.get(f"/api/analysis/toc?file_path={norm_path}")
+    data3 = resp3.json()
+    assert data3["headings"][1]["heading_level"] == 1
+    assert data3["headings"][1]["parent_index"] is None
+
+    # 3. Test POST /api/analysis/finalize
+    resp4 = client.post("/api/analysis/finalize", json={
+        "file_path": norm_path,
+        "export_to_lancedb": False,
+        "output_filename": "test_output.md"
+    })
+    assert resp4.status_code == 200
+    res_fin = resp4.json()
+    assert res_fin["status"] == "success"
+    assert res_fin["analysis_status"] == "completed"
+    assert Path(res_fin["markdown_file"]).exists()
+
+    saved_md = Path(res_fin["markdown_file"]).read_text(encoding="utf-8")
+    assert "# Chapter 1: Intro" in saved_md
+    assert "# Section 1.1: Background" in saved_md
+    assert "This is the body content." in saved_md
+
+    # Check database status was updated to completed
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT status FROM layout_analysis_progress WHERE file_path = ?", (norm_path,))
+        r = cursor.fetchone()
+        assert r["status"] == "completed"

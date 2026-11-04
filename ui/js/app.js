@@ -733,6 +733,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (targetId === 'layout-analysis-screen' && typeof window.initAnalysisWorkspace === 'function') {
                 window.initAnalysisWorkspace();
             }
+            if (targetId === 'layout-toc-screen' && typeof window.initTocWorkspace === 'function') {
+                window.initTocWorkspace();
+            }
         });
     });
 

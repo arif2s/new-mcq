@@ -37,6 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let sources = [];
   let isIndexing = false;
+  let validatedFilePaths = new Set();
   let ws = null;
   let fallbackTimer = null;
 
@@ -50,13 +51,20 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   function fetchSources() {
-    fetch('/api/sources')
-      .then(res => {
-        if (!res.ok) throw new Error('Network response was not ok');
-        return res.json();
-      })
-      .then(data => {
+    Promise.all([
+      fetch('/api/sources').then(res => res.ok ? res.json() : []),
+      fetch('/api/analysis/files').then(res => res.ok ? res.json() : { files: [] }).catch(() => ({ files: [] })),
+    ])
+      .then(([data, analysisData]) => {
         sources = Array.isArray(data) ? data : (data.sources || []);
+        if (analysisData && Array.isArray(analysisData.files)) {
+          analysisData.files.forEach(f => {
+            if (f.analysis_status === 'completed' || f.has_markdown_override) {
+              if (f.file_path) validatedFilePaths.add(f.file_path.toLowerCase());
+              if (f.source_id) validatedFilePaths.add(String(f.source_id).toLowerCase());
+            }
+          });
+        }
         renderSources();
         updateIndexingBtnState();
       })
@@ -67,6 +75,12 @@ document.addEventListener('DOMContentLoaded', () => {
       });
   }
   window.fetchVaultSources = fetchSources;
+
+  window.markFileValidatedInVault = function (filePath) {
+    if (!filePath) return;
+    validatedFilePaths.add(String(filePath).toLowerCase());
+    renderSources();
+  };
 
   function renderSources() {
     sourcesList.innerHTML = '';
@@ -85,6 +99,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const currentEngine = src.pdfEngine || 'docling_v2';
         const typeBadge = srcType === 'pdf' ? `pdf (${currentEngine})` : srcType;
         const countFormatted = Number(src.itemCount || 0).toLocaleString();
+
+        const isPathValidated = (src.path && validatedFilePaths.has(src.path.toLowerCase())) ||
+                                (src.id && validatedFilePaths.has(String(src.id).toLowerCase()));
+        const checkmarkHTML = isPathValidated
+          ? `<span class="source-validation-check" title="Layout &amp; TOC Verified and Finalized">✓</span>`
+          : '';
 
         const el = document.createElement('div');
         el.className = `p-4 rounded-xl border flex items-center justify-between transition-all ${bgClass}`;
@@ -111,7 +131,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2 flex-wrap">
-                <p class="text-sm font-semibold">${escapeHTML(src.name)}</p>
+                <p class="text-sm font-semibold flex items-center gap-1">${escapeHTML(src.name)}${checkmarkHTML}</p>
                 <span class="text-xs px-2 py-0.5 rounded glass-panel text-muted uppercase font-mono">
                   ${escapeHTML(typeBadge)}
                 </span>

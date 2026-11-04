@@ -47,6 +47,8 @@ from core.database import (
 import parsers.layout_profiles as layout_profiles
 import parsers.pdf_extractor as pdf_extractor
 import parsers.indra_parser as indra_parser
+import parsers.docling_parser as docling_parser
+from parsers.indra.document import DocumentHeadingTracker, get_or_create_document_tracker
 
 logger = logging.getLogger("medisearch.routes_analysis")
 
@@ -757,4 +759,289 @@ async def save_markdown_override(req: SaveMarkdownRequest):
         "status": "success",
         "file_path": normalized_file_path,
         "markdown_length": len(req.markdown_text),
+    }
+
+
+class UpdateHeadingRequest(BaseModel):
+    id: str
+    heading_level: int = Field(..., ge=1, le=6)
+
+
+class FinalizeAnalysisRequest(BaseModel):
+    file_path: str
+    export_to_lancedb: bool = True
+    output_filename: Optional[str] = None
+
+
+@router.get("/toc")
+async def get_document_toc(file_path: str = Query(...)):
+    """Returns the document-wide Table of Contents headings extracted across all pages.
+    References parent indices and breadcrumbs using DocumentHeadingTracker.
+    """
+    clean_path = file_path.strip()
+    resolved_path = _resolve_pdf_path(clean_path)
+    normalized_file_path = str(resolved_path.resolve()) if resolved_path else str(Path(clean_path).resolve())
+
+    headings_list = []
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, file_path, page_number, x0, y0, x1, y1,
+                   element_type, heading_level, display_order, raw_text
+            FROM user_annotated_bboxes
+            WHERE file_path = ? AND LOWER(element_type) IN ('header', 'heading')
+            ORDER BY page_number ASC, display_order ASC, y0 ASC
+            """,
+            (normalized_file_path,),
+        )
+        rows = cursor.fetchall()
+
+        if rows:
+            for r in rows:
+                level = int(r["heading_level"] or 1)
+                if level < 1:
+                    level = 1
+                if level > 6:
+                    level = 6
+                headings_list.append({
+                    "id": str(r["id"]),
+                    "page_number": int(r["page_number"]),
+                    "x0": float(r["x0"] if r["x0"] is not None else 0.0),
+                    "y0": float(r["y0"] if r["y0"] is not None else 0.0),
+                    "x1": float(r["x1"] if r["x1"] is not None else 1.0),
+                    "y1": float(r["y1"] if r["y1"] is not None else 1.0),
+                    "element_type": str(r["element_type"]),
+                    "heading_level": level,
+                    "display_order": int(r["display_order"] or 0),
+                    "title": str(r["raw_text"] or "").strip(),
+                })
+
+    # If user_annotated_bboxes has no headings yet, fall back to Indra parser full document scan
+    if not headings_list and resolved_path and resolved_path.is_file():
+        try:
+            tracker = get_or_create_document_tracker(resolved_path, reset=True)
+            # Scan pages with indra to populate tracker
+            page_count = await asyncio.to_thread(pdf_extractor.get_pdf_page_count, str(resolved_path))
+            for p in range(1, min(page_count + 1, 200)):
+                indra_data = await asyncio.to_thread(
+                    indra_parser.extract_page_with_indra,
+                    str(resolved_path),
+                    p,
+                    profile_id="native_digital",
+                )
+                p_boxes = indra_data.get("layout_boxes", [])
+                for b in p_boxes:
+                    cat = str(b.get("category", "")).lower()
+                    if cat in ("header", "heading"):
+                        lvl = int(b.get("heading_level") or 1)
+                        headings_list.append({
+                            "id": f"gen_p{p}_{b.get('id', len(headings_list))}",
+                            "page_number": p,
+                            "x0": float(b.get("box", [0, 0, 0, 0])[0]),
+                            "y0": float(b.get("box", [0, 0, 0, 0])[1]),
+                            "x1": float(b.get("box", [0, 0, 0, 0])[2]),
+                            "y1": float(b.get("box", [0, 0, 0, 0])[3]),
+                            "element_type": "heading",
+                            "heading_level": max(1, min(lvl, 6)),
+                            "display_order": int(b.get("reading_order", len(headings_list))),
+                            "title": str(b.get("text", "")).strip(),
+                        })
+        except Exception as e:
+            logger.warning("Error generating fallback TOC: %s", e)
+
+    # Initialize tracker with headings to compute parent indices and breadcrumbs
+    tracker = DocumentHeadingTracker(default_title=Path(normalized_file_path).stem)
+    # Stack stores tuples of (level, index, title)
+    stack: list[tuple[int, int, str]] = []
+    enriched_headings = []
+
+    for idx, h in enumerate(headings_list):
+        lvl = h["heading_level"]
+        title = h["title"] or f"Heading {idx + 1}"
+
+        # Pop stack entries with level >= current level
+        while stack and stack[-1][0] >= lvl:
+            stack.pop()
+
+        parent_idx = stack[-1][1] if stack else None
+        breadcrumb = " > ".join([s[2] for s in stack] + [title]) if stack else title
+
+        enriched_headings.append({
+            **h,
+            "index": idx,
+            "parent_index": parent_idx,
+            "breadcrumb": breadcrumb,
+        })
+        stack.append((lvl, idx, title))
+
+    return {
+        "status": "success",
+        "file_path": normalized_file_path,
+        "headings": enriched_headings,
+        "count": len(enriched_headings),
+    }
+
+
+@router.post("/update-heading")
+async def update_heading_level(req: UpdateHeadingRequest):
+    """Updates the heading level of a specific annotated heading box."""
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE user_annotated_bboxes
+            SET heading_level = ?,
+                element_type = 'heading',
+                updated_at = unixepoch('now')
+            WHERE id = ?
+            """,
+            (req.heading_level, req.id),
+        )
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            return {"status": "not_found", "id": req.id, "heading_level": req.heading_level}
+
+    return {
+        "status": "success",
+        "id": req.id,
+        "heading_level": req.heading_level,
+    }
+
+
+@router.post("/finalize")
+async def finalize_analysis(req: FinalizeAnalysisRequest):
+    """Compiles finalized document layout data, constructs a unified Markdown document
+    with customized reading order and calibrated heading tiers, saves it, updates
+    layout_analysis_progress to 'completed', and forwards to LanceDB for ingestion.
+    """
+    clean_path = req.file_path.strip()
+    resolved_path = _resolve_pdf_path(clean_path)
+    normalized_file_path = str(resolved_path.resolve()) if resolved_path else str(Path(clean_path).resolve())
+
+    # 1. Fetch total pages
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT total_pages, final_markdown_override FROM layout_analysis_progress WHERE file_path = ?",
+            (normalized_file_path,),
+        )
+        row = cursor.fetchone()
+        total_pages = int(row["total_pages"]) if (row and row["total_pages"]) else 1
+        existing_override = row["final_markdown_override"] if row else None
+
+    # 2. Fetch all user_annotated_bboxes sorted by page_number and display_order
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, page_number, element_type, heading_level, display_order, raw_text
+            FROM user_annotated_bboxes
+            WHERE file_path = ?
+            ORDER BY page_number ASC, display_order ASC, y0 ASC
+            """,
+            (normalized_file_path,),
+        )
+        all_boxes = cursor.fetchall()
+
+    compiled_markdown = ""
+    if existing_override and existing_override.strip() and not all_boxes:
+        compiled_markdown = existing_override.strip()
+    else:
+        # Construct unified markdown from annotated boxes grouped by page
+        pages_content = []
+        current_page = None
+        page_chunks: list[str] = []
+
+        def flush_page(p_num: int, chunks: list[str]):
+            if not chunks:
+                return
+            page_text = "\n\n".join(chunks).strip()
+            pages_content.append(f"<!-- Page {p_num} -->\n\n{page_text}")
+
+        for b in all_boxes:
+            p_num = int(b["page_number"])
+            if current_page is not None and p_num != current_page:
+                flush_page(current_page, page_chunks)
+                page_chunks = []
+            current_page = p_num
+
+            el_type = str(b["element_type"]).lower()
+            text = str(b["raw_text"] or "").strip()
+            if not text or el_type == "ignore":
+                continue
+
+            if el_type in ("header", "heading"):
+                level = max(1, min(int(b["heading_level"] or 1), 6))
+                hashes = "#" * level
+                # Clean existing hashes from beginning if any
+                clean_title = text.lstrip("#").strip()
+                page_chunks.append(f"{hashes} {clean_title}")
+            elif el_type == "table":
+                page_chunks.append(f"```table\n{text}\n```" if not text.startswith("|") else text)
+            else:
+                page_chunks.append(text)
+
+        if current_page is not None and page_chunks:
+            flush_page(current_page, page_chunks)
+
+        compiled_markdown = "\n\n".join(pages_content).strip()
+
+    # If still empty, fall back to indra_parser text extraction
+    if not compiled_markdown and resolved_path and resolved_path.is_file():
+        try:
+            full_struct = await asyncio.to_thread(indra_parser.extract_pdf_structure, str(resolved_path))
+            compiled_markdown = "\n\n".join([
+                f"# {s.get('heading', '')}\n\n{s.get('text', '')}" for s in full_struct if s.get("text")
+            ]).strip()
+        except Exception as e:
+            logger.warning("Indra structure fallback failed: %s", e)
+
+    if not compiled_markdown:
+        compiled_markdown = f"# {Path(normalized_file_path).stem}\n\nNo content extracted."
+
+    # 3. Save finalized Markdown file
+    output_dir = Path("storage/finalized_markdown")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out_name = req.output_filename or f"{Path(normalized_file_path).stem}.md"
+    if not out_name.endswith(".md"):
+        out_name += ".md"
+    md_file_path = output_dir / out_name
+    md_file_path.write_text(compiled_markdown, encoding="utf-8")
+
+    # 4. Update layout_analysis_progress status to 'completed'
+    with closing(get_db_connection()) as conn:
+        conn.execute(
+            """
+            UPDATE layout_analysis_progress
+            SET status = 'completed',
+                final_markdown_override = ?,
+                updated_at = unixepoch('now')
+            WHERE file_path = ?
+            """,
+            (compiled_markdown, normalized_file_path),
+        )
+        conn.commit()
+
+    # 5. LanceDB Ingestion
+    ingested_count = 0
+    if req.export_to_lancedb:
+        try:
+            ingested_count = await asyncio.to_thread(
+                docling_parser.ingest_to_lancedb,
+                normalized_file_path,
+                source_article=Path(normalized_file_path).stem,
+                main_topic=Path(normalized_file_path).stem,
+            )
+        except Exception as exc:
+            logger.exception("LanceDB ingestion failed for %s: %s", normalized_file_path, exc)
+
+    return {
+        "status": "success",
+        "file_path": normalized_file_path,
+        "analysis_status": "completed",
+        "markdown_file": str(md_file_path),
+        "markdown_chars": len(compiled_markdown),
+        "ingested_chunks": ingested_count,
     }
