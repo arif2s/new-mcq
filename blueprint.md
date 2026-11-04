@@ -5,11 +5,17 @@
 - **Core Purpose**: Offline-first medical MCQ, spaced repetition, RAG search & local AI synthesis platform.
 - **Runtime Environment**: Python 3.10+ async backend (FastAPI/Uvicorn), SQLite (WAL mode), pywebview (Windows Edge Chromium) or browser client, Vanilla HTML5/JS/CSS frontend.
 - **Tech Stack**:
-  - *Backend*: FastAPI, Uvicorn, SQLite3, Tantivy (BM25 lexical index), LanceDB (CPU vector + FTS hybrid search), ONNX Runtime (SapBERT 768d / MiniLM 384d), FlashRank (ms-marco-TinyBERT-L-2-v2 / ms-marco-MiniLM-L-6-v2 CPU cross-encoder reranking), SciSpaCy (UMLS/MeSH ontologies & SciPy sparse TF-IDF matcher), Docling v2 & Docling v3 (visual layout, booktabs reconstruction, OCR line-crop re-reading & PP-OCR ONNX layout parser), Datalab Indra OCR ONNX (CPU text/math/scanned PDF parser), & PyMuPDF / AdaptivePdfLayoutEngine (PDF text extraction), LibZim (ZIM reader), Tiktoken.
-  - *Frontend*: Vanilla HTML5/JS (ES6+), CSS3 with glassmorphism theme CSS variables (`ui/css/main.css`), Marked.js, KaTeX, DOMPurify. Local offline vendor fallback assets automatically checked and cached under `ui/vendor/`.
+  - *Backend*: FastAPI, Uvicorn, SQLite3, Tantivy (BM25 lexical index), LanceDB (CPU vector + FTS hybrid search), ONNX Runtime (SapBERT 768d / MiniLM 384d), FlashRank (ms-marco-TinyBERT-L-2-v2 / ms-marco-MiniLM-L-6-v2 cross-encoder reranking), SciSpaCy (UMLS/MeSH ontologies & SciPy sparse TF-IDF matcher), Docling v2 & Docling v3 (visual layout, booktabs reconstruction, OCR line-crop re-reading & PP-OCR ONNX layout parser), Datalab Indra OCR ONNX (text/math/scanned PDF parser), & PyMuPDF / AdaptivePdfLayoutEngine (PDF text extraction), LibZim (ZIM reader), Tiktoken.
+  - *Frontend*: Vanilla HTML5/JS (ES6+), CSS3 with glassmorphism theme CSS variables (`ui/css/main.css`), Marked.js, KaTeX, DOMPurify, interact.js. Local offline vendor fallback assets automatically checked and cached under `ui/vendor/`.
   - *External Readers / Bridges*: SumatraPDF (`-reuse-instance`), Obsidian URI protocol (`obsidian://`), LM Studio API (`http://127.0.0.1:1234/v1`).
-- **Strict Hardware & Performance Budgets**:
-  - *VRAM Budget*: Zero VRAM for backend processes (`CUDA_VISIBLE_DEVICES=""`); 100% VRAM (4.2–4.8 GB) reserved for local LM Studio GGUF models.
+- **Hardware Budgets & Execution Constraints**:
+  - *VRAM Budget & GPU Policy*:
+    - Default Baseline: Zero VRAM for routine backend processes (`CUDA_VISIBLE_DEVICES=""`), reserving 100% VRAM (4.2–4.8 GB on 6 GB GPUs) for local LM Studio GGUF models.
+    - Selective & Opportunistic GPU Acceleration: Workloads exhibiting substantial throughput improvements (>=8x-15x speedup) may selectively utilize GPU execution if and only if explicit criteria are met:
+      1. *High-Yield Workloads*: Indra OCR line recognition and reading order (`rec.onnx`, `order.onnx`), Docling Heron visual layout inference, and heavy offline batch embeddings during large PDF vault indexing.
+      2. *Memory Arena Capping*: When GPU execution is active, ONNX Runtime `CUDAExecutionProvider` or PyTorch CUDA memory allocator MUST be strictly bounded (e.g., `gpu_mem_limit <= 1.2 GB` or `max_split_size_mb`) to prevent memory starvation of LM Studio.
+      3. *Opportunistic Fallback*: On GPU OOM, CUDA initialization failure, or concurrent LM Studio generation, operations must gracefully fall back to CPU execution without throwing unhandled exceptions.
+      4. *Configuration & Toggle*: Controlled via environment variable (`ENABLE_BACKEND_GPU=0|1`) or `config.py` setting, defaulting to `0` (CPU-only) to protect baseline user hardware.
   - *CPU Execution Time*: Multi-stage hybrid search pipeline < 250ms on CPU (enforced via cached singletons for embedder, reranker, and LanceDB).
   - *RAM Allocation*: Tantivy < 250 MB; LanceDB + CPUEmbedding < 500 MB; Primary SQLite MMAP cap = 512 MB; Ontology KB SQLite MMAP cap = 256 MB; SciSpaCy NLP + Linker < 500 MB; Docling CPU Converter + FlashRank + LRU Caches < 1.0 GB; **total Python process < 3.5 GB** (operating within ~5 GB available system RAM).
   - *LLM Context Limit*: Hard budget capped at 4096 tokens per request via `tiktoken` truncation.
@@ -24,6 +30,7 @@
 ├── run.py                             # Application entry point; sets environment, downloads vendor assets, boots server & browser.
 ├── auditor.py                         # Compatibility re-exporter for agents.tema_q.auditor (clinical variance & JSON node merger).
 ├── dummy.py                           # Fallback topic extractor for testing environments.
+├── requirements.txt                   # Production and testing Python dependency specifications.
 ├── agents/
 │   ├── topic_extractor.py             # Compatibility re-exporter for topic extraction functions.
 │   └── tema_q/
@@ -38,22 +45,41 @@
 │   ├── scheduler.py                   # FSRS v4.5 spaced repetition scheduling algorithm.
 │   └── reporter.py                    # Jinja2 HTML dossier report compiler for clinical topic syntheses.
 ├── parsers/
-│   ├── embedding_engine.py            # CPUEmbeddingEngine running ONNX SapBERT/MiniLM (384/768d) lazily on CPU with active model switching.
+│   ├── embedding_engine.py            # CPUEmbeddingEngine running ONNX SapBERT/MiniLM (384/768d) lazily on CPU (optional GPU) with active switching.
 │   ├── lancedb_engine.py              # LanceDB hybrid vector storage and FTS engine for hierarchical document chunks.
 │   ├── tantivy_engine.py              # Low-latency BM25 lexical inverted index builder and depth-scored multi-depth searcher.
+│   ├── layout_profiles.py             # Dynamic profile linkers and heading policies interfacing with parsers.indra.profiles.
 │   ├── docling_parser.py              # Layout-aware PDF textbook section & table extractor using Docling ML / PyMuPDF.
 │   ├── docling_v2_parser.py           # Standalone Docling v2 layout parser with AdaptivePdfLayoutEngine base64/SVG rendering.
 │   ├── docling_v3_parser.py           # Standalone Docling v3 layout engine with dark-pixel de-bleeding & PP-OCR ONNX re-reading.
-│   ├── indra_parser.py                # Standalone Datalab Indra OCR ONNX CPU parser with LaTeX math & layout block extraction.
+│   ├── docling/                       # Modularized Docling layout engine and vision processing subpackage.
+│   │   ├── __init__.py                # Package facade exporting cleaner, converter, engine, geometry, inspector, and models.
+│   │   ├── models.py                  # Docling model weight paths, integrity checks, and offline verification.
+│   │   ├── converter.py               # DocumentConverter singleton factory and multi-engine OCR routing (auto, rapidocr, easyocr).
+│   │   ├── cleaner.py                 # Medical text sanitization, dehyphenation, drop-cap joining, OCR token repair heuristics.
+│   │   ├── geometry.py                # Bounding box math, overlap/containment tests, and color distance algorithms.
+│   │   ├── inspector.py               # Pixel-level visual analyzer, stroke-density profiling, line-crop re-OCR (RapidOCR/EasyOCR).
+│   │   └── engine.py                  # AdaptivePdfLayoutEngine 6-stage layout extraction pipeline.
+│   ├── indra_parser.py                # Datalab Indra OCR ONNX parser with LaTeX math & layout block extraction.
+│   ├── indra/                         # Modularized Datalab Indra OCR subpackage.
+│   │   ├── __init__.py                # Package facade exporting profiles, types, rules, strategies, engine, and refiner.
+│   │   ├── types.py                   # Type definitions (BBox, RGB, PageElement, PageElements, TableGrid, ThreadSafeLRUCache).
+│   │   ├── profiles.py                # Document layout profiles (NativeDigital, Textbook, Booklet, Article) and geometry policies.
+│   │   ├── rules.py                   # RegexCatalog, color distance, HSV saturation, deskew, and line enrichment.
+│   │   ├── strategies.py              # Layout strategy hierarchy, furniture suppression, strip-channel columns, element scoring.
+│   │   ├── engine.py                  # IndraModularEngine, FallbackChain (ONNX, pdfplumber, pypdfium2), 2D table grid builder.
+│   │   ├── document.py                # DocumentHeadingTracker and cross-page hierarchical heading tree compiler.
+│   │   └── refiner.py                 # IndraHybridLayoutRefiner and interactive SVG bounding box overlay generator.
 │   ├── pdf_extractor.py               # Lightweight PyMuPDF fallback fast text slicer with page heading detection.
 │   ├── pdf_parser.py                  # Standalone 6-stage layout reconstruction pipeline (PyMuPDF AdaptivePdfLayoutEngine).
 │   ├── obsidian_reader.py             # Obsidian markdown frontmatter stripper, wikilink cleaner, and section reader.
 │   ├── zim_reader.py                  # LibZim C-bindings reader for offline Wikipedia/medical .zim archives and asset extraction.
-│   ├── reranker.py                    # FlashRank (ms-marco-TinyBERT-L-2-v2) CPU cross-encoder reranker with active model switching.
+│   ├── reranker.py                    # FlashRank (ms-marco-TinyBERT-L-2-v2) cross-encoder reranker with active model switching.
 │   └── scispacy_linker_engine.py      # SciSpaCy NLP pipeline loader, covering index SQLite pool, SciPy sparse TF-IDF matcher & batched linker.
 ├── server/
 │   ├── app.py                         # FastAPI app initialization, startup/shutdown lifespans, WS endpoints, and static file mounting.
 │   ├── ws_manager.py                  # Global WebSocket connection manager for live task/indexing progress.
+│   ├── routes_analysis.py             # Interactive PDF visual layout analysis, bbox editing, heading tree, and LanceDB finalization.
 │   ├── routes_csv.py                  # Endpoints for CSV topic listing, question retrieval, filtering, and FSRS summary.
 │   ├── routes_csv_loader.py           # Background loader scanning data/csv and auto-ingesting questions into SQLite.
 │   ├── routes_mcq.py                  # MCQ topic extraction, scoring, synthesis lookup, and batch generation triggers.
@@ -82,6 +108,8 @@
         ├── habits.js                  # Habit streak tracker and activity heatmaps.
         ├── settings.js                # System settings, model diagnostics, SciSpaCy model manager, and state export/import.
         ├── test_features.js           # Interactive feature test bench (PDF, DB search, models, KaTeX, pipeline runner).
+        ├── analysis.js                # Visual PDF layout analysis workspace, bbox drag/resize (interact.js), category tagger, auto-save.
+        ├── analysis_toc.js            # Table of Contents hierarchical validation workspace, heading tree, tier shifting (H1-H6).
         └── reader.js                  # Reader view initialization wrapper and in-app document viewer.
 ```
 
@@ -183,6 +211,16 @@
   - `get_schema() -> tantivy.Schema`
   - `get_index(reset: bool = False) -> tantivy.Index`
   - `search_index(query_str: str, limit_per_source: int = 3) -> dict[str, list[dict]]`
+- `parsers.layout_profiles`:
+  - Re-exports `LAYOUT_PROFILES`, `LayoutProfile`, `ColumnMode`, `CoordinateZone`, `FurnitureSuppressionPolicy`, `HeadingWeightPolicy`, `PageGeometryPolicy`, and `StrategyKey` from `parsers.indra.profiles`.
+- `parsers.docling`:
+  - Re-exports `AdaptivePdfLayoutEngine`, `clean_pdf_text`, `is_ocr_garbled_text`, `repair_ocr_token_heuristics`, `get_docling_converter`, `serialize_docling_ast`, `VisualPageInspector`, `get_rapidocr_line_engine`, `get_easyocr_line_engine`, `DOCLING_REQUIRED_MODELS`, `is_docling_models_downloaded`, `download_docling_models`, `ensure_offline_mode_if_downloaded`, `rect_area`, `rects_overlap`, `point_in_rect`, and `rgb_distance`.
+  - `parsers.docling.models`: `DOCLING_REQUIRED_MODELS: tuple`, `is_docling_models_downloaded() -> bool`, `download_docling_models() -> dict[str, Any]`, `ensure_offline_mode_if_downloaded() -> None`.
+  - `parsers.docling.converter`: `get_docling_converter(ocr_engine: str = "auto", ...) -> DocumentConverter`, `serialize_docling_ast(doc) -> dict[str, Any]`.
+  - `parsers.docling.cleaner`: `clean_pdf_text(text: str) -> str`, `is_ocr_garbled_text(text: str) -> bool`, `repair_ocr_token_heuristics(text: str) -> str`.
+  - `parsers.docling.geometry`: `rect_area(rect) -> float`, `rects_overlap(r1, r2) -> bool`, `point_in_rect(pt, rect) -> bool`, `rgb_distance(c1, c2) -> float`.
+  - `parsers.docling.inspector`: `VisualPageInspector(page_image: np.ndarray)`, `get_rapidocr_line_engine() -> Any`, `get_easyocr_line_engine() -> Any`.
+  - `parsers.docling.engine`: `class AdaptivePdfLayoutEngine` implementing multi-stage layout extraction, bounding box computation, typography clustering, and table reconstruction.
 - `parsers.docling_parser`:
   - `get_converter() -> DocumentConverter`: Thread-safe singleton loader with `accelerator_options.device = "cpu"` and `num_threads = 4`.
   - `extract_structured_layout(file_path: Union[str, Path], page_number: int) -> str`: LRU-cached (maxsize=128) layout markdown extractor for specific pages with graceful fallback to `parsers.pdf_extractor.extract_page_slice()`.
@@ -216,6 +254,15 @@
   - `extract_structured_layout(file_path: Union[str, Path], page_number: int, mode: str = "auto", math: bool = False) -> str`
   - `extract_pdf_structure(file_path: Union[str, Path], default_title: str = "", mode: str = "auto", math: bool = False, furniture: bool = False, dpi: int = 200, threads: int = 4, **kwargs) -> list[dict[str, Any]]`
   - `ingest_to_lancedb(file_path: Union[str, Path], source_article: str, main_topic: str = "", mode: str = "auto", math: bool = False) -> int`
+- `parsers.indra`:
+  - Re-exports core profiles, types, rules, strategies, engine components, and refiner functions:
+  - `parsers.indra.types`: `BBox`, `RGB`, `ElementRole`, `HeadingPrototype`, `PageElement`, `PageElements`, `TableGrid`, `ThreadSafeLRUCache`.
+  - `parsers.indra.profiles`: `ColumnMode`, `CoordinateZone`, `FurnitureSuppressionPolicy`, `HeadingWeightPolicy`, `LAYOUT_PROFILES`, `LayoutProfile`, `PageGeometryPolicy`, `StrategyKey`.
+  - `parsers.indra.rules`: `RegexCatalog`, `deskew_bbox_norm(bbox, angle)`, `enrich_lines(lines, ...)`, `overlap_ratio(b1, b2)`, `rgb_distance(c1, c2)`, `rgb_saturation(rgb)`, `rgb_to_hsv(rgb)`, `union_bbox(boxes)`.
+  - `parsers.indra.strategies`: `LayoutStrategy`, `NativeDigitalStrategy`, `ScannedTwoColumnTextbookStrategy`, `IllustratedBookletStrategy`, `AcademicArticleStrategy`, `LayoutStrategyRegistry`.
+  - `parsers.indra.engine`: `FallbackChain`, `IndraModularEngine(mode, math, furniture, dpi, threads, image_ocr)`, `reconstruct_2d_table_grid(words, ...)` (direct ONNX invocation with optional GPU provider routing, falling back gracefully to pdfplumber vector text and pypdfium2 OCR).
+  - `parsers.indra.document`: `DocumentHeadingTracker(root_title)`, `get_or_create_document_tracker(file_path, root_title)` (maintains running multi-page heading hierarchies and compiles validated heading trees).
+  - `parsers.indra.refiner`: `IndraHybridLayoutRefiner(page_elements)`, `build_layout_svg_overlay(page_elements, width, height)` (generates interactive SVG overlays and structured markdown blocks).
 - `parsers.pdf_extractor`:
   - `clean_pdf_text(text: str) -> str`: Normalizes typographical ligatures (fi, fl, ffi), repairs line-break hyphenations, strips null bytes and form feeds, and cleans whitespace.
   - `extract_page_slice(file_path: Union[str, Path], page_number: int) -> str`: LRU-cached (maxsize=256) text extraction with natural reading order (`sort=True`) and bounds safety (rejects `page_number < 1`).
@@ -285,6 +332,15 @@
   - `scan_and_ingest_csvs() -> dict[str, Any]`: Recursively scans `CSV_DIR` and `MCQS_DIR`, normalizes diverse option/answer representations (numbers 1-4, bracketed letters, verbatim text matches), and executes chunked (`BATCH_SIZE=1000`) `INSERT OR IGNORE` queries into `csv_questions`.
   - `load_csvs_background`: Backward-compatibility callable alias for `scan_and_ingest_csvs`.
   - `POST /api/csv/reload`, `POST /reload`, `GET /api/csv/reload`, `GET /reload` -> `reload_csvs(background_tasks: Optional[BackgroundTasks] = None) -> dict[str, Any]`: Offloads re-scanning to worker threads via `asyncio.to_thread` and returns execution metrics.
+- `server.routes_analysis`:
+  - `GET /api/analysis/files` -> `get_analysis_files() -> list[dict[str, Any]]`: Scans indexed PDF sources and lists analysis progress, reviewed page counts, and total pages.
+  - `POST /api/analysis/initialize` -> `initialize_analysis(req: InitializeAnalysisRequest) -> dict[str, Any]`: Starts or loads layout analysis session for a PDF, registering layout profile in `layout_analysis_progress`.
+  - `GET /api/analysis/page-data` -> `get_page_data(file_path: str, page_number: int, profile_id: Optional[str] = None) -> dict[str, Any]`: Slices page image as base64 PNG, extracts elements via Indra layout engine or stored `user_annotated_bboxes`, returning SVG overlay and extracted markdown.
+  - `POST /api/analysis/save-page` -> `save_page_annotations(req: SavePageRequest) -> dict[str, Any]`: Atomically updates page bounding box annotations in `user_annotated_bboxes` within a single SQLite transaction and marks page as reviewed in `reviewed_pages`.
+  - `POST /api/analysis/save-markdown` -> `save_markdown_override(req: SaveMarkdownRequest) -> dict[str, Any]`: Persists manual full-document or page-level markdown override text.
+  - `GET /api/analysis/toc` -> `get_document_toc(file_path: str) -> dict[str, Any]`: Compiles hierarchical document heading tree from saved page bounding boxes (`element_type='header'`) and layout strategies.
+  - `POST /api/analysis/update-heading` -> `update_heading_level(req: UpdateHeadingRequest) -> dict[str, Any]`: Modifies heading tier level (H1-H6) for an annotated header bounding box in `user_annotated_bboxes`.
+  - `POST /api/analysis/finalize` -> `finalize_analysis(req: FinalizeAnalysisRequest) -> dict[str, Any]`: Compiles all reviewed page bboxes into unified markdown, optionally exports to LanceDB via `parsers.docling_parser.ingest_to_lancedb()`, marks progress as `completed`, and updates source status.
 - `server.routes_csv`:
   - `GET /api/csv/subjects`, `POST /api/csv/subjects`, `GET /api/mcq/subjects`, `POST /api/mcq/subjects` -> `get_subjects() -> list[SubjectResponse]`: Aggregates question counts per subject file stem.
   - `GET /api/csv/topics`, `POST /api/csv/topics`, `GET /api/mcq/topics`, `POST /api/mcq/topics` -> `get_topics(subject: Optional[str] = None) -> list[TopicResponse]`: Lists topic counts with optional subject filtering.
@@ -396,6 +452,8 @@
 - `ui/js/habits.js`: `initHabits()`
 - `ui/js/settings.js`: `initSettings()`, `loadDiagnostics()`, `loadScispacyModels()`
 - `ui/js/test_features.js`: `initTestFeatures()`, `renderPdfExtractorView()`, `renderDbQueriesView()`
+- `ui/js/analysis.js`: `initAnalysisWorkspace()`, `loadFilesList()`, `loadPageData(file, page)`, `renderPageCanvas()`, `renderLayoutBoxes()`, `savePageAnnotations()`, `autoSave()`. Manages dual-pane visual workspace, interactive drag/resize via `interact.js`, category retagging (`text`, `header`, `table`, `figure`), reading order flow, and 3-second debounced persistence.
+- `ui/js/analysis_toc.js`: `openTocValidation(file_path)`, `initTocWorkspace()`, `loadTocHeadings()`, `renderHeadingsTree()`, `shiftHeadingTier(boxId, delta)`, `commitAndIngestDocument()`. Controls Table of Contents validation dual-pane screen, bounding box focus on canvas, nested heading tree manipulation (H1-H6), and LanceDB finalization trigger.
 - `ui/js/reader.js`: `initReaderView()`, `openDocumentInReader(sourceType: str, path: str, pageOrAnchor: str)`
 
 ---
@@ -798,6 +856,58 @@ CREATE INDEX idx_annotated_bboxes_page ON user_annotated_bboxes (file_path, page
       "answers": list[AnswerRecord] = [],
   }
   ```
+- `InitializeAnalysisRequest`:
+  ```python
+  {
+      "file_path": str,                 # Absolute or relative path to PDF file
+      "profile_id": Optional[str] = "native_digital",  # Layout profile key
+  }
+  ```
+- `BBoxItem`:
+  ```python
+  {
+      "id": Optional[str] = None,       # Unique ID for bounding box
+      "x0": float,                      # Left coordinate
+      "y0": float,                      # Top coordinate
+      "x1": float,                      # Right coordinate
+      "y1": float,                      # Bottom coordinate
+      "element_type": str,              # "text" | "header" | "table" | "figure"
+      "heading_level": Optional[int] = 0, # 1-6 if header, else 0
+      "display_order": int,             # Sequential reading order index
+      "raw_text": Optional[str] = "",   # Extracted or edited text
+      "is_custom_drawn": Optional[int] = 0, # 1 if created manually by user, 0 otherwise
+  }
+  ```
+- `SavePageRequest`:
+  ```python
+  {
+      "file_path": str,
+      "page_number": int,               # 1-based page number (ge=1)
+      "bboxes": list[BBoxItem],         # Active bounding boxes for this page
+  }
+  ```
+- `SaveMarkdownRequest`:
+  ```python
+  {
+      "file_path": str,
+      "markdown_text": str,             # Markdown text override
+  }
+  ```
+- `UpdateHeadingRequest`:
+  ```python
+  {
+      "id": str,                        # Bounding box ID
+      "heading_level": int,             # Heading tier level (1 <= ge <= 6)
+  }
+  ```
+- `FinalizeAnalysisRequest`:
+  ```python
+  {
+      "file_path": str,
+      "export_to_lancedb": bool = True, # Ingest compiled markdown into LanceDB
+      "output_filename": Optional[str] = None,
+  }
+  ```
 - `UpdateSessionTopicsRequest`:
   ```python
   {
@@ -878,6 +988,20 @@ CREATE INDEX idx_annotated_bboxes_page ON user_annotated_bboxes (file_path, page
 4. Theme & Palette Dynamic Engine:
    ui/js/app.js (fetchWallpapersList) -> GET /api/sources/wallpapers -> Load Canvas
      └── extractAndApplyPalette() -> Calculates HSL hues, contrast ratios, luminance -> updates CSS variables on :root
+
+5. PDF Visual Layout Analysis & Ingestion Pipeline:
+   ui/js/analysis.js -> POST /api/analysis/initialize -> SQLite layout_analysis_progress
+     ├── GET /api/analysis/page-data -> parsers/indra/engine.py (IndraModularEngine fallback chain)
+     │     └── Renders base64 canvas + interactive SVG overlays (.bbox-overlay-element via interact.js)
+     ├── User drags/resizes bboxes, edits categories/reading order -> 3-sec debounced save
+     │     └── POST /api/analysis/save-page -> Batched SQLite transaction into user_annotated_bboxes
+     ├── Finish Layout Review -> ui/js/analysis_toc.js -> GET /api/analysis/toc
+     │     └── parsers/indra/document.py (DocumentHeadingTracker) -> Generates nested H1-H6 heading tree
+     ├── User adjusts heading tiers (Arrow keys / buttons) -> POST /api/analysis/update-heading
+     └── Commit & Ingest -> POST /api/analysis/finalize
+           ├── Compiles verified document Markdown
+           ├── parsers/docling_parser.py (ingest_to_lancedb) -> LanceDB vector & FTS table
+           └── Updates layout_analysis_progress status='completed' -> Vault UI displays green checkmark
 ```
 
 ---
@@ -885,7 +1009,7 @@ CREATE INDEX idx_annotated_bboxes_page ON user_annotated_bboxes (file_path, page
 ## 6. Active Features & Architectural Invariants
 
 ### Architectural Invariants
-1. **Zero VRAM for Backend**: `CUDA_VISIBLE_DEVICES=""` must remain set at application startup (`run.py`, top of `server/app.py`, `parsers/embedding_engine.py`, `parsers/lancedb_engine.py`, `parsers/reranker.py`, `parsers/docling_parser.py`, `parsers/docling_v2_parser.py`, `parsers/docling_v3_parser.py`, `parsers/indra_parser.py`, `parsers/scispacy_linker_engine.py`, `parsers/pdf_extractor.py`, `parsers/pdf_parser.py`, `parsers/obsidian_reader.py`, `agents/tema_q/topic_extractor.py`, `agents/tema_q/auditor.py`, `auditor.py`, `server/routes_search.py`, `server/routes_sources.py`, `server/routes_state.py`, `server/routes_queue.py`, `server/routes_notes.py`, `server/routes_models.py`, `server/routes_csv.py`, `server/routes_csv_loader.py`, `server/ws_manager.py`, `core/database.py`, and `core/reporter.py`). All vector embeddings, reranking, spaCy biomedical pipelines, and Docling ML layout parsing MUST execute strictly on CPU.
+1. **Backend VRAM Baseline & Selective GPU Acceleration Policy**: By default, `CUDA_VISIBLE_DEVICES=""` is enforced at application startup and across general modules to guarantee 100% VRAM headroom (4.2–4.8 GB) for local LM Studio GGUF model execution. High-yield, throughput-critical workloads (specifically Indra OCR line recognition and reading order ONNX inference, Docling Heron visual layout parsing, and heavy offline batch embeddings during large PDF vault indexing) may selectively utilize GPU execution if and only if: (a) explicit config/environment activation is present (`ENABLE_BACKEND_GPU=1`), (b) CUDA memory allocations are strictly capped via ONNX Runtime session options (`gpu_mem_limit <= 1.2 GB`), and (c) any CUDA initialization error, OOM exception, or concurrent LLM synthesis pass triggers immediate, seamless in-process fallback to CPU execution without corrupting worker threads or dropping tasks.
 2. **Main Thread DLL Pre-warming**: `onnxruntime`, `lancedb`, and `tantivy` MUST be imported at the very top of `server/app.py` to prevent Windows Access Violation segfaults.
 3. **Database Concurrency, Cache Caps & Migration Ordering**:
    - Every SQLite connection returned by `get_db_connection()` MUST apply connection-scoped PRAGMAs (`journal_mode = WAL`, `busy_timeout = 20000`, `foreign_keys = ON`, `synchronous = NORMAL`, `mmap_size = 536870912`, `temp_store = MEMORY`, `cache_size = -64000`).
@@ -911,3 +1035,4 @@ CREATE INDEX idx_annotated_bboxes_page ON user_annotated_bboxes (file_path, page
 21. **HTML Shell & Deferred Script Integrity**: The application HTML shell files (`ui/index.html` and root `index.html`) MUST remain identical. All vendor and application JavaScript files MUST be included with `defer` attributes, interactive buttons MUST use explicit `type="button"`, and theme persistence MUST initialize immediately via an inline IIFE reading `localStorage.getItem("theme")`.
 22. **Docling & Indra Offline Execution Safety**: Layout and OCR parsers (`parsers/docling_v2_parser.py`, `parsers/docling_v3_parser.py`, `parsers/indra_parser.py`) MUST set `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` (plus `INDRA_OCR_MODEL_DIR` for Indra) when local model weights are detected, enforcing 100% offline execution without online Hugging Face Hub hangs.
 23. **Non-Collapsing Inspector on Background Topic Extraction**: In `ui/js/app.js` and `ui/js/quiz.js`, `openInspector(forceOpen)` defaults `forceOpen` to `true`. When called with `forceOpen = false` during automatic background updates (`updateInspectorForQuestion`), inspector content MUST update without reopening the right sidebar if it was collapsed by the user.
+24. **PDF Layout Analysis & Bounding Box Transaction Isolation**: Page bounding box modifications (`POST /api/analysis/save-page`) MUST be persisted atomically within a single SQLite transaction (clearing existing bboxes for the specific page and inserting active `BBoxItem` records) to prevent partial annotation writes. Heading level updates (`POST /api/analysis/update-heading`) must update `user_annotated_bboxes` immediately, and document finalization (`POST /api/analysis/finalize`) must mark `layout_analysis_progress(status='completed')` and reflect validated state across Vault source lists without deleting raw bounding box review history.
