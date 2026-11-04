@@ -931,7 +931,7 @@ function renderQuestion() {
         : (Object.keys(quizAnswers).length / currentQuiz.questions.length) * 100;
 
     container.innerHTML = `
-        <div class="w-full p-6 animate-fade-in flex flex-col h-full">
+        <div class="w-full p-6 animate-fade-in flex flex-col min-h-full">
             <div class="flex items-center justify-between mb-6 flex-wrap gap-4">
                 <div class="flex items-center gap-4">
                     <div class="glass-panel border border-gray-700/50 rounded-xl px-5 py-2.5 shadow-inner">
@@ -969,6 +969,10 @@ function renderQuestion() {
                 <div class="space-y-3" id="options-container"></div>
             </div>
 
+            <!-- Separate FSRS Spaced Repetition Rating Container -->
+            <div id="fsrs-rating-container" class="mb-4"></div>
+
+            <!-- Separate Explanation and References Container -->
             <div id="feedback-container" class="flex-1 overflow-y-auto pr-2 mb-4 space-y-4"></div>
 
             <div class="flex justify-between items-center mt-auto pt-4 border-t border-gray-700/50">
@@ -1020,18 +1024,19 @@ function renderQuestion() {
         optsDiv.appendChild(btn);
     });
 
-    // Learn Mode Feedback: Show FSRS 1-4 Rating Bar + CSV Explanation + LLM Detailed Explanation
+    // Learn Mode Feedback: Separate FSRS 1-4 Rating Bar + CSV Explanation + LLM Detailed Explanation
     if (isAnswered && isLearn && !quizAnswers[q.id].timedOut) {
+        const ratingContainer = document.getElementById('fsrs-rating-container');
         const fbContainer = document.getElementById('feedback-container');
         const llmEnabled = window.AppState ? window.AppState.get().llmEnabled !== false : true;
         const ans = quizAnswers[q.id];
-        let fbHtml = '';
 
-        if (quizConfig.spacedRepetition) {
+        // 1. Separate FSRS Spaced Repetition Rating Container
+        if (quizConfig.spacedRepetition && ratingContainer) {
             const currentRating = ans.fsrsRating || 3;
             const intervalDays = ans.fsrsIntervalDays ? `Next review in ${ans.fsrsIntervalDays}d` : 'FSRS v4.5 Scheduled';
-            fbHtml += `
-                <div class="animate-fade-in glass-panel border border-gray-700/50 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+            ratingContainer.innerHTML = `
+                <div class="animate-fade-in glass-panel border border-gray-700/50 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-md">
                     <div>
                         <span class="text-xs font-bold text-brand-300 uppercase tracking-wider">🧠 Spaced Repetition Rating</span>
                         <span id="fsrs-interval-badge" class="text-[11px] text-muted ml-2 font-mono">(${intervalDays})</span>
@@ -1050,12 +1055,29 @@ function renderQuestion() {
                     </div>
                 </div>
             `;
+            ratingContainer.querySelectorAll('.fsrs-rate-btn').forEach(rateBtn => {
+                rateBtn.addEventListener('click', () => {
+                    const newRating = parseInt(rateBtn.dataset.rating, 10);
+                    submitFsrsScore(q, newRating);
+                });
+            });
+        } else if (ratingContainer) {
+            ratingContainer.innerHTML = '';
         }
 
+        // 2. Separate CSV Explanation Container
+        let fbHtml = '';
         if (q.explanation && q.explanation !== 'No explanation provided.') {
             fbHtml += `
-                <div class="animate-fade-in glass-panel border border-gray-700/50 rounded-2xl p-5">
-                    <h4 class="font-bold text-brand-300 text-xs uppercase tracking-wider mb-2">📄 CSV Baseline Explanation</h4>
+                <div id="csv-explanation-card" class="animate-fade-in glass-panel border border-gray-700/50 hover:border-brand-500/50 rounded-2xl p-5 cursor-pointer transition-all hover:scale-[1.01] group relative" title="Click to view explanation in full readable note popup">
+                    <div class="flex items-center justify-between mb-2">
+                        <h4 class="font-bold text-brand-300 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                            📄 CSV Baseline Explanation
+                        </h4>
+                        <span class="text-[11px] text-brand-400 group-hover:underline flex items-center gap-1 font-medium opacity-80">
+                            🔍 Expand Note ↗
+                        </span>
+                    </div>
                     <div class="prose prose-sm max-w-none">${window.renderMarkdownAndMath(q.explanation)}</div>
                 </div>
             `;
@@ -1078,12 +1100,12 @@ function renderQuestion() {
 
         if (fbContainer) {
             fbContainer.innerHTML = fbHtml;
-            fbContainer.querySelectorAll('.fsrs-rate-btn').forEach(rateBtn => {
-                rateBtn.addEventListener('click', () => {
-                    const newRating = parseInt(rateBtn.dataset.rating, 10);
-                    submitFsrsScore(q, newRating);
+            const expCard = document.getElementById('csv-explanation-card');
+            if (expCard) {
+                expCard.addEventListener('click', () => {
+                    openExplanationNoteModal(q);
                 });
-            });
+            }
         }
     }
 
@@ -1143,6 +1165,89 @@ async function submitFsrsScore(q, rating) {
     if (quizConfig.mode === 'learn') {
         renderQuestion();
     }
+}
+
+function openExplanationNoteModal(q) {
+    if (!q) return;
+
+    let modal = document.getElementById('explanation-note-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'explanation-note-modal';
+        modal.className = 'modal-backdrop fade-enter';
+        modal.style.zIndex = '300';
+        document.body.appendChild(modal);
+    }
+
+    const questionTitle = q.question || q.question_text || 'Question Explanation';
+    const topicTitle = q.csv_topic_name || q.topic_name || q.subject_name || 'Clinical Reference Note';
+    const explanationText = q.explanation || 'No explanation provided.';
+
+    modal.innerHTML = `
+        <div class="glass-modal w-full max-w-3xl text-left flex flex-col max-h-[85vh] p-6 rounded-2xl shadow-2xl relative border border-brand-500/30" id="explanation-note-card">
+            <div class="flex justify-between items-start border-b border-gray-700/50 pb-4 mb-4 gap-4">
+                <div class="min-w-0 flex-1">
+                    <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                        ${window.escapeHTML(topicTitle)}
+                    </span>
+                    <h3 class="text-base font-bold text-neutral-100 mt-2 line-clamp-2 leading-snug">
+                        ${window.escapeHTML(questionTitle)}
+                    </h3>
+                </div>
+                <button type="button" id="close-exp-note-btn" class="p-1.5 text-muted hover:text-white rounded-lg glass-panel hover:bg-white/10 transition-colors cursor-pointer text-lg leading-none" title="Close (ESC)">
+                    ✕
+                </button>
+            </div>
+
+            <div class="overflow-y-auto flex-1 pr-2 space-y-4">
+                <div class="glass-panel p-5 rounded-xl border border-gray-700/50">
+                    <h4 class="text-xs font-bold text-brand-300 uppercase tracking-wider mb-3">📄 Explanation &amp; Key Concept</h4>
+                    <div id="explanation-modal-body" class="prose prose-sm max-w-none text-neutral-200 leading-relaxed"></div>
+                </div>
+
+                ${q.correct_answer ? `
+                <div class="glass-panel p-3.5 rounded-xl border border-success-500/30 bg-success-500/10 flex items-center justify-between">
+                    <span class="text-xs text-muted">Correct Option:</span>
+                    <span class="text-sm font-bold text-success-400 font-mono">Option ${window.escapeHTML(q.correct_answer)}</span>
+                </div>
+                ` : ''}
+            </div>
+
+            <div class="border-t border-gray-700/50 pt-3 mt-4 flex justify-between items-center text-xs text-muted">
+                <span>Click outside anywhere to dismiss</span>
+                <button type="button" id="close-exp-note-bottom-btn" class="secondary-btn px-4 py-1.5 rounded-lg text-xs font-medium cursor-pointer">
+                    Close Note
+                </button>
+            </div>
+        </div>
+    `;
+
+    const bodyEl = document.getElementById('explanation-modal-body');
+    if (bodyEl && window.renderMarkdownAndMath) {
+        window.renderMarkdownAndMath(explanationText, bodyEl);
+    } else if (bodyEl) {
+        bodyEl.textContent = explanationText;
+    }
+
+    const closeModal = () => {
+        if (modal) modal.remove();
+        document.removeEventListener('keydown', handleEsc);
+    };
+
+    const handleEsc = (e) => {
+        if (e.key === 'Escape') closeModal();
+    };
+
+    // Close on clicking outside modal card
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            closeModal();
+        }
+    });
+
+    document.getElementById('close-exp-note-btn')?.addEventListener('click', closeModal);
+    document.getElementById('close-exp-note-bottom-btn')?.addEventListener('click', closeModal);
+    document.addEventListener('keydown', handleEsc);
 }
 
 function handleSelectOption(q, option, isTimeout = false) {

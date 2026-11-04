@@ -168,8 +168,13 @@ def calculate_fsrs_next_interval(
             next_lapses = curr_lapses
 
     # Compute interval in days and seconds (I = S * 1.0 at 90% retention)
-    interval_days = max(1, round(next_s * _INTERVAL_SCALER))
-    interval_seconds = int(interval_days * 86400)
+    # When grade == 1 (Again), card enters learning/relearning and is due immediately (or next set)
+    if grade == 1:
+        interval_days = 0
+        interval_seconds = 0
+    else:
+        interval_days = max(1, round(next_s * _INTERVAL_SCALER))
+        interval_seconds = int(interval_days * 86400)
     new_reps = curr_reps + 1
 
     current_ts = float(now if now is not None else time.time())

@@ -124,13 +124,28 @@ function simulateRank(config, correct, wrong, actualQuestions) {
     return { projectedMarks, estimatedRank, percentile, rawMarks };
 }
 
-function initDashboard() {
+let _dueSummaryData = { total_due: 0, session_id: null };
+
+async function fetchDueSummary() {
+    try {
+        const res = await fetch('/api/sessions/due_summary');
+        if (res.ok) {
+            _dueSummaryData = await res.json();
+        }
+    } catch (e) {
+        console.warn("Failed to fetch due summary:", e);
+    }
+}
+
+async function initDashboard() {
     if (!window.AppState || !window.AppState.get) return;
     const state = window.AppState.get();
     if (!state) return;
 
     const dashContainer = document.getElementById('dashboard-view');
     if (!dashContainer) return;
+
+    await fetchDueSummary();
 
     const escapeHTML = window.escapeHTML || ((s) => String(s || ''));
 
@@ -238,6 +253,26 @@ function initDashboard() {
             <h1 class="text-3xl font-bold mb-2">📊 Dashboard</h1>
             <p class="subtitle">Your learning analytics at a glance</p>
         </div>
+
+        <!-- Due Questions Spaced Repetition Alert Notification -->
+        ${_dueSummaryData.total_due > 0 ? `
+        <div class="glass-card mb-8 border border-warning-500/50 bg-warning-500/10 p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 animate-fade-in shadow-[0_0_15px_rgba(234,179,8,0.2)]">
+            <div class="flex items-center gap-3">
+                <span class="text-3xl animate-bounce">🔔</span>
+                <div>
+                    <h3 class="text-base font-bold text-warning-300">New Questions Have Popped Up For Review!</h3>
+                    <p class="text-xs text-muted mt-0.5">
+                        You have <span class="text-warning-300 font-bold font-mono">${_dueSummaryData.total_due}</span> question${_dueSummaryData.total_due === 1 ? '' : 's'} scheduled for spaced repetition review today.
+                    </p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+                <button type="button" id="dash-practice-due-btn" class="primary-btn px-5 py-2.5 rounded-xl text-xs font-bold shadow-lg cursor-pointer flex items-center gap-1.5 hover:scale-105 transition-all">
+                    🧠 Review Due Questions (${_dueSummaryData.total_due}) →
+                </button>
+            </div>
+        </div>
+        ` : ''}
 
         <!-- Today's Summary -->
         <div class="glass-card card-shade-1 mb-8">
@@ -432,6 +467,43 @@ function initDashboard() {
     `;
 
     attachRankEditorListeners();
+    attachDueButtonListener();
+}
+
+function attachDueButtonListener() {
+    const btn = document.getElementById('dash-practice-due-btn');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+        try {
+            btn.disabled = true;
+            btn.textContent = 'Loading questions...';
+            const sessionId = _dueSummaryData.session_id || 'sess_spaced_repetition_due';
+            const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/questions`);
+            if (res.ok) {
+                const questions = await res.json();
+                if (questions && questions.length > 0) {
+                    if (typeof window.launchPreparedQuiz === 'function') {
+                        window.launchPreparedQuiz({
+                            sessionId: sessionId,
+                            customTitle: `🧠 Spaced Repetition Due Review (${questions.length})`,
+                            subjectName: 'Due Reviews',
+                            questions: questions,
+                            topicsReviewed: true,
+                            config: { mode: 'learn', spacedRepetition: true, count: questions.length }
+                        });
+                        return;
+                    }
+                }
+            }
+            // Fallback: switch to Hub
+            const hubNav = document.querySelector('.nav-btn[data-target="knowledge-hub-view"]');
+            if (hubNav) hubNav.click();
+        } catch (e) {
+            console.error("Failed to launch due review quiz:", e);
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    });
 }
 
 window.initDashboard = initDashboard;

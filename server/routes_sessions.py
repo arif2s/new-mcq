@@ -1001,10 +1001,188 @@ def _batch_compute_session_queue_info(
     return result
 
 
+CONSOLIDATED_REVIEWS_SESSION_ID = "sess_spaced_repetition_due"
+
+
+def sync_consolidated_due_session(conn) -> None:
+    """
+    Consolidates questions due for repetition (wrong/lapsed cards and scheduled reviews
+    whose due_timestamp is now or past) into a single unified session card in Knowledge Hub.
+    Prevents clutter by keeping only ONE set in the Hub and adding questions only on or after
+    their due date.
+    """
+    cursor = conn.cursor()
+    # 1. Gather all currently due questions from csv_questions
+    cursor.execute(
+        """
+        SELECT id, question, opt_a, opt_b, opt_c, opt_d, correct_answer, explanation,
+               llm_explanation, topic_name, due_timestamp, state, lapses, last_review
+        FROM csv_questions
+        WHERE (due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
+           OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
+           OR (state IN (1, 3))
+        ORDER BY due_timestamp ASC
+        """
+    )
+    due_csv = [dict(r) for r in cursor.fetchall()]
+
+    # 2. Gather all currently due questions from mcq_bank
+    cursor.execute(
+        """
+        SELECT id, question, opt_a, opt_b, opt_c, opt_d, correct_opt as correct_answer,
+               csv_explanation as explanation, llm_explanation, source_tag as topic_name,
+               due_timestamp, state, lapses, last_review
+        FROM mcq_bank
+        WHERE (due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
+           OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
+           OR (state IN (1, 3))
+        ORDER BY due_timestamp ASC
+        """
+    )
+    due_mcq = [dict(r) for r in cursor.fetchall()]
+
+    all_due = due_csv + due_mcq
+
+    if not all_due:
+        # If no questions are currently due, remove or clean up the consolidated review session
+        cursor.execute("DELETE FROM session_questions WHERE session_id = ?", (CONSOLIDATED_REVIEWS_SESSION_ID,))
+        cursor.execute("DELETE FROM quiz_sessions WHERE id = ?", (CONSOLIDATED_REVIEWS_SESSION_ID,))
+        conn.commit()
+        return
+
+    # Extract distinct topics
+    topics_list = list(dict.fromkeys(
+        q["topic_name"] for q in all_due if q.get("topic_name") and q["topic_name"] != "General Medical Concept"
+    ))
+    topic_items = [{"name": t, "selected": True} for t in topics_list]
+
+    now_ts = float(time.time() * 1000)
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    total_q = len(all_due)
+
+    # Insert or update the single consolidated session card
+    cursor.execute(
+        """
+        INSERT INTO quiz_sessions (
+            id, subject_name, custom_title, date, timestamp, last_attempted,
+            total_questions, correct_answers, wrong_answers, unanswered,
+            score, max_score, accuracy, time_limit_seconds, time_used_seconds,
+            mode, is_completed, topics_reviewed, refs_status, llm_status, topic_list_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            custom_title = excluded.custom_title,
+            subject_name = excluded.subject_name,
+            total_questions = excluded.total_questions,
+            unanswered = excluded.total_questions,
+            date = excluded.date,
+            timestamp = excluded.timestamp,
+            topics_reviewed = excluded.topics_reviewed,
+            refs_status = excluded.refs_status,
+            llm_status = excluded.llm_status,
+            topic_list_json = excluded.topic_list_json
+        """,
+        (
+            CONSOLIDATED_REVIEWS_SESSION_ID,
+            "Spaced Repetition",
+            f"🧠 Due for Review ({total_q} Questions)",
+            today_str,
+            now_ts,
+            0.0,
+            total_q,
+            0,
+            0,
+            total_q,
+            0,
+            total_q,
+            0.0,
+            0,
+            0,
+            "learn",
+            0,
+            1,
+            "ready",
+            "ready" if is_llm_processing_enabled() else "none",
+            json.dumps(topic_items),
+        ),
+    )
+
+    # Re-populate session_questions for this consolidated session
+    cursor.execute("DELETE FROM session_questions WHERE session_id = ?", (CONSOLIDATED_REVIEWS_SESSION_ID,))
+    q_params = []
+    for q in all_due:
+        q_id = str(q["id"])
+        q_params.append((
+            CONSOLIDATED_REVIEWS_SESSION_ID,
+            q_id,
+            None,
+            0,
+            0,
+            0,
+            now_ts,
+            q.get("question") or "",
+            q.get("opt_a") or "",
+            q.get("opt_b") or "",
+            q.get("opt_c") or "",
+            q.get("opt_d") or "",
+            (q.get("correct_answer") or "A").strip().upper(),
+            q.get("explanation") or "",
+            q.get("llm_explanation") or "",
+            q.get("topic_name") or "General",
+            json.dumps([q.get("topic_name")] if q.get("topic_name") else []),
+        ))
+
+    cursor.executemany(
+        """
+        INSERT INTO session_questions (
+            session_id, question_id, selected_option, is_correct, timed_out, time_spent_ms,
+            timestamp, question_text, opt_a, opt_b, opt_c, opt_d, correct_answer,
+            explanation, llm_explanation, topic, question_topics_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        q_params,
+    )
+    conn.commit()
+
+
+@router.get("/due_summary")
+def get_due_summary() -> Dict[str, Any]:
+    """Returns count and details of questions currently due for repetition review."""
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM csv_questions
+            WHERE (due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
+               OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
+               OR (state IN (1, 3))
+            """
+        )
+        csv_count = cursor.fetchone()[0] or 0
+
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM mcq_bank
+            WHERE (due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
+               OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
+               OR (state IN (1, 3))
+            """
+        )
+        mcq_count = cursor.fetchone()[0] or 0
+
+        total_due = int(csv_count + mcq_count)
+
+    return {
+        "status": "success",
+        "total_due": total_due,
+        "session_id": CONSOLIDATED_REVIEWS_SESSION_ID if total_due > 0 else None,
+    }
+
+
 @router.get("/history")
 def get_session_history() -> List[Dict[str, Any]]:
     """Fetches ordered session history with aggregated question counts and batched queue status."""
     with closing(get_db_connection()) as conn:
+        sync_consolidated_due_session(conn)
         cursor = conn.cursor()
         cursor.execute(
             """

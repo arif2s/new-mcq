@@ -307,6 +307,7 @@ def generate_set(req: GenerateSetRequest) -> Dict[str, Any]:
         query += (
             " ORDER BY CASE "
             "WHEN q.due_timestamp > 0 AND q.due_timestamp <= unixepoch('now') THEN 0 "
+            "WHEN q.last_review IS NOT NULL AND q.due_timestamp <= unixepoch('now') THEN 0 "
             "WHEN q.state IN (1, 3) THEN 1 "
             "ELSE 2 END, RANDOM()"
         )

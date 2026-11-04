@@ -687,7 +687,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (typeof window.renderSearchFilterInspector === 'function') {
                 window.renderSearchFilterInspector();
             }
-        } else if (targetId === 'home-view' || targetId === 'dashboard-view') {
+        } else if (targetId === 'home-view') {
+            window.closeInspector();
+        } else if (targetId === 'dashboard-view') {
             if (typeof window.renderStudyTopicsInspector === 'function') {
                 window.renderStudyTopicsInspector(null, false);
             }
@@ -722,12 +724,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (targetId === 'knowledge-hub-view' && typeof window.loadSessions === 'function') {
                 window.loadSessions();
             }
+            if (targetId === 'dashboard-view' && typeof window.initDashboard === 'function') {
+                window.initDashboard();
+            }
             if (targetId === 'home-view') {
                 if (typeof window.initTestFeatures === 'function') {
                     window.initTestFeatures();
-                }
-                if (typeof window.renderStudyTopicsInspector === 'function') {
-                    window.renderStudyTopicsInspector(null, true);
                 }
             }
             if (targetId === 'layout-analysis-screen' && typeof window.initAnalysisWorkspace === 'function') {
@@ -1029,9 +1031,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (document.getElementById('home-view')?.classList.contains('active')) {
         if (typeof window.initTestFeatures === 'function') {
             window.initTestFeatures();
-        }
-        if (typeof window.renderStudyTopicsInspector === 'function') {
-            window.renderStudyTopicsInspector(['Amyloidosis', 'Amoxicillin', 'Myocardial Infarction'], true);
         }
     }
 
