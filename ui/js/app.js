@@ -15,14 +15,21 @@ const _PURIFY_ALLOWED_TAGS = [
     'mark', 'details', 'summary', 'kbd', 'style', 'figure', 'figcaption',
     'span', 'div', 'p', 'b', 'i', 'strong', 'em', 'code', 'pre', 'a',
     'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'br',
-    'caption', 'col', 'colgroup', 'section', 'header', 'footer', 'nav', 'article', 'aside', 'main'
+    'caption', 'col', 'colgroup', 'section', 'header', 'footer', 'nav', 'article', 'aside', 'main',
+    'svg', 'g', 'path', 'rect', 'circle', 'line', 'polyline', 'polygon', 'text', 'tspan',
+    'image', 'use', 'defs', 'clipPath', 'pattern', 'linearGradient', 'radialGradient', 'stop', 'foreignObject', 'title', 'desc'
 ];
 
 const _PURIFY_ALLOWED_ATTRS = [
-    'target', 'class', 'style', 'src', 'href', 'alt', 'title', 'width', 'height', 'align', 'valign',
+    'target', 'class', 'style', 'src', 'href', 'xlink:href', 'alt', 'title', 'width', 'height', 'align', 'valign',
     'colspan', 'rowspan', 'cellpadding', 'cellspacing', 'border', 'role', 'aria-label', 'aria-hidden',
     'data-file', 'data-file-path', 'data-filepath', 'data-vault',
-    'data-page', 'data-article-id', 'data-title', 'data-source-type', 'data-anchor'
+    'data-page', 'data-article-id', 'data-title', 'data-source-type', 'data-anchor',
+    'viewBox', 'viewbox', 'preserveAspectRatio', 'xmlns', 'xmlns:xlink', 'version',
+    'd', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'stroke-miterlimit',
+    'stroke-dasharray', 'stroke-dashoffset', 'stroke-opacity', 'fill-opacity', 'opacity',
+    'cx', 'cy', 'r', 'rx', 'ry', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 'dx', 'dy',
+    'text-anchor', 'font-size', 'font-family', 'font-weight', 'dominant-baseline', 'transform'
 ];
 
 /**
@@ -405,6 +412,15 @@ window.renderStudyTopicsInspector = async function(topicsList = null, forceOpen 
 // =========================================================
 // Unified In-Browser Document Reader (Obsidian & ZIM)
 // =========================================================
+window.closeDocumentReader = function() {
+    const viewerContainer = document.getElementById('zim-viewer-container');
+    if (viewerContainer) viewerContainer.style.display = 'none';
+    const contentArea = document.getElementById('zim-content-area');
+    if (contentArea) contentArea.innerHTML = '';
+    document.body.classList.remove('zim-reader-open');
+    if (window._readerHistory) window._readerHistory.length = 0;
+};
+
 window.openDocumentReader = function({ title, sourceType, htmlContent, markdownContent, filePath, anchor }) {
     const viewerContainer = document.getElementById('zim-viewer-container');
     const contentArea = document.getElementById('zim-content-area');
@@ -418,7 +434,7 @@ window.openDocumentReader = function({ title, sourceType, htmlContent, markdownC
 
     contentArea.innerHTML = '';
     const wrapper = document.createElement('div');
-    wrapper.className = 'max-w-4xl mx-auto glass-card p-8 prose max-w-none';
+    wrapper.className = 'w-full max-w-6xl mx-auto glass-card p-8 prose';
 
     if (markdownContent !== undefined && markdownContent !== null) {
         window.renderMarkdownAndMath(markdownContent, wrapper);
@@ -467,6 +483,7 @@ window.openDocumentReader = function({ title, sourceType, htmlContent, markdownC
     }
 
     contentArea.appendChild(wrapper);
+    document.body.classList.add('zim-reader-open');
     viewerContainer.style.display = 'flex';
 
     // Scroll to heading anchor if specified
@@ -665,8 +682,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         const reviewContainer = document.getElementById('hub-review-container');
         if (reviewContainer) reviewContainer.style.display = 'none';
 
-        const zimViewer = document.getElementById('zim-viewer-container');
-        if (zimViewer) zimViewer.style.display = 'none';
+        if (typeof window.closeDocumentReader === 'function') {
+            window.closeDocumentReader();
+        } else {
+            const zimViewer = document.getElementById('zim-viewer-container');
+            if (zimViewer) zimViewer.style.display = 'none';
+            document.body.classList.remove('zim-reader-open');
+        }
 
         const hubMainContainer = document.getElementById('hub-main-container');
         if (hubMainContainer && targetId === 'knowledge-hub-view') {
@@ -1071,10 +1093,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const closeZimBtn = target.closest('#close-zim-viewer-btn');
         if (closeZimBtn) {
-            const viewerContainer = document.getElementById('zim-viewer-container');
-            if (viewerContainer) viewerContainer.style.display = 'none';
-            const contentArea = document.getElementById('zim-content-area');
-            if (contentArea) contentArea.innerHTML = '';
+            window.closeDocumentReader();
+            return;
+        }
+
+        // Allow clicking anywhere outside text content area (glass-card) to close article
+        const viewerContainer = document.getElementById('zim-viewer-container');
+        if (viewerContainer && viewerContainer.style.display === 'flex') {
+            if (target === viewerContainer || target.id === 'zim-content-area') {
+                window.closeDocumentReader();
+                return;
+            }
         }
     });
 });

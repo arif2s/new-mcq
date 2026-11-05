@@ -21,6 +21,7 @@
     // 1. IN-BROWSER READER HISTORY & KEYBOARD SHORTCUTS
     // =========================================================
     const readerHistory = [];
+    window._readerHistory = readerHistory;
     let isNavigatingBack = false;
 
     function enhanceDocumentReaderOverlay() {
@@ -30,9 +31,14 @@
         // Close reader modal on Escape key
         document.addEventListener("keydown", (e) => {
             if (e.key === "Escape" && viewerContainer.style.display === "flex") {
-                viewerContainer.style.display = "none";
-                const contentArea = document.getElementById("zim-content-area");
-                if (contentArea) contentArea.innerHTML = "";
+                if (typeof window.closeDocumentReader === "function") {
+                    window.closeDocumentReader();
+                } else {
+                    viewerContainer.style.display = "none";
+                    const contentArea = document.getElementById("zim-content-area");
+                    if (contentArea) contentArea.innerHTML = "";
+                    document.body.classList.remove("zim-reader-open");
+                }
                 readerHistory.length = 0;
             }
         });

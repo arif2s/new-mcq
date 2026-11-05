@@ -14,6 +14,7 @@ import html
 import logging
 import os
 from pathlib import Path
+import posixpath
 import re
 import threading
 import time
@@ -62,11 +63,16 @@ _HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 _WHITESPACE_PATTERN = re.compile(r"\s+")
 _HREF_RE = re.compile(r'href=["\']([^"\']+)["\']', flags=re.IGNORECASE)
 _SRC_RE = re.compile(r'(src|srcset)=["\']([^"\']+)["\']', flags=re.IGNORECASE)
+_MEDIA_ATTR_RE = re.compile(
+    r'(<(?:img|image|object|embed|source)\b[^>]*?\b(?:src|href|data|xlink:href)=["\'])([^"\']+)(["\'])',
+    flags=re.IGNORECASE,
+)
+_SRCSET_RE = re.compile(r'\s+srcset=["\'][^"\']*["\']', flags=re.IGNORECASE)
 _STYLE_COLOR_RE = re.compile(
     r'\s*(?:bgcolor|color|text)=["\'][^"\']*["\']', flags=re.IGNORECASE
 )
 _INLINE_STYLE_RE = re.compile(
-    r'style=["\'][^"\']*(?:color|background)[^"\']*["\']', flags=re.IGNORECASE
+    r'style=["\']([^"\']*)["\']', flags=re.IGNORECASE
 )
 _BODY_EXTRACT_RE = re.compile(r"<body[^>]*>(.*?)</body>", flags=re.IGNORECASE | re.DOTALL)
 _WIKI_FOOTER_RE = re.compile(
@@ -591,7 +597,26 @@ def get_zim_article_html(
 
             # Normalize hardcoded styles that conflict with glassmorphic themes
             safe_html = _STYLE_COLOR_RE.sub("", safe_html)
-            safe_html = _INLINE_STYLE_RE.sub("", safe_html)
+
+            def _clean_style_declarations(style_val: str) -> str:
+                cleaned = []
+                for part in style_val.split(";"):
+                    item = part.strip()
+                    if not item:
+                        continue
+                    prop = item.split(":", 1)[0].strip().lower()
+                    if prop in ("color", "background", "background-color", "bgcolor"):
+                        continue
+                    cleaned.append(item)
+                if not cleaned:
+                    return ""
+                return f'style="{"; ".join(cleaned)}"'
+
+            def _clean_style_match(match: re.Match) -> str:
+                cleaned_css = _clean_style_declarations(match.group(1))
+                return f" {cleaned_css}" if cleaned_css else ""
+
+            safe_html = _INLINE_STYLE_RE.sub(_clean_style_match, safe_html)
 
             # Rewrite internal relative ZIM links with citation delegation attributes (Invariant 5 & Section 4)
             def _rewrite_href(match: re.Match) -> str:
@@ -615,20 +640,26 @@ def get_zim_article_html(
 
             safe_html = _HREF_RE.sub(_rewrite_href, safe_html)
 
-            # Rewrite <img> src to /api/notes/zim-asset and strip multi-source srcset
-            def _rewrite_src(match: re.Match) -> str:
-                attr = match.group(1).lower()
+            # Strip multi-source srcset from images
+            safe_html = _SRCSET_RE.sub("", safe_html)
+
+            # Rewrite <img>, SVG <image>, <object>, <embed>, <source> media elements to /api/notes/zim-asset
+            def _rewrite_media(match: re.Match) -> str:
+                prefix = match.group(1)
                 src_val = match.group(2)
-                if attr == "srcset":
-                    return ""
-                if src_val.startswith(("http://", "https://", "data:", "#")):
+                suffix = match.group(3)
+                if src_val.startswith(("http://", "https://", "data:", "#", "javascript:")):
                     return match.group(0)
                 cleaned_src = urllib.parse.unquote(src_val.lstrip("./").lstrip("/"))
-                encoded_src = urllib.parse.quote(cleaned_src)
+                norm_src = posixpath.normpath(cleaned_src).lstrip("./").lstrip("/")
+                while norm_src.startswith("../"):
+                    norm_src = norm_src[3:].lstrip("/")
+                target_src = norm_src if norm_src else cleaned_src
+                encoded_src = urllib.parse.quote(target_src)
                 encoded_zp = urllib.parse.quote(zp)
-                return f'src="/api/notes/zim-asset?path={encoded_src}&zim_path={encoded_zp}"'
+                return f'{prefix}/api/notes/zim-asset?path={encoded_src}&zim_path={encoded_zp}{suffix}'
 
-            safe_html = _SRC_RE.sub(_rewrite_src, safe_html)
+            safe_html = _MEDIA_ATTR_RE.sub(_rewrite_media, safe_html)
 
             # Ensure HTML is wrapped in .mw-parser-output scope for MediaWiki/openZIM styling
             if "mw-parser-output" not in safe_html:
@@ -674,17 +705,40 @@ def get_zim_asset(asset_path: str, zim_path: str = "") -> Optional[ZimAsset]:
     if not paths:
         return None
 
-    clean_path = urllib.parse.unquote(str(asset_path).lstrip("./").lstrip("/"))
-    candidates = [clean_path]
-    if not clean_path.startswith(("I/", "A/", "C/", "-/", "m/")):
-        candidates.extend(
-            [
-                f"I/{clean_path}",
-                f"I/m/{clean_path}",
-                f"A/{clean_path}",
-                f"-/{clean_path}",
-            ]
-        )
+    clean_path = urllib.parse.unquote(str(asset_path).strip().lstrip("./").lstrip("/"))
+    norm_path = posixpath.normpath(clean_path).lstrip("./").lstrip("/")
+    while norm_path.startswith("../"):
+        norm_path = norm_path[3:].lstrip("/")
+
+    candidates: List[str] = []
+
+    def _add_cand(c: str) -> None:
+        c = c.lstrip("/")
+        if c and c not in candidates:
+            candidates.append(c)
+
+    _add_cand(clean_path)
+    _add_cand(norm_path)
+
+    for base in [clean_path, norm_path]:
+        if not base:
+            continue
+        if not base.startswith(("I/", "A/", "C/", "-/", "m/")):
+            _add_cand(f"I/{base}")
+            _add_cand(f"I/m/{base}")
+            _add_cand(f"A/{base}")
+            _add_cand(f"-/{base}")
+        if base.startswith("m/"):
+            sub = base[2:]
+            _add_cand(sub)
+            _add_cand(f"I/{sub}")
+            _add_cand(f"I/m/{sub}")
+        if base.startswith(("File:", "Image:")):
+            sub = base.split(":", 1)[1]
+            _add_cand(sub)
+            _add_cand(f"I/{sub}")
+            _add_cand(f"I/m/{sub}")
+            _add_cand(f"-/{sub}")
 
     for zp in paths:
         try:
