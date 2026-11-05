@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import base64
-import html
 import logging
+import re
 import time
 from pathlib import Path
-from typing import Any, Optional, Sequence, Union
+from typing import Any, Optional, Sequence
 
 from parsers.indra.document import DocumentHeadingTracker
 from parsers.indra.engine import IndraModularEngine
 from parsers.indra.rules import RegexCatalog, enrich_lines
-from parsers.indra.types import PageElement, PageElements
+from parsers.indra.types import PageElement, PageElements, TableGrid
 
 logger = logging.getLogger(__name__)
 
@@ -21,13 +21,17 @@ def build_layout_svg_overlay(
     width: int,
     height: int,
 ) -> str:
-    """Constructs a scalable SVG bounding-box overlay for layout visualization in the UI."""
-    if width <= 0 or height <= 0:
-        return ""
+    """Builds an SVG overlay representing structural layout blocks and recognized text lines."""
+    width = max(100, int(width))
+    height = max(100, int(height))
 
     label_palette: dict[str, tuple[str, str]] = {
-        "Section-Header": ("#f59e0b", "rgba(245, 158, 11, 0.14)"),
-        "Table": ("#10b981", "rgba(16, 185, 129, 0.14)"),
+        "Title": ("#ef4444", "rgba(239, 68, 68, 0.15)"),
+        "Section-Header": ("#f97316", "rgba(249, 115, 22, 0.15)"),
+        "Header": ("#f97316", "rgba(249, 115, 22, 0.15)"),
+        "Table": ("#10b981", "rgba(16, 185, 129, 0.12)"),
+        "Figure": ("#8b5cf6", "rgba(139, 92, 246, 0.12)"),
+        "Picture": ("#8b5cf6", "rgba(139, 92, 246, 0.12)"),
         "List-Group": ("#8b5cf6", "rgba(139, 92, 246, 0.12)"),
         "Caption": ("#ec4899", "rgba(236, 72, 153, 0.12)"),
         "Footnote": ("#64748b", "rgba(100, 116, 139, 0.12)"),
@@ -127,57 +131,99 @@ class IndraHybridLayoutRefiner:
             except Exception as e:
                 logger.debug("Failed to render page image to base64: %s", e)
 
-        # Emit elements
+        # Initialize cross-page heading stacks
+        init_stack = self.heading_tracker.get_initial_stack_for_page(self.page_number)
+        if init_stack:
+            self.engine.active_titles.update(init_stack)
+            self.heading_tracker.active_stack.update(init_stack)
+
+        preassigned_page_toc = self.heading_tracker.get_page_toc_entries(self.page_number)
+        if preassigned_page_toc:
+            self.engine._align_and_interleave_toc_headings(ir, preassigned_page_toc)
+
+        seen_heading_keys: set[tuple[int, str]] = set()
+
         cur_sec_blocks: list[str] = []
         sections_for_chunks: list[tuple[str, str, list[str]]] = []
-        cur_sec_path = root_title
-        cur_sec_sub = root_title
+        cur_sec_path = " > ".join([root_title] + [self.engine.active_titles[k] for k in sorted(self.engine.active_titles)]) if self.engine.active_titles else root_title
+        cur_sec_sub = self.engine.active_titles[max(self.engine.active_titles)] if self.engine.active_titles else root_title
 
         for el in ir.elements:
-            if el.is_suppressed_furniture:
+            if el.is_suppressed_furniture or el.in_table or not el.text.strip():
                 continue
 
             if el.role == "heading":
-                lvl = max(1, min(6, el.heading_level or 2))
-                headings.append(el.text)
+                lvl = max(1, min(6, int(el.heading_level or 2)))
+                clean_h = el.text.strip()
+                # Deduplicate identical consecutive headings on the same page
+                h_key = (lvl, clean_h.lower())
+                if h_key in seen_heading_keys:
+                    continue
+                seen_heading_keys.add(h_key)
+
+                # Update hierarchical breadcrumb stack (root > H1 > H2 > H3 > H4)
+                self.engine.active_titles[lvl] = clean_h
+                self.heading_tracker.active_stack[lvl] = clean_h
+                for deeper in [k for k in list(self.engine.active_titles) if k > lvl]:
+                    self.engine.active_titles.pop(deeper, None)
+                    self.heading_tracker.active_stack.pop(deeper, None)
+
+                h_path = el.heading_path or " > ".join(
+                    [root_title] + [self.engine.active_titles[k] for k in sorted(self.engine.active_titles)]
+                )
+                el.heading_path = h_path
+                headings.append(clean_h)
                 node = {
                     "page": self.page_number,
                     "level": lvl,
                     "tag": f"H{lvl}",
-                    "title": el.text,
-                    "heading_path": f"{root_title} > {el.text}",
+                    "title": clean_h,
+                    "heading_path": h_path,
+                    "order": len(hierarchy_tree) + 1,
                     "confidence": el.heading_confidence,
                     "factor_scores": el.factor_scores,
                 }
                 hierarchy_tree.append(node)
-                md_blocks.append(f"{'#' * lvl} {el.text}")
                 if cur_sec_blocks:
                     sections_for_chunks.append((cur_sec_path, cur_sec_sub, list(cur_sec_blocks)))
                     cur_sec_blocks.clear()
-                cur_sec_path = f"{root_title} > {el.text}"
-                cur_sec_sub = el.text
-                cur_sec_blocks.append(f"{'#' * lvl} {el.text}")
-            elif el.role == "list_item":
-                md_line = el.text if el.text.startswith(("-", "•", "*")) else f"- {el.text}"
+                cur_sec_path = h_path
+                cur_sec_sub = clean_h
+                md_line = f"{'#' * lvl} {clean_h}"
                 md_blocks.append(md_line)
                 cur_sec_blocks.append(md_line)
+
+            elif el.role == "list_item":
+                raw_li = el.text.strip()
+                stripped_li = re.sub(r"^[•*\-–—\u2022\s]+", "", raw_li)
+                if m_desc := RegexCatalog.DESCRIPTION_SEPARATOR.match(stripped_li):
+                    md_line = f"- **{m_desc.group('term').strip()}:** {m_desc.group('desc').strip()}"
+                else:
+                    md_line = f"- {stripped_li}"
+                md_blocks.append(md_line)
+                cur_sec_blocks.append(md_line)
+
             elif el.role == "figure_caption":
-                md_blocks.append(f"> *{el.text}*")
-                cur_sec_blocks.append(f"> *{el.text}*")
+                cap_line = f"> *{el.text.strip()}*"
+                md_blocks.append(cap_line)
+                cur_sec_blocks.append(cap_line)
+
             else:
-                # Paragraph
-                md_blocks.append(el.text)
-                cur_sec_blocks.append(el.text)
+                # Paragraph (strictly mutually exclusive from heading, list_item, figure_caption)
+                p_txt = el.text.strip()
+                md_blocks.append(p_txt)
+                cur_sec_blocks.append(p_txt)
 
         # Emit tables if present
         for t in ir.tables:
             if not t.rows:
                 continue
             t_lines = []
-            headers = t.rows[0]
+            headers = t.headers if t.headers else t.rows[0]
+            start_row_idx = 0 if t.headers else 1
             t_lines.append("| " + " | ".join(headers) + " |")
             t_lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
-            for r in t.rows[1:]:
+            for r in t.rows[start_row_idx:]:
                 padded = r + [""] * (len(headers) - len(r))
                 t_lines.append("| " + " | ".join(padded[:len(headers)]) + " |")
             table_md = "\n".join(t_lines)
@@ -237,12 +283,12 @@ class IndraHybridLayoutRefiner:
             "text": md_out,
             "extracted_text": md_out,
             "main_heading": headings[0] if headings else root_title,
-            "heading_path": f"{root_title} > {headings[0]}" if headings else root_title,
+            "heading_path": cur_sec_path,
             "subheading": headings[0] if headings else root_title,
             "headings": headings,
             "hierarchy_tree": hierarchy_tree,
-            "active_heading_stack": {1: headings[0]} if headings else {},
-            "initial_heading_stack": {},
+            "active_heading_stack": dict(self.engine.active_titles),
+            "initial_heading_stack": dict(init_stack),
             "document_toc": hierarchy_tree,
             "page_toc": hierarchy_tree,
             "heading_mismatches": [],

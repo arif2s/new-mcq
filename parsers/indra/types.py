@@ -112,9 +112,15 @@ class PageElement:
     factor_scores: dict[str, float] = field(default_factory=dict)
     formatted_text: str = ""
     font_family: str = "serif"
+    indent_ratio: float = 0.0
+    line_count: int = 1
+    confidence: float = 1.0
+    embedded_toc_level: Optional[int] = None
+    rotation: float = 0.0
+    indra_role: str = ""
     first_bold: bool = False
-    fg_hue: float = 0.0
-    bg_hue: float = 0.0
+    fg_hue: float = -1.0
+    bg_hue: float = -1.0
     thickness: float = 1.0
 
     @property
@@ -160,7 +166,13 @@ class HeadingPrototype:
     is_bold: bool
     is_accent_color: bool
     prefix_family: Optional[str]
-    fg_hue: float = 0.0
-    bg_hue: float = 0.0
+    fg_hue: float = -1.0
+    bg_hue: float = -1.0
     font_family: str = "serif"
+    indent_ratio: float = 0.0
+    line_count: int = 1
+    confidence: float = 1.0
+    embedded_toc_level: Optional[int] = None
+    rotation: float = 0.0
+    indra_role: str = ""
     thickness: float = 1.0

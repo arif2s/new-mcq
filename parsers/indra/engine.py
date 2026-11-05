@@ -160,9 +160,14 @@ def get_indra_converter(
 
             model_dir = get_indra_models_dir()
             if not is_indra_models_downloaded(include_math=math):
-                raise RuntimeError(
-                    f"Indra OCR ONNX models are not downloaded in '{model_dir}'."
-                )
+                try:
+                    download_indra_models(include_math=math)
+                except Exception as dl_err:
+                    logger.debug("Automatic Indra model download failed: %s", dl_err)
+                if not is_indra_models_downloaded(include_math=math):
+                    raise RuntimeError(
+                        f"Indra OCR ONNX models are not downloaded in '{model_dir}'."
+                    )
 
             conv = indra_ocr.load(
                 path=str(model_dir),
@@ -227,6 +232,11 @@ def reconstruct_2d_table_grid(
         r_bands.append([item])
 
     if len(r_bands) < 2:
+        return None
+
+    # TOC Leader-Dot Filter: reject table if >= 30% of cell items match TOC_DOT_LEADER
+    dot_leader_hits = sum(1 for c in cell_items if RegexCatalog.TOC_DOT_LEADER.search(str(c.get("text", ""))))
+    if dot_leader_hits >= max(2, int(0.30 * len(cell_items))):
         return None
 
     # 2. Discover column intervals
@@ -341,6 +351,113 @@ def _crosses_dynamic_channel(
 _SCANNED_CACHE = ThreadSafeLRUCache[tuple, dict[str, Any]](maxsize=32)
 
 
+
+def _detect_and_ocr_chromatic_pill_banners(
+    rgb_arr: np.ndarray,
+    existing_lines: list[dict[str, Any]],
+    dpi: int = 200,
+) -> tuple[list[tuple[BBox, RGB]], list[dict[str, Any]]]:
+    """Detects saturated colored pill banners (e.g. white text on orange #E65100) and OCRs inverted crops."""
+    h_px, w_px, _ = rgb_arr.shape
+    # Downsample by 2x for fast vectorized HSV mask
+    small = rgb_arr[::2, ::2].astype(np.float32)
+    r, g, b = small[:, :, 0], small[:, :, 1], small[:, :, 2]
+    v = np.maximum(np.maximum(r, g), b)
+    mn = np.minimum(np.minimum(r, g), b)
+    v_safe = np.where(v > 1.0, v, 1.0)
+    s = np.where(v > 1.0, ((v - mn) / v_safe) * 255.0, 0.0)
+
+    # Chromatic background mask (saturated orange/blue/teal/purple)
+    chrom_mask = (s >= 90.0) & (v >= 75.0)
+    row_Chrom_ratio = chrom_mask.mean(axis=1)
+    sh, sw = chrom_mask.shape
+
+    banners: list[tuple[BBox, RGB]] = []
+    recovered_lines: list[dict[str, Any]] = []
+
+    # Group contiguous chromatic rows into horizontal bands
+    in_band = False
+    y0_s = 0
+    for y_i in range(sh):
+        if row_Chrom_ratio[y_i] >= 0.12 and not in_band:
+            in_band, y0_s = True, y_i
+        elif (row_Chrom_ratio[y_i] < 0.12 or y_i == sh - 1) and in_band:
+            in_band = False
+            y1_s = y_i
+            bh_norm = (y1_s - y0_s) / float(sh)
+            if not (0.012 <= bh_norm <= 0.085):
+                continue
+            band_mask = chrom_mask[y0_s:y1_s, :]
+            col_hits = np.where(band_mask.mean(axis=0) >= 0.35)[0]
+            if col_hits.size < int(0.12 * sw):
+                continue
+            # Split into contiguous X segments if multiple pills share a row
+            splits = np.where(np.diff(col_hits) > max(4, int(0.03 * sw)))[0]
+            seg_starts = [col_hits[0]] + [col_hits[idx + 1] for idx in splits]
+            seg_ends = [col_hits[idx] for idx in splits] + [col_hits[-1]]
+            for x0_s, x1_s in zip(seg_starts, seg_ends):
+                bw_norm = (x1_s - x0_s) / float(sw)
+                if bw_norm < 0.12:
+                    continue
+                bb_norm: BBox = (
+                    max(0.0, x0_s / float(sw)),
+                    max(0.0, y0_s / float(sh)),
+                    min(1.0, x1_s / float(sw)),
+                    min(1.0, y1_s / float(sh)),
+                )
+                sub_rgb = small[y0_s:y1_s, x0_s:x1_s]
+                sub_s = s[y0_s:y1_s, x0_s:x1_s]
+                sub_v = v[y0_s:y1_s, x0_s:x1_s]
+                chrom_pixels = sub_rgb[sub_s >= 90.0]
+                if chrom_pixels.size == 0:
+                    continue
+                mean_rgb: RGB = (
+                    int(np.median(chrom_pixels[:, 0])),
+                    int(np.median(chrom_pixels[:, 1])),
+                    int(np.median(chrom_pixels[:, 2])),
+                )
+                banners.append((bb_norm, mean_rgb))
+
+                # Check if white/bright glyphs exist inside the pill and no OCR line overlaps yet
+                white_ratio = float(((sub_v >= 195.0) & (sub_s <= 55.0)).mean())
+                already_has_line = any(overlap_ratio(ln["bbox_norm"], bb_norm) >= 0.35 for ln in existing_lines)
+                if white_ratio >= 0.04 and not already_has_line:
+                    px0, py0 = max(0, int(bb_norm[0] * w_px) - 4), max(0, int(bb_norm[1] * h_px) - 4)
+                    px1, py1 = min(w_px, int(bb_norm[2] * w_px) + 4), min(h_px, int(bb_norm[3] * h_px) + 4)
+                    crop_rgb = rgb_arr[py0:py1, px0:px1].astype(np.float32)
+                    cv = np.maximum(np.maximum(crop_rgb[:, :, 0], crop_rgb[:, :, 1]), crop_rgb[:, :, 2])
+                    cmn = np.minimum(np.minimum(crop_rgb[:, :, 0], crop_rgb[:, :, 1]), crop_rgb[:, :, 2])
+                    cs = np.where(cv > 1.0, ((cv - cmn) / cv) * 255.0, 0.0)
+                    # Invert so white text (high V, low S) becomes black ink (0) on white background (255)
+                    inv_gray = np.clip((255.0 - cv) + 0.85 * cs, 0.0, 255.0).astype(np.uint8)
+                    txt_pill = ""
+                    try:
+                        import pytesseract
+                        from PIL import Image
+                        txt_pill = pytesseract.image_to_string(
+                            Image.fromarray(inv_gray), config="--oem 1 --psm 7"
+                        ).strip()
+                    except Exception:
+                        pass
+                    txt_pill = RegexCatalog.clean_text(re.sub(r"^[\|!\[\]\(\)—–\-\s]+|[\|!\[\]\(\)—–\-\s]+$", "", txt_pill))
+                    if len(txt_pill) >= 3 and any(c.isalpha() for c in txt_pill):
+                        bh_pt = (bb_norm[3] - bb_norm[1]) * (h_px * 72.0 / max(72.0, float(dpi)))
+                        recovered_lines.append({
+                            "text": txt_pill,
+                            "bbox_norm": bb_norm,
+                            "size_pt": max(11.5, round(bh_pt * 0.62, 2)),
+                            "fg_rgb": (255, 255, 255),
+                            "bg_rgb": mean_rgb,
+                            "in_banner": True,
+                            "font_family": "sans",
+                            "is_bold": True,
+                            "first_bold": True,
+                            "is_italic": False,
+                            "thickness": 1.45,
+                        })
+    return banners, recovered_lines
+
+
 class IndraModularEngine:
     """Core modular engine coordinating extraction backends with fallback resilience."""
 
@@ -364,6 +481,66 @@ class IndraModularEngine:
         self.chapter_prototypes: dict[str, list[HeadingPrototype]] = defaultdict(list)
         self.document_toc: list[dict[str, Any]] = []
         self._sticky_profile_id: Optional[str] = None
+
+    def _align_and_interleave_toc_headings(
+        self, ir: PageElements, preassigned_page_toc: list[dict[str, Any]]
+    ) -> None:
+        """Aligns preassigned document TOC entries to page elements without erasing valid body content."""
+        def _nk(s: str) -> str:
+            return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+
+        for toc_e in preassigned_page_toc:
+            toc_title = toc_e.get("title", "").strip()
+            if not toc_title:
+                continue
+            toc_level = int(toc_e.get("level", 2))
+            toc_nk = _nk(toc_title)
+            tk_tokens = set(toc_nk.split())
+
+            # Find matching elements on the page
+            best_el: Optional[PageElement] = None
+            best_score = 0.0
+
+            for el in ir.elements:
+                if el.in_table or el.is_suppressed_furniture:
+                    continue
+                el_nk = _nk(el.text)
+                if not el_nk:
+                    continue
+                if el_nk == toc_nk:
+                    best_el = el
+                    best_score = 1.0
+                    break
+                # Partial token overlap
+                el_toks = set(el_nk.split())
+                if tk_tokens and el_toks.issubset(tk_tokens):
+                    sc = len(el_toks) / len(tk_tokens)
+                    if sc > best_score:
+                        best_score = sc
+                        best_el = el
+
+            if best_el is not None and best_score >= 0.50:
+                best_el.role = "heading"
+                best_el.heading_level = toc_level
+                best_el.heading_confidence = max(best_el.heading_confidence, 0.95)
+                if toc_e.get("heading_path"):
+                    best_el.heading_path = toc_e["heading_path"]
+
+                # Check secondary fragments that overlap with TOC text: protect body elements
+                for frag_e in ir.elements:
+                    if frag_e is best_el or frag_e.in_table or frag_e.is_suppressed_furniture:
+                        continue
+                    frag_nk = _nk(frag_e.text)
+                    frag_tokens = set(frag_nk.split())
+                    if (
+                        len(frag_e.text.split()) <= 10
+                        and not frag_e.in_table
+                        and frag_tokens
+                        and frag_tokens.issubset(tk_tokens)
+                        and abs(frag_e.center_y - best_el.center_y) <= 0.04
+                    ):
+                        frag_e.is_suppressed_furniture = True
+                        frag_e.role = "furniture"
 
     def resolve_profile(self, ir: PageElements, has_native_spans: bool) -> LayoutProfile:
         if self.explicit_profile_id and self.explicit_profile_id in LAYOUT_PROFILES:
@@ -541,6 +718,7 @@ class IndraModularEngine:
                     if len(rows := [[str(c or "").strip() for c in r] for r in (t.extract() or []) if any(c for c in r)]) >= 2
                     and max(len(r) for r in rows) >= 2
                     and not is_description_list_rows(rows)
+                    and sum(1 for r in rows for cell in r if RegexCatalog.TOC_DOT_LEADER.search(cell)) < max(1, int(0.30 * len(rows)))
                 ]
                 words = page.extract_words(
                     x_tolerance=2.5,
@@ -551,17 +729,21 @@ class IndraModularEngine:
                 if not words:
                     return None
 
-                # Subscript / Superscript handling with relative sizing
-                words.sort(key=lambda x: (float(x["bottom"]), float(x["x0"])))
+                # Subscript / Superscript handling with vertical center overlap
+                words.sort(key=lambda x: (float(x["top"]), float(x["x0"])))
                 row_buckets: list[list[dict[str, Any]]] = []
                 for wd in words:
-                    if (
-                        row_buckets
-                        and abs(float(wd["bottom"]) - float(row_buckets[-1][0]["bottom"])) <= 2.4
-                        and abs(float(wd.get("size") or 10.0) - float(row_buckets[-1][-1].get("size") or 10.0)) <= 1.4
-                    ):
-                        row_buckets[-1].append(wd)
-                    else:
+                    cy = 0.5 * (float(wd["top"]) + float(wd["bottom"]))
+                    h_wd = max(4.0, float(wd["bottom"]) - float(wd["top"]))
+                    placed = False
+                    for rb in reversed(row_buckets[-4:] if len(row_buckets) >= 4 else row_buckets):
+                        rb_cy = 0.5 * (float(rb[0]["top"]) + float(rb[0]["bottom"]))
+                        rb_h = max(4.0, float(rb[0]["bottom"]) - float(rb[0]["top"]))
+                        if abs(cy - rb_cy) <= 0.52 * max(h_wd, rb_h):
+                            rb.append(wd)
+                            placed = True
+                            break
+                    if not placed:
                         row_buckets.append([wd])
 
                 # Intra-row column splitting using dynamic strip channels
@@ -591,8 +773,23 @@ class IndraModularEngine:
 
                 lines = []
                 for seg in segments:
-                    seg_words = [str(x.get("text", "")) for x in seg]
-                    txt = RegexCatalog.clean_text(" ".join(seg_words))
+                    out_tokens: list[str] = []
+                    for idx_w, wd in enumerate(seg):
+                        w_str = str(wd.get("text", "")).strip()
+                        if not w_str:
+                            continue
+                        if idx_w > 0 and out_tokens:
+                            prev_w = seg[idx_w - 1]
+                            gap_pt = float(wd["x0"]) - float(prev_w["x1"])
+                            sz_max = max(float(wd.get("size") or 10.0), float(prev_w.get("size") or 10.0))
+                            sz_min = min(float(wd.get("size") or 10.0), float(prev_w.get("size") or 10.0))
+                            is_script_pair = (sz_min <= 0.84 * sz_max or abs(float(wd["bottom"]) - float(prev_w["bottom"])) >= 0.8) and gap_pt <= 0.38 * sz_max
+                            is_blood_gas = gap_pt <= 2.2 and bool(re.match(r"^(?:P|Pa|Fi|Sp|Sa|a|v|O|CO|H|N|2|3|4)+$", out_tokens[-1] + w_str))
+                            if is_script_pair or is_blood_gas:
+                                out_tokens[-1] = f"{out_tokens[-1]}{w_str}"
+                                continue
+                        out_tokens.append(w_str)
+                    txt = RegexCatalog.clean_text(" ".join(out_tokens))
                     if not txt:
                         continue
                     x0 = min(float(x["x0"]) for x in seg)
@@ -647,36 +844,107 @@ class IndraModularEngine:
         try:
             page = doc[page_number - 1]
             w, h, tp = float(page.get_width()), float(page.get_height()), page.get_textpage()
-            try:
-                lines = [
-                    {
-                        "text": txt,
-                        "bbox_norm": (x0 / w, max(0.0, 1.0 - (y1 / h)), x1 / w, min(1.0, 1.0 - (y0 / h))),
-                        "size_pt": max(8.0, abs(y1 - y0)),
-                        "fg_rgb": (0, 0, 0),
-                        "font_family": "serif",
-                        "is_bold": False,
-                        "is_italic": False,
-                    }
-                    for idx in range(tp.count_rects())
-                    for x0, y0, x1, y1 in [tp.get_rect(idx)]
-                    if (txt := RegexCatalog.clean_text(tp.get_text_bounded(x0, y0, x1, y1)))
-                ]
-            finally:
+            n_rects = tp.count_rects()
+            lines: list[dict[str, Any]] = []
+            banners: list[tuple[BBox, RGB]] = []
+            source_type = "text"
+
+            if n_rects >= 3 and self.mode != "ocr":
+                try:
+                    lines = [
+                        {
+                            "text": txt,
+                            "bbox_norm": (x0 / w, max(0.0, 1.0 - (y1 / h)), x1 / w, min(1.0, 1.0 - (y0 / h))),
+                            "size_pt": max(8.0, abs(y1 - y0)),
+                            "fg_rgb": (0, 0, 0),
+                            "font_family": "serif",
+                            "is_bold": False,
+                            "is_italic": False,
+                        }
+                        for idx in range(n_rects)
+                        for x0, y0, x1, y1 in [tp.get_rect(idx)]
+                        if (txt := RegexCatalog.clean_text(tp.get_text_bounded(x0, y0, x1, y1)))
+                    ]
+                finally:
+                    tp.close()
+            else:
                 tp.close()
+                source_type = "ocr"
+                # Raster render at self.dpi
+                scale = float(self.dpi) / 72.0
+                bitmap = page.render(scale=scale)
+                pil_img = bitmap.to_pil()
+                rgb_arr = np.array(pil_img.convert("RGB"), dtype=np.uint8)
+                h_px, w_px, _ = rgb_arr.shape
+                bitmap.close()
+                pil_img.close()
+
+                # 1. Standard pytesseract image_to_data if available
+                try:
+                    import pytesseract
+                    from PIL import Image
+                    gray_img = Image.fromarray(rgb_arr).convert("L")
+                    ocr_data = pytesseract.image_to_data(gray_img, output_type=pytesseract.Output.DICT)
+                    n_boxes = len(ocr_data.get("text", []))
+                    line_groups: dict[tuple[int, int, int], list[dict[str, Any]]] = {}
+                    for bi in range(n_boxes):
+                        t_b = str(ocr_data["text"][bi]).strip()
+                        if not t_b or int(ocr_data["conf"][bi]) < 20:
+                            continue
+                        block_num = ocr_data["block_num"][bi]
+                        par_num = ocr_data["par_num"][bi]
+                        line_num = ocr_data["line_num"][bi]
+                        key_ln = (block_num, par_num, line_num)
+                        if key_ln not in line_groups:
+                            line_groups[key_ln] = []
+                        line_groups[key_ln].append({
+                            "text": t_b,
+                            "x0": ocr_data["left"][bi],
+                            "y0": ocr_data["top"][bi],
+                            "x1": ocr_data["left"][bi] + ocr_data["width"][bi],
+                            "y1": ocr_data["top"][bi] + ocr_data["height"][bi],
+                        })
+                    for grp in line_groups.values():
+                        grp_txt = RegexCatalog.clean_text(" ".join(b["text"] for b in grp))
+                        if not grp_txt:
+                            continue
+                        gx0 = min(b["x0"] for b in grp) / float(w_px)
+                        gy0 = min(b["y0"] for b in grp) / float(h_px)
+                        gx1 = max(b["x1"] for b in grp) / float(w_px)
+                        gy1 = max(b["y1"] for b in grp) / float(h_px)
+                        bh_pt = (gy1 - gy0) * h
+                        lines.append({
+                            "text": grp_txt,
+                            "bbox_norm": (gx0, gy0, gx1, gy1),
+                            "size_pt": max(8.0, round(bh_pt * 0.82, 2)),
+                            "fg_rgb": (0, 0, 0),
+                            "font_family": "sans",
+                            "is_bold": False,
+                            "is_italic": False,
+                        })
+                except Exception as ocr_err:
+                    logger.debug("Raster pytesseract OCR unavailable: %s", ocr_err)
+
+                # 2. White-on-Color Pill Banner detection + Inverted OCR
+                detected_banners, pill_lines = _detect_and_ocr_chromatic_pill_banners(
+                    rgb_arr, lines, dpi=self.dpi
+                )
+                banners.extend(detected_banners)
+                lines.extend(pill_lines)
+
             page.close()
-            if lines:
+            if lines or banners:
                 return {
                     "width": w,
                     "height": h,
-                    "has_spans": True,
+                    "has_spans": source_type == "text",
                     "lines": lines,
                     "tables": [],
                     "figures": [],
-                    "banners": [],
+                    "banners": banners,
                     "underlines": [],
                     "callouts": [],
-                    "source": "text",
+                    "source": source_type,
                 }
         finally:
             doc.close()
@@ -692,6 +960,38 @@ class IndraModularEngine:
             h_ref=h_ref,
         )
         detected_tables = list(raw.get("tables", []))
+
+        # Contributor / Borderless Numbered Table Detector (issues.md §5.1)
+        contributor_indices = [
+            i for i, ln in enumerate(raw_lines)
+            if RegexCatalog.CONTRIBUTOR_ROW.match(str(ln.get("text", "")))
+        ]
+        has_contrib_header = any(
+            re.search(r"(?i)(?:NAME|LIST)\s+OF\s+CONTRIBUTORS", str(ln.get("text", "")))
+            for ln in raw_lines
+        )
+        if len(contributor_indices) >= 4 or (has_contrib_header and len(contributor_indices) >= 2):
+            c_rows: list[list[str]] = []
+            for ci in contributor_indices:
+                raw_lines[ci]["in_table"] = True
+                c_text = str(raw_lines[ci].get("text", "")).strip()
+                m_sl = re.match(r"^(\d{1,2})[\.\)\s]+(.*)$", c_text)
+                if m_sl:
+                    c_rows.append([m_sl.group(1), m_sl.group(2).strip()])
+                else:
+                    c_rows.append([str(len(c_rows) + 1), c_text])
+            if c_rows:
+                cb_x0 = min(ln.get("bbox_norm", (0, 0, 1, 1))[0] for i, ln in enumerate(raw_lines) if i in contributor_indices)
+                cb_y0 = min(ln.get("bbox_norm", (0, 0, 1, 1))[1] for i, ln in enumerate(raw_lines) if i in contributor_indices)
+                cb_x1 = max(ln.get("bbox_norm", (0, 0, 1, 1))[2] for i, ln in enumerate(raw_lines) if i in contributor_indices)
+                cb_y1 = max(ln.get("bbox_norm", (0, 0, 1, 1))[3] for i, ln in enumerate(raw_lines) if i in contributor_indices)
+                detected_tables.append(
+                    TableGrid(
+                        bbox_norm=(cb_x0, cb_y0, cb_x1, cb_y1),
+                        rows=c_rows,
+                        headers=["Sl. No.", "Name & Designation of Contributor"],
+                    )
+                )
 
         # Base elements
         elements: list[PageElement] = []

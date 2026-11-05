@@ -71,6 +71,9 @@ class FurnitureSuppressionPolicy:
     filter_page_numbers: bool
     filter_running_headers: bool
     filter_decorative_rules: bool
+    suppress_quoted_epigraphs_from_headings: bool = True
+    suppress_citation_and_doi_lines: bool = True
+    min_repeat_pages: int = 2
     exception_zones: tuple[CoordinateZone, ...] = ()
 
 @dataclass(frozen=True)
@@ -223,7 +226,7 @@ LAYOUT_PROFILES: Mapping[str, LayoutProfile] = MappingProxyType({
             }),
         ),
         furniture_suppression=FurnitureSuppressionPolicy(
-            header_max_y_ratio=0.100,
+            header_max_y_ratio=0.105,
             footer_min_y_ratio=0.910,
             filter_page_numbers=True,
             filter_running_headers=True,
