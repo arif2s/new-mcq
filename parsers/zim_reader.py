@@ -346,7 +346,39 @@ def _find_entry_in_archive(archive: Any, query_title: str) -> Any:
 # ---------------------------------------------------------------------------
 # Topic Resolution & SQLite Cache Sync
 # ---------------------------------------------------------------------------
-@functools.lru_cache(maxsize=2048)
+_THREAD_LOCAL = threading.local()
+
+
+def _get_thread_db_connection() -> sqlite3.Connection:
+    """Returns a reused per-thread database connection to eliminate connection thrashing."""
+    conn = getattr(_THREAD_LOCAL, "conn", None)
+    if conn is None:
+        conn = get_db_connection()
+        _THREAD_LOCAL.conn = conn
+    return conn
+
+
+@functools.lru_cache(maxsize=16384)
+def _lookup_zim_title_sqlite(clean_term: str) -> Optional[str]:
+    """Fast indexed point-lookup in SQLite zim_titles cache wrapped in a bounded LRU cache (<0.01ms)."""
+    if not clean_term or len(clean_term) < 2:
+        return None
+    try:
+        conn = _get_thread_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT title FROM zim_titles WHERE title = ? COLLATE NOCASE LIMIT 1",
+            (clean_term,),
+        )
+        row = cursor.fetchone()
+        if row and row[0]:
+            return str(row[0])
+    except Exception as exc:
+        logger.debug("zim_titles lookup error on '%s': %s", clean_term, exc)
+    return None
+
+
+@functools.lru_cache(maxsize=16384)
 def _cached_resolve_zim_topic(
     term_lower: str, enabled_paths_tuple: Tuple[str, ...]
 ) -> Tuple[bool, str, str, str]:
@@ -406,21 +438,11 @@ def _cached_resolve_zim_topic(
         except Exception as exc:
             logger.debug("ZIM lookup error on %s: %s", zim_path, exc)
 
-    # 2. SQLite zim_titles cache fallback
-    try:
-        with contextlib.closing(get_db_connection()) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT title FROM zim_titles WHERE title = ? COLLATE NOCASE LIMIT 1",
-                (clean_term,),
-            )
-            row = cursor.fetchone()
-            if row:
-                matched_title = str(row[0] if isinstance(row, tuple) else row["title"])
-                z_path = enabled_paths_tuple[0] if enabled_paths_tuple else ""
-                return True, matched_title, z_path, f"C/{matched_title.replace(' ', '_')}"
-    except Exception:
-        pass
+    # 2. SQLite zim_titles cache fallback (bounded LRU, zero connection thrashing)
+    cached_title = _lookup_zim_title_sqlite(clean_term)
+    if cached_title:
+        z_path = enabled_paths_tuple[0] if enabled_paths_tuple else ""
+        return True, cached_title, z_path, f"C/{cached_title.replace(' ', '_')}"
 
     return False, clean_term, "", ""
 

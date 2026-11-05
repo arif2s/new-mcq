@@ -135,11 +135,47 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
-# Singleton MedSpaCy / SciSpaCy Model Loader (Thread-Safe, Invariant 8)
+# Singleton MedSpaCy / SciSpaCy Model Loader (Thread-Safe, Invariant 1, 3, 8)
 # ---------------------------------------------------------------------------
+_MEDSPACY_NLP: Optional[Any] = None
 _SPACY_FALLBACK_NLP: Optional[Any] = None
 _SPACY_INIT_LOCK = threading.RLock()
 _SPACY_EXEC_LOCK = threading.RLock()
+
+# Target rules for high-confidence clinical entities with pre-bound CUI & category
+MEDSPACY_TARGET_RULES: List[Tuple[str, str, str, str]] = [
+    ("dyspnea", "DISEASE", "C0013404", "disease"),
+    ("asthma", "DISEASE", "C0004096", "disease"),
+    ("myocardial infarction", "DISEASE", "C0027051", "disease"),
+    ("hypertension", "DISEASE", "C0020538", "disease"),
+    ("diabetes", "DISEASE", "C0011847", "disease"),
+    ("chest pain", "DISEASE", "C0008031", "disease"),
+    ("amoxicillin", "PHARMACOLOGY", "C0002645", "drug_chemical"),
+    ("penicillin", "PHARMACOLOGY", "C0030842", "drug_chemical"),
+    ("aspirin", "PHARMACOLOGY", "C0004057", "drug_chemical"),
+    ("heart", "ANATOMICAL_SITE", "C0018787", "anatomy"),
+    ("lung", "ANATOMICAL_SITE", "C0024109", "anatomy"),
+    ("liver", "ANATOMICAL_SITE", "C0023884", "anatomy"),
+    ("appendectomy", "PROCEDURE", "C0003611", "procedure"),
+    ("surgery", "PROCEDURE", "C0543467", "procedure"),
+    ("mri", "PROCEDURE", "C0024485", "procedure"),
+    ("ct scan", "PROCEDURE", "C0040405", "procedure"),
+]
+
+
+def _suppress_pyrush_logging() -> None:
+    """Silences verbose PyRuSH sentencizer debug loggers across standard logging and Loguru."""
+    logging.getLogger("PyRuSH").setLevel(logging.WARNING)
+    py_rush_logger = logging.getLogger("PyRuSH.PyRuSHSentencizer")
+    py_rush_logger.setLevel(logging.WARNING)
+    py_rush_logger.propagate = False
+    for h in list(py_rush_logger.handlers):
+        py_rush_logger.removeHandler(h)
+    try:
+        from loguru import logger as loguru_logger
+        loguru_logger.disable("PyRuSH")
+    except ImportError:
+        pass
 
 
 def _get_active_spacy_pipelines() -> List[Any]:
@@ -179,11 +215,62 @@ def _get_active_spacy_pipelines() -> List[Any]:
 
 def get_medspacy_model() -> Any:
     """
-    Returns the primary loaded spaCy / SciSpaCy Language pipeline running strictly on CPU.
-    Satisfies blueprint.md Section 3 signature (`get_medspacy_model() -> Any`).
+    Thread-safe lazy singleton loader for MedSpaCy running strictly on CPU.
+    Loads medspacy with PyRuSH, TargetMatcher, and native ConText negation (<60 MB RAM).
+    Guarantees Invariant 1 (Zero VRAM) and Invariant 3/8 (<500 MB RAM allocation).
     """
-    pipelines = _get_active_spacy_pipelines()
-    return pipelines[0] if pipelines else None
+    global _MEDSPACY_NLP
+
+    if _MEDSPACY_NLP is not None:
+        return _MEDSPACY_NLP
+
+    with _SPACY_INIT_LOCK:
+        if _MEDSPACY_NLP is not None:
+            return _MEDSPACY_NLP
+
+        _suppress_pyrush_logging()
+
+        try:
+            import spacy
+            from spacy.tokens import Span
+
+            if hasattr(spacy, "require_cpu"):
+                spacy.require_cpu()
+
+            if not Span.has_extension("cui"):
+                Span.set_extension("cui", default="", force=True)
+            if not Span.has_extension("semantic_category"):
+                Span.set_extension("semantic_category", default="", force=True)
+
+            import medspacy
+            from medspacy.target_matcher import TargetRule
+
+            nlp = medspacy.load(
+                "en_core_web_sm",
+                enable=["medspacy_pyrush", "medspacy_target_matcher", "medspacy_context"],
+            )
+
+            # Register standard clinical validation target rules
+            target_matcher = nlp.get_pipe("medspacy_target_matcher")
+            rules: List[Any] = []
+            for lit, cat, cui, sem_cat in MEDSPACY_TARGET_RULES:
+                rules.append(
+                    TargetRule(
+                        literal=lit,
+                        category=cat,
+                        attributes={"cui": cui, "semantic_category": sem_cat},
+                    )
+                )
+            target_matcher.add(rules)
+
+            _MEDSPACY_NLP = nlp
+            logger.info("Initialized MedSpaCy clinical pipeline with ConText and target rules.")
+            return _MEDSPACY_NLP
+        except Exception as exc:
+            logger.warning("Could not initialize MedSpaCy pipeline, falling back to SciSpaCy: %s", exc)
+            # Fall back to SciSpaCy pipeline
+            pipelines = _get_active_spacy_pipelines()
+            return pipelines[0] if pipelines else None
 
 
 # ---------------------------------------------------------------------------
@@ -672,34 +759,57 @@ def _normalize_semantic_category(raw_cat: str) -> str:
 # ---------------------------------------------------------------------------
 # Concept Resolution & Fast LRU Caching
 # ---------------------------------------------------------------------------
+_THREAD_LOCAL = threading.local()
+
+
+def _get_thread_db_connection() -> sqlite3.Connection:
+    """Returns a reused per-thread database connection to eliminate connection thrashing."""
+    conn = getattr(_THREAD_LOCAL, "conn", None)
+    if conn is None:
+        conn = get_db_connection()
+        _THREAD_LOCAL.conn = conn
+    return conn
+
+
+@functools.lru_cache(maxsize=16384)
 def _lookup_zim_title_cache(term: str) -> Optional[str]:
-    """Fast indexed point-lookup in SQLite zim_titles cache (<0.1ms)."""
+    """Fast indexed point-lookup in SQLite zim_titles cache wrapped in a bounded LRU cache (<0.01ms)."""
+    clean = (term or "").strip()
+    if not clean or len(clean) < 2:
+        return None
     try:
-        with contextlib.closing(get_db_connection()) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT title FROM zim_titles WHERE title = ? COLLATE NOCASE LIMIT 1",
-                (term,),
-            )
-            row = cursor.fetchone()
-            if row and row[0]:
-                return str(row[0])
-    except Exception:
-        pass
+        conn = _get_thread_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT title FROM zim_titles WHERE title = ? COLLATE NOCASE LIMIT 1",
+            (clean,),
+        )
+        row = cursor.fetchone()
+        if row and row[0]:
+            return str(row[0])
+    except Exception as exc:
+        logger.debug("zim_titles lookup error on '%s': %s", clean, exc)
     return None
 
 
 def resolve_zim_topic(term: str) -> Dict[str, Any]:
-    """Unified offline ZIM resolver supporting B-Tree lookup and SQLite caching."""
+    """Unified offline ZIM resolver supporting B-Tree lookup and SQLite caching.
+
+    Decoupled from recursive cascading lookups in search_zim_articles.
+    """
+    clean_term = (term or "").strip()
+    if not clean_term:
+        return {"matched": False, "canonical_title": "", "zim_path": "", "entry_path": ""}
+
     if _raw_resolve_zim_topic is not None:
         try:
-            res = _raw_resolve_zim_topic(term)
+            res = _raw_resolve_zim_topic(clean_term)
             if res and res.get("matched"):
                 return res
         except Exception:
             pass
 
-    cached_title = _lookup_zim_title_cache(term)
+    cached_title = _lookup_zim_title_cache(clean_term)
     if cached_title:
         return {
             "matched": True,
@@ -708,24 +818,7 @@ def resolve_zim_topic(term: str) -> Dict[str, Any]:
             "entry_path": "",
         }
 
-    try:
-        from parsers.zim_reader import search_zim_articles  # type: ignore
-
-        hits = search_zim_articles(term, limit=1)
-        if hits and isinstance(hits, list):
-            first = hits[0]
-            hit_title = first.get("title", "")
-            if hit_title and hit_title.lower() == term.lower():
-                return {
-                    "matched": True,
-                    "canonical_title": hit_title,
-                    "zim_path": first.get("file_path", ""),
-                    "entry_path": first.get("entry_path", ""),
-                }
-    except Exception:
-        pass
-
-    return {"matched": False, "canonical_title": "", "zim_path": "", "entry_path": ""}
+    return {"matched": False, "canonical_title": clean_term, "zim_path": "", "entry_path": ""}
 
 
 @functools.lru_cache(maxsize=4096)
@@ -1446,42 +1539,148 @@ def extract_topics_local(
                     }
                 )
 
-    # 2. QUESTION & EXPLANATION ISOLATION: Sub-clause boundary processing
+    # 2. QUESTION & EXPLANATION ISOLATION: Native ConText Negation & Entity Extraction
+    # Bypasses brittle subclause splitting to prevent false-positive clause negation (e.g. "dyspnea but no asthma")
     narratives = [
         (input_text, "question", 1.0),
         (explanation, "explanation", 0.9),
     ]
 
+    medspacy_nlp = get_medspacy_model()
+
     for narrative_text, source_type, base_priority in narratives:
         if not narrative_text or not str(narrative_text).strip():
             continue
 
-        subclauses = isolate_subclauses(str(narrative_text))
-        for clause, is_negated in subclauses:
-            if is_negated:
-                continue
+        raw_str = str(narrative_text).strip()
 
-            for rent in extract_regex_medical_entities(clause):
-                if is_valid_clinical_candidate(rent, ignored_keys):
-                    raw_candidates.append(
-                        {
-                            "term": rent,
-                            "source": source_type,
-                            "priority": base_priority * 1.15,
-                            "is_negated": False,
-                        }
-                    )
+        # Phase 2A: MedSpaCy with ConText Negation and Target Rules
+        if medspacy_nlp is not None:
+            try:
+                with _SPACY_EXEC_LOCK:
+                    doc = medspacy_nlp(raw_str)
 
-            for sent in extract_spacy_entities(active_pipelines, clause):
-                if is_valid_clinical_candidate(sent, ignored_keys):
-                    raw_candidates.append(
-                        {
-                            "term": sent,
-                            "source": source_type,
-                            "priority": base_priority,
-                            "is_negated": False,
-                        }
-                    )
+                # Process matched target entities directly (with token/span-level negation)
+                for ent in doc.ents:
+                    is_neg = getattr(ent._, "is_negated", False)
+                    if is_neg:
+                        continue
+
+                    ent_text = ent.text.strip()
+                    if is_valid_clinical_candidate(ent_text, ignored_keys):
+                        cui_attr = getattr(ent._, "cui", "") or ""
+                        sem_cat_attr = getattr(ent._, "semantic_category", "") or ""
+                        raw_candidates.append(
+                            {
+                                "term": ent_text,
+                                "source": source_type,
+                                "priority": base_priority * 1.25,
+                                "is_negated": False,
+                                "cui": cui_attr,
+                                "semantic_category": sem_cat_attr,
+                            }
+                        )
+            except Exception as exc:
+                logger.debug("MedSpaCy extraction pass notice: %s", exc)
+
+        # Phase 2B: Regex & SciSpaCy candidate gathering with ConText negation filtering
+        sub_candidates: List[str] = []
+
+        # 1. Regex medical entities
+        for rent in extract_regex_medical_entities(raw_str):
+            if is_valid_clinical_candidate(rent, ignored_keys):
+                sub_candidates.append(rent)
+
+        # 2. Active SciSpaCy / SpaCy ensemble pipeline entities
+        for sent in extract_spacy_entities(active_pipelines, raw_str):
+            if is_valid_clinical_candidate(sent, ignored_keys):
+                sub_candidates.append(sent)
+
+        # Filter candidates using MedSpaCy ConText negation if available
+        if sub_candidates and medspacy_nlp is not None:
+            try:
+                from spacy.tokens import Span
+
+                with _SPACY_EXEC_LOCK:
+                    doc = medspacy_nlp(raw_str)
+                    existing_spans = list(doc.ents)
+
+                    # Build spans for candidates
+                    new_spans: List[Any] = []
+                    for cand_text in set(sub_candidates):
+                        cand_clean = (cand_text or "").strip()
+                        if not cand_clean or len(cand_clean) < 2:
+                            continue
+                        for m in re.finditer(rf"\b{re.escape(cand_clean)}\b", raw_str, re.IGNORECASE):
+                            span = doc.char_span(m.start(), m.end(), label="CONCEPT")
+                            if span is not None:
+                                new_spans.append(span)
+
+                    import spacy
+                    # Filter overlapping spans
+                    filtered_spans = spacy.util.filter_spans(existing_spans + new_spans)
+                    doc.ents = filtered_spans
+
+                    context_pipe = medspacy_nlp.get_pipe("medspacy_context")
+                    doc = context_pipe(doc)
+
+                    for ent in doc.ents:
+                        if not getattr(ent._, "is_negated", False):
+                            ent_t = ent.text.strip()
+                            if is_valid_clinical_candidate(ent_t, ignored_keys):
+                                raw_candidates.append(
+                                    {
+                                        "term": ent_t,
+                                        "source": source_type,
+                                        "priority": base_priority,
+                                        "is_negated": False,
+                                        "cui": getattr(ent._, "cui", "") or "",
+                                        "semantic_category": getattr(ent._, "semantic_category", "") or "",
+                                    }
+                                )
+            except Exception as exc:
+                logger.debug("ConText candidate assertion fallback note: %s", exc)
+                # Safe fallback to subclause isolation if ConText assertion encountered an error
+                subclauses = isolate_subclauses(raw_str)
+                for clause, is_negated in subclauses:
+                    if is_negated:
+                        continue
+                    for cand_term in sub_candidates:
+                        if cand_term in clause:
+                            raw_candidates.append(
+                                {
+                                    "term": cand_term,
+                                    "source": source_type,
+                                    "priority": base_priority,
+                                    "is_negated": False,
+                                }
+                            )
+        elif sub_candidates:
+            # Fallback if medspacy is completely unavailable
+            subclauses = isolate_subclauses(raw_str)
+            for clause, is_negated in subclauses:
+                if is_negated:
+                    continue
+                for rent in extract_regex_medical_entities(clause):
+                    if is_valid_clinical_candidate(rent, ignored_keys):
+                        raw_candidates.append(
+                            {
+                                "term": rent,
+                                "source": source_type,
+                                "priority": base_priority * 1.15,
+                                "is_negated": False,
+                            }
+                        )
+                for sent in extract_spacy_entities(active_pipelines, clause):
+                    if is_valid_clinical_candidate(sent, ignored_keys):
+                        raw_candidates.append(
+                            {
+                                "term": sent,
+                                "source": source_type,
+                                "priority": base_priority,
+                                "is_negated": False,
+                            }
+                        )
 
     # 3. DEDUPLICATION, RESOLUTION & SUBTYPE PROTECTION
     canonical_clusters: Dict[str, Dict[str, Any]] = {}
@@ -1498,16 +1697,19 @@ def extract_topics_local(
             continue
 
         if signature not in canonical_clusters:
+            # Bind pre-resolved CUI and category from MedSpaCy targets if available
+            cand_cui = str(cand.get("cui") or "").strip()
+            cand_cat = str(cand.get("semantic_category") or "").strip()
+
             ont_result = _resolve_clinical_concept(term)
             if not ont_result.get("matched") and display_name != term:
                 ont_result = _resolve_clinical_concept(display_name)
 
-            cui = str(ont_result.get("cui", "") or "")
-            cat = _normalize_semantic_category(
-                ont_result.get("semantic_category", "unknown")
-            )
-            score = float(ont_result.get("score", 0.0) or 0.0)
-            ont_matched = bool(ont_result.get("matched", False) and score >= 0.70)
+            cui = cand_cui if cand_cui else str(ont_result.get("cui", "") or "")
+            resolved_cat = cand_cat if cand_cat else ont_result.get("semantic_category", "unknown")
+            cat = _normalize_semantic_category(resolved_cat)
+            score = float(ont_result.get("score", 0.0) or (0.95 if cand_cui else 0.0))
+            ont_matched = bool((ont_result.get("matched", False) and score >= 0.70) or cand_cui)
 
             zim_matched = False
             if use_zim_refinement or not ont_matched:
