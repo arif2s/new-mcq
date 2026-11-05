@@ -842,8 +842,43 @@ body.dark-theme .moon-icon { display: none; }
   line-height: 1.6;
 }
 
-.prose p, .prose div, .prose span, .prose li, .prose td, .prose th {
+.prose p {
   color: var(--text-primary);
+  margin-top: 0;
+  margin-bottom: 0.85rem;
+  line-height: 1.65;
+}
+
+.prose p:last-child {
+  margin-bottom: 0;
+}
+
+.prose ul, .prose ol {
+  margin-top: 0.35rem;
+  margin-bottom: 0.75rem;
+  padding-left: 1.25rem;
+}
+
+.prose li {
+  color: var(--text-primary);
+  margin-top: 0.15rem;
+  margin-bottom: 0.15rem;
+  line-height: 1.5;
+}
+
+.prose li p {
+  margin-bottom: 0.25rem;
+}
+
+.prose div, .prose span, .prose td, .prose th {
+  color: var(--text-primary);
+}
+
+/* For explanations containing consecutive linebreaks rendered with <br> */
+.prose br + br {
+  display: block;
+  content: "";
+  margin-top: 0.65rem;
 }
 
 .prose table, .prose .wikitable, .prose .infobox {

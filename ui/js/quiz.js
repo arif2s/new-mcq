@@ -848,6 +848,9 @@ async function persistSessionToBackend({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
+        if (typeof window.loadSessions === 'function') {
+            window.loadSessions(true);
+        }
     } catch (e) {
         console.error("Failed to save session to backend:", e);
     }
@@ -947,6 +950,9 @@ function renderQuestion() {
                     <button id="toggle-inspector-active" class="secondary-btn px-3 py-2 text-xs flex items-center gap-1.5 cursor-pointer" title="Show/Hide Reference Inspector">
                         📚 References
                     </button>
+                    <button id="btn-quit-quiz" class="px-3 py-2 rounded-xl text-xs font-semibold border border-danger-500/40 text-danger-300 bg-danger-500/10 hover:bg-danger-500/20 transition-all flex items-center gap-1.5 cursor-pointer" title="Quit quiz and save partial progress">
+                        ✕ Quit Quiz
+                    </button>
                     ${quizConfig.timeLimit > 0 ? `<div id="active-timer" class="px-4 py-2 glass-panel border border-gray-700 rounded-xl font-mono text-lg font-bold text-brand-400 shadow-inner">--:--</div>` : ''}
                 </div>
             </div>
@@ -955,8 +961,8 @@ function renderQuestion() {
                 <div class="h-2 rounded-full transition-all duration-500 bg-gradient-to-r from-brand-500 to-purple-500" style="width: ${Math.min(progressPct, 100)}%"></div>
             </div>
 
-            <div class="glass-card card-shade-1 p-8 mb-6 relative overflow-hidden flex-shrink-0">
-                <div class="mb-4 flex items-center justify-between gap-2">
+            <div class="glass-card card-shade-1 p-5 md:p-6 mb-4 relative overflow-hidden flex-shrink-0">
+                <div class="mb-3 flex items-center justify-between gap-2">
                     <span class="px-3 py-1 bg-brand-500/20 text-brand-300 rounded-full text-xs font-bold uppercase tracking-wider border border-brand-500/30">
                         ${window.escapeHTML(q.csv_topic_name || q.subject_name || currentQuiz.subjectName || currentQuiz.customTitle || 'General')}
                     </span>
@@ -964,16 +970,16 @@ function renderQuestion() {
                         Mode: ${quizConfig.mode}
                     </span>
                 </div>
-                <h2 class="text-xl font-semibold leading-relaxed mb-6">${window.escapeHTML(q.question)}</h2>
+                <h2 class="text-lg md:text-xl font-semibold leading-relaxed mb-4">${window.escapeHTML(q.question)}</h2>
 
-                <div class="space-y-3" id="options-container"></div>
+                <div class="space-y-2.5" id="options-container"></div>
             </div>
 
             <!-- Separate FSRS Spaced Repetition Rating Container -->
-            <div id="fsrs-rating-container" class="mb-4"></div>
+            <div id="fsrs-rating-container" class="mb-3"></div>
 
             <!-- Separate Explanation and References Container -->
-            <div id="feedback-container" class="flex-1 overflow-y-auto pr-2 mb-4 space-y-4"></div>
+            <div id="feedback-container" class="overflow-y-auto pr-2 mb-3 space-y-3"></div>
 
             <div class="flex justify-between items-center mt-auto pt-4 border-t border-gray-700/50">
                 <button id="btn-prev" class="secondary-btn px-6 py-3 rounded-xl disabled:opacity-30 font-medium cursor-pointer" ${currentIndex === 0 ? 'disabled' : ''}>
@@ -1069,10 +1075,10 @@ function renderQuestion() {
         let fbHtml = '';
         if (q.explanation && q.explanation !== 'No explanation provided.') {
             fbHtml += `
-                <div id="csv-explanation-card" class="animate-fade-in glass-panel border border-gray-700/50 hover:border-brand-500/50 rounded-2xl p-5 cursor-pointer transition-all hover:scale-[1.01] group relative" title="Click to view explanation in full readable note popup">
-                    <div class="flex items-center justify-between mb-2">
+                <div id="csv-explanation-card" class="animate-fade-in glass-panel border border-gray-700/50 hover:border-brand-500/50 rounded-2xl p-4 cursor-pointer transition-all hover:scale-[1.005] group relative max-h-36 overflow-y-auto" title="Click to view explanation in full readable note popup">
+                    <div class="flex items-center justify-between mb-2 sticky top-0 bg-transparent backdrop-blur-sm pb-1 border-b border-gray-700/30">
                         <h4 class="font-bold text-brand-300 text-xs uppercase tracking-wider flex items-center gap-1.5">
-                            📄 CSV Baseline Explanation
+                            📄 Explanation
                         </h4>
                         <span class="text-[11px] text-brand-400 group-hover:underline flex items-center gap-1 font-medium opacity-80">
                             🔍 Expand Note ↗
@@ -1133,6 +1139,67 @@ function renderQuestion() {
     }
 
     document.getElementById('toggle-inspector-active')?.addEventListener('click', toggleRightSidebar);
+    document.getElementById('btn-quit-quiz')?.addEventListener('click', handleQuitQuiz);
+}
+
+async function handleQuitQuiz() {
+    const answeredCount = Object.keys(quizAnswers).length;
+    const confirmMsg = answeredCount > 0
+        ? `Are you sure you want to quit this quiz? Your partial results (${answeredCount} answered) will be saved.`
+        : "Are you sure you want to quit this quiz?";
+
+    if (!window.confirm(confirmMsg)) {
+        return;
+    }
+
+    clearInterval(timers.overall);
+    clearInterval(timers.question);
+    clearTimeout(timers.autoAdvance);
+
+    if (currentQuiz) {
+        const answeredQuestions = [];
+        const answersList = [];
+
+        currentQuiz.questions.forEach(q => {
+            const ans = quizAnswers[q.id];
+            if (ans) {
+                answeredQuestions.push(q);
+                answersList.push({
+                    questionId: String(q.id),
+                    selected: ans.selected || "",
+                    isCorrect: Boolean(ans.isCorrect),
+                    timedOut: Boolean(ans.timedOut),
+                    timeSpentMs: Number(ans.timeSpentMs || 0),
+                    timestamp: Number(ans.timestamp || Date.now())
+                });
+            }
+        });
+
+        const timeUsed = times.start ? Math.floor((Date.now() - times.start) / 1000) : 0;
+
+        await persistSessionToBackend({
+            sessionId: currentQuiz.sessionId || `sess_${Date.now()}`,
+            subjectName: currentQuiz.subjectName,
+            customTitle: currentQuiz.customTitle,
+            questions: currentQuiz.questions,
+            answers: answersList,
+            topicsReviewed: currentQuiz.topicsReviewed,
+            topicList: currentQuiz.topicList,
+            isCompleted: false,
+            timeUsedSeconds: timeUsed
+        });
+
+        if (typeof window.loadSessions === 'function') {
+            window.loadSessions(true);
+        }
+
+        showToast("Quiz exited. Partial progress saved to Knowledge Hub.");
+    }
+
+    currentQuiz = null;
+    quizAnswers = {};
+    _syncQuizGlobals();
+    initQuizSetup();
 }
 
 async function submitFsrsScore(q, rating) {
@@ -1346,12 +1413,26 @@ function triggerBreakModal() {
 // 4. RESULTS & RIGHT SIDEBAR CLINICAL INSPECTOR
 // =========================================================
 
+let isFinishingQuiz = false;
+
 async function finishQuiz() {
+    if (isFinishingQuiz) return;
+    isFinishingQuiz = true;
+
     clearInterval(timers.overall);
     clearInterval(timers.question);
     clearTimeout(timers.autoAdvance);
 
-    if (!currentQuiz) return;
+    if (!currentQuiz) {
+        isFinishingQuiz = false;
+        return;
+    }
+
+    const nextBtn = document.getElementById('btn-next');
+    if (nextBtn) {
+        nextBtn.disabled = true;
+        nextBtn.innerHTML = `<span class="animate-pulse">Finishing Quiz... 🏁</span>`;
+    }
 
     const answeredQuestions = [];
     const answersList = [];
@@ -1371,9 +1452,10 @@ async function finishQuiz() {
         }
     });
 
-    const timeUsed = Math.floor((Date.now() - times.start) / 1000);
+    const timeUsed = times.start ? Math.floor((Date.now() - times.start) / 1000) : 0;
 
-    const savedPayload = await persistSessionToBackend({
+    const basePayload = {
+        id: currentQuiz.sessionId || `sess_${Date.now()}`,
         sessionId: currentQuiz.sessionId || `sess_${Date.now()}`,
         subjectName: currentQuiz.subjectName,
         customTitle: currentQuiz.customTitle,
@@ -1383,13 +1465,49 @@ async function finishQuiz() {
         topicList: currentQuiz.topicList,
         isCompleted: true,
         timeUsedSeconds: timeUsed
-    });
+    };
+
+    // Calculate score & accuracy immediately for synchronous local state & results rendering
+    const totalQ = currentQuiz.questions.length;
+    const correctCount = answersList.filter(a => a.isCorrect).length;
+    const wrongCount = answersList.filter(a => !a.isCorrect && !a.timedOut).length;
+    const unansweredCount = Math.max(0, totalQ - answersList.length);
+    const accuracy = answersList.length > 0 ? (correctCount / answersList.length) * 100 : 0;
+
+    const calculatedPayload = {
+        ...basePayload,
+        date: _getLocalDateString(new Date()),
+        timestamp: Date.now(),
+        lastAttempted: answersList.length > 0 ? Date.now() : 0,
+        totalQuestions: totalQ,
+        correctAnswers: correctCount,
+        wrongAnswers: wrongCount,
+        unanswered: unansweredCount,
+        score: correctCount,
+        maxScore: totalQ,
+        accuracy,
+        timeLimitSeconds: (quizConfig.timeLimit || 0) * 60
+    };
 
     if (window.AppState && window.AppState.recordQuizCompletion) {
-        window.AppState.recordQuizCompletion(savedPayload, answeredQuestions, quizAnswers);
+        try {
+            window.AppState.recordQuizCompletion(calculatedPayload, answeredQuestions, quizAnswers);
+        } catch (err) {
+            console.error("Error in recordQuizCompletion:", err);
+        }
     }
 
-    renderResults(savedPayload, answeredQuestions);
+    // Render results immediately without waiting for network roundtrip to eliminate click delay
+    renderResults(calculatedPayload, answeredQuestions);
+
+    // Persist to backend asynchronously in background
+    try {
+        await persistSessionToBackend(basePayload);
+    } catch (e) {
+        console.error("Error persisting quiz session:", e);
+    } finally {
+        isFinishingQuiz = false;
+    }
 }
 
 function renderResults(result, answeredQs) {
@@ -1469,7 +1587,7 @@ function renderResults(result, answeredQs) {
 
                         ${q.explanation ? `
                         <div class="glass-panel rounded-xl p-4 border border-gray-700/50 mb-3">
-                            <p class="text-xs font-bold text-brand-300 uppercase mb-2">📄 CSV Explanation</p>
+                            <p class="text-xs font-bold text-brand-300 uppercase mb-2">📄 Explanation</p>
                             <div class="prose prose-sm max-w-none">${window.renderMarkdownAndMath(q.explanation)}</div>
                         </div>` : ''}
 

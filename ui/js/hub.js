@@ -849,7 +849,7 @@ function renderSessionReview(questions) {
             if (hasCsvExp) {
                 combinedExpHtml += `
                     <div class="mb-3">
-                        <p class="text-xs font-bold text-brand-300 uppercase tracking-wider mb-1">📄 CSV Baseline Explanation</p>
+                        <p class="text-xs font-bold text-brand-300 uppercase tracking-wider mb-1">📄 Explanation</p>
                         <div>${window.renderMarkdownAndMath(q.explanation)}</div>
                     </div>
                 `;
