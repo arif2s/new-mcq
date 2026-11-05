@@ -1004,23 +1004,27 @@ def _batch_compute_session_queue_info(
 CONSOLIDATED_REVIEWS_SESSION_ID = "sess_spaced_repetition_due"
 
 
+WRONG_ANSWER_COOLDOWN_SECONDS = 6 * 3600  # 6-hour delay before re-prompting wrong answers
+
+
 def sync_consolidated_due_session(conn) -> None:
     """
     Consolidates questions due for repetition (wrong/lapsed cards and scheduled reviews
     whose due_timestamp is now or past) into a single unified session card in Knowledge Hub.
     Prevents clutter by keeping only ONE set in the Hub and adding questions only on or after
-    their due date.
+    their due date, while enforcing a minimum 6-hour cooldown for newly wrong/lapsed questions.
     """
     cursor = conn.cursor()
     # 1. Gather all currently due questions from csv_questions
     cursor.execute(
-        """
+        f"""
         SELECT id, question, opt_a, opt_b, opt_c, opt_d, correct_answer, explanation,
                llm_explanation, topic_name, due_timestamp, state, lapses, last_review
         FROM csv_questions
-        WHERE (due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
-           OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
-           OR (state IN (1, 3))
+        WHERE ((due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
+               OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
+               OR (state IN (1, 3)))
+          AND NOT (state IN (1, 3) AND last_review IS NOT NULL AND last_review > unixepoch('now') - {WRONG_ANSWER_COOLDOWN_SECONDS})
         ORDER BY due_timestamp ASC
         """
     )
@@ -1028,14 +1032,15 @@ def sync_consolidated_due_session(conn) -> None:
 
     # 2. Gather all currently due questions from mcq_bank
     cursor.execute(
-        """
+        f"""
         SELECT id, question, opt_a, opt_b, opt_c, opt_d, correct_opt as correct_answer,
                csv_explanation as explanation, llm_explanation, source_tag as topic_name,
                due_timestamp, state, lapses, last_review
         FROM mcq_bank
-        WHERE (due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
-           OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
-           OR (state IN (1, 3))
+        WHERE ((due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
+               OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
+               OR (state IN (1, 3)))
+          AND NOT (state IN (1, 3) AND last_review IS NOT NULL AND last_review > unixepoch('now') - {WRONG_ANSWER_COOLDOWN_SECONDS})
         ORDER BY due_timestamp ASC
         """
     )
@@ -1146,25 +1151,30 @@ def sync_consolidated_due_session(conn) -> None:
 
 @router.get("/due_summary")
 def get_due_summary() -> Dict[str, Any]:
-    """Returns count and details of questions currently due for repetition review."""
+    """
+    Returns count and details of questions currently due for repetition review.
+    Excludes questions wrong within the last 6 hours so users aren't immediately prompted.
+    """
     with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
         cursor.execute(
-            """
+            f"""
             SELECT COUNT(*) FROM csv_questions
-            WHERE (due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
+            WHERE ((due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
                OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
-               OR (state IN (1, 3))
+               OR (state IN (1, 3)))
+              AND NOT (state IN (1, 3) AND last_review IS NOT NULL AND last_review > unixepoch('now') - {WRONG_ANSWER_COOLDOWN_SECONDS})
             """
         )
         csv_count = cursor.fetchone()[0] or 0
 
         cursor.execute(
-            """
+            f"""
             SELECT COUNT(*) FROM mcq_bank
-            WHERE (due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
+            WHERE ((due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
                OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
-               OR (state IN (1, 3))
+               OR (state IN (1, 3)))
+              AND NOT (state IN (1, 3) AND last_review IS NOT NULL AND last_review > unixepoch('now') - {WRONG_ANSWER_COOLDOWN_SECONDS})
             """
         )
         mcq_count = cursor.fetchone()[0] or 0
@@ -1175,6 +1185,217 @@ def get_due_summary() -> Dict[str, Any]:
         "status": "success",
         "total_due": total_due,
         "session_id": CONSOLIDATED_REVIEWS_SESSION_ID if total_due > 0 else None,
+    }
+
+
+ENCOURAGING_MESSAGES = [
+    {
+        "id": "enc_1",
+        "type": "encouragement",
+        "title": "Stay Persistent! 🌟",
+        "message": "Every question you review strengthens your clinical intuition. Consistent daily practice is the secret to mastery.",
+        "icon": "🌟"
+    },
+    {
+        "id": "enc_2",
+        "type": "encouragement",
+        "title": "Mistakes Are Stepping Stones 🧠",
+        "message": "Getting questions wrong now is how neural pathways form. You are turning weak areas into your future strengths!",
+        "icon": "💡"
+    },
+    {
+        "id": "enc_3",
+        "type": "encouragement",
+        "title": "Keep the Momentum Going 🔥",
+        "message": "Small, focused study bursts beat marathon cramming every time. Trust your preparation and stay on course.",
+        "icon": "🔥"
+    },
+    {
+        "id": "enc_4",
+        "type": "encouragement",
+        "title": "You're Making Tangible Progress 📈",
+        "message": "With each spaced repetition interval, your long-term memory consolidates deeper medical knowledge.",
+        "icon": "🎯"
+    },
+    {
+        "id": "enc_5",
+        "type": "encouragement",
+        "title": "Breathe and Stay Curious 🌱",
+        "message": "Medicine is a marathon of understanding, not rote memory. Take pride in your dedication today.",
+        "icon": "🌱"
+    },
+    {
+        "id": "enc_6",
+        "type": "encouragement",
+        "title": "Excellence Through Practice 🏆",
+        "message": "Top exam performers aren't born with the answers—they simply reviewed their errors more intentionally.",
+        "icon": "🏆"
+    },
+    {
+        "id": "enc_7",
+        "type": "encouragement",
+        "title": "Focus On One Question At A Time ⚡",
+        "message": "Don't worry about the entire syllabus today. Win the current question, understand the physiology, and keep moving.",
+        "icon": "⚡"
+    }
+]
+
+
+@router.get("/dashboard_prompts")
+def get_dashboard_prompts() -> Dict[str, Any]:
+    """
+    Computes intelligent, rotating dashboard prompts and recommendations:
+    1. Due spaced repetition reminder (only for questions not answered wrongly in the last 6 hours).
+    2. Suggesting subjects not tried in a while.
+    3. Suggesting questions on clinical topics frequently missed (derived from NLP extracted topics).
+    4. Encouraging and motivational clinical study messages.
+    """
+    banners: List[Dict[str, Any]] = []
+    now_ts = time.time()
+
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+
+        # 1. Due set summary (cooldown checked)
+        cursor.execute(
+            f"""
+            SELECT COUNT(*) FROM csv_questions
+            WHERE ((due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
+               OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
+               OR (state IN (1, 3)))
+              AND NOT (state IN (1, 3) AND last_review IS NOT NULL AND last_review > unixepoch('now') - {WRONG_ANSWER_COOLDOWN_SECONDS})
+            """
+        )
+        csv_due = cursor.fetchone()[0] or 0
+
+        cursor.execute(
+            f"""
+            SELECT COUNT(*) FROM mcq_bank
+            WHERE ((due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
+               OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
+               OR (state IN (1, 3)))
+              AND NOT (state IN (1, 3) AND last_review IS NOT NULL AND last_review > unixepoch('now') - {WRONG_ANSWER_COOLDOWN_SECONDS})
+            """
+        )
+        mcq_due = cursor.fetchone()[0] or 0
+        total_due = int(csv_due + mcq_due)
+
+        if total_due > 0:
+            banners.append({
+                "id": "due_review_banner",
+                "type": "due_review",
+                "title": "Spaced Repetition Due for Review 🧠",
+                "message": f"You have {total_due} question{'s' if total_due != 1 else ''} scheduled for spaced repetition review today.",
+                "icon": "🔔",
+                "badge": f"{total_due} Due",
+                "action": "review_due",
+                "action_label": f"Review Due ({total_due}) →",
+                "session_id": CONSOLIDATED_REVIEWS_SESSION_ID
+            })
+
+        # 2. Topics frequently missed (from NLP-extracted topics of wrong questions)
+        # Note: Must use extracted topics rather than raw CSV names
+        cursor.execute(
+            """
+            SELECT sq.question_id, sq.topic, sq.question_topics_json, et.topic_name
+            FROM session_questions sq
+            LEFT JOIN extracted_topics et ON sq.question_id = et.question_id AND et.selected = 1
+            WHERE sq.is_correct = 0
+            """
+        )
+        wrong_rows = cursor.fetchall()
+        wrong_topic_counts: Dict[str, int] = defaultdict(int)
+
+        for r in wrong_rows:
+            extracted_name = r["topic_name"]
+            if extracted_name and extracted_name != "General Medical Concept" and extracted_name.strip():
+                wrong_topic_counts[extracted_name.strip()] += 1
+                continue
+
+            # Fallback to question_topics_json if extracted_topics table didn't have rows
+            q_json = r["question_topics_json"]
+            found_in_json = False
+            if q_json and q_json != "[]":
+                try:
+                    parsed = json.loads(q_json)
+                    for item in parsed:
+                        name = (item.get("name") or item.get("topic_name") or "") if isinstance(item, dict) else str(item)
+                        name = name.strip()
+                        if name and name != "General Medical Concept":
+                            wrong_topic_counts[name] += 1
+                            found_in_json = True
+                except Exception:
+                    pass
+
+            if not found_in_json:
+                q_top = (r["topic"] or "").strip()
+                if q_top and q_top not in ("General", "General Medical Concept"):
+                    wrong_topic_counts[q_top] += 1
+
+        # Sort topics by frequency of wrong answers
+        sorted_weak_topics = sorted(
+            [t for t in wrong_topic_counts.items() if t[1] >= 1],
+            key=lambda x: -x[1]
+        )
+
+        for top_name, wrong_count in sorted_weak_topics[:3]:
+            banners.append({
+                "id": f"weak_topic_{_to_synthesis_key(top_name)}",
+                "type": "weak_topic",
+                "title": f"Target Weak Topic: {top_name} 🎯",
+                "message": f"You've missed {wrong_count} question{'s' if wrong_count != 1 else ''} related to {top_name}. A focused review will solidify this concept!",
+                "icon": "🎯",
+                "badge": "High Yield Weak Area",
+                "topic": top_name,
+                "action": "practice_topic",
+                "action_label": f"Practice {top_name} →"
+            })
+
+        # 3. Subject Switch-Up: Find subjects not tried in a while
+        cursor.execute(
+            """
+            SELECT DISTINCT subject_name,
+                   MAX(CASE WHEN timestamp > 1e11 THEN timestamp / 1000.0 ELSE timestamp END) as last_ts
+            FROM quiz_sessions
+            WHERE subject_name IS NOT NULL
+              AND subject_name != ''
+              AND subject_name NOT IN ('Spaced Repetition', 'Due Reviews', 'Mixed Topics', 'Mixed Session', 'General')
+            GROUP BY subject_name
+            ORDER BY last_ts ASC
+            """
+        )
+        sub_rows = cursor.fetchall()
+        switch_count = 0
+        for s in sub_rows:
+            s_name = s["subject_name"]
+            last_ts = float(s["last_ts"] or 0)
+            days_ago = round((now_ts - last_ts) / 86400.0, 1) if last_ts > 0 else 999
+            if days_ago >= 3:
+                time_desc = f"{int(days_ago)} days" if days_ago < 999 else "a while"
+                banners.append({
+                    "id": f"switch_subject_{_to_synthesis_key(s_name)}",
+                    "type": "switch_subject",
+                    "title": f"Switch It Up: Practice {s_name} 📚",
+                    "message": f"You haven't practiced {s_name} in {time_desc}. Rotating subjects improves retention and cognitive flexibility.",
+                    "icon": "🔄",
+                    "badge": "Subject Rotation",
+                    "subject": s_name,
+                    "action": "switch_subject",
+                    "action_label": f"Practice {s_name} →"
+                })
+                switch_count += 1
+                if switch_count >= 2:
+                    break
+
+        # 4. Fill with encouraging and motivational messages
+        for enc in ENCOURAGING_MESSAGES:
+            banners.append(dict(enc))
+
+    # Return full list so frontend can maintain a window of up to 10 active banners
+    return {
+        "status": "success",
+        "banners": banners[:15],
+        "total_available": len(banners)
     }
 
 

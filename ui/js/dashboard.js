@@ -125,6 +125,13 @@ function simulateRank(config, correct, wrong, actualQuestions) {
 }
 
 let _dueSummaryData = { total_due: 0, session_id: null };
+let _dashboardBanners = [];
+let _activeBannerIndex = 0;
+let _bannerAutoCycleTimer = null;
+let _bannerRotationIntervalTimer = null;
+const MAX_ACTIVE_BANNERS = 10;
+const BANNER_AUTO_CYCLE_MS = 7000;       // Auto advance to next banner every 7s
+const BANNER_REPLACE_CYCLE_MS = 60000;   // Gradually retire/replace 1 older banner every 60s
 
 async function fetchDueSummary() {
     try {
@@ -137,6 +144,40 @@ async function fetchDueSummary() {
     }
 }
 
+async function fetchDashboardPrompts() {
+    try {
+        const res = await fetch('/api/sessions/dashboard_prompts');
+        if (res.ok) {
+            const data = await res.json();
+            const incoming = Array.isArray(data.banners) ? data.banners : [];
+            if (_dashboardBanners.length === 0) {
+                _dashboardBanners = incoming.slice(0, MAX_ACTIVE_BANNERS);
+            } else {
+                // Merge new insights gracefully while respecting the 10-banner maximum window
+                const existingIds = new Set(_dashboardBanners.map(b => b.id));
+                const newItems = incoming.filter(b => !existingIds.has(b.id));
+                if (newItems.length > 0) {
+                    // Gradual replacement: add new item to the back and remove oldest non-pinned banner
+                    newItems.forEach(item => {
+                        if (_dashboardBanners.length >= MAX_ACTIVE_BANNERS) {
+                            // Find an encouragement banner to retire first, else shift the first non-due banner
+                            const retireIdx = _dashboardBanners.findIndex(b => b.type === 'encouragement');
+                            if (retireIdx !== -1) {
+                                _dashboardBanners.splice(retireIdx, 1);
+                            } else {
+                                _dashboardBanners.shift();
+                            }
+                        }
+                        _dashboardBanners.push(item);
+                    });
+                }
+            }
+        }
+    } catch (e) {
+        console.warn("Failed to fetch dashboard prompts:", e);
+    }
+}
+
 async function initDashboard() {
     if (!window.AppState || !window.AppState.get) return;
     const state = window.AppState.get();
@@ -146,6 +187,7 @@ async function initDashboard() {
     if (!dashContainer) return;
 
     await fetchDueSummary();
+    await fetchDashboardPrompts();
 
     const escapeHTML = window.escapeHTML || ((s) => String(s || ''));
 
@@ -254,25 +296,10 @@ async function initDashboard() {
             <p class="subtitle">Your learning analytics at a glance</p>
         </div>
 
-        <!-- Due Questions Spaced Repetition Alert Notification -->
-        ${_dueSummaryData.total_due > 0 ? `
-        <div class="glass-card mb-8 border border-warning-500/50 bg-warning-500/10 p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 animate-fade-in shadow-[0_0_15px_rgba(234,179,8,0.2)]">
-            <div class="flex items-center gap-3">
-                <span class="text-3xl animate-bounce">🔔</span>
-                <div>
-                    <h3 class="text-base font-bold text-warning-300">New Questions Have Popped Up For Review!</h3>
-                    <p class="text-xs text-muted mt-0.5">
-                        You have <span class="text-warning-300 font-bold font-mono">${_dueSummaryData.total_due}</span> question${_dueSummaryData.total_due === 1 ? '' : 's'} scheduled for spaced repetition review today.
-                    </p>
-                </div>
-            </div>
-            <div class="flex items-center gap-2 shrink-0">
-                <button type="button" id="dash-practice-due-btn" class="primary-btn px-5 py-2.5 rounded-xl text-xs font-bold shadow-lg cursor-pointer flex items-center gap-1.5 hover:scale-105 transition-all">
-                    🧠 Review Due Questions (${_dueSummaryData.total_due}) →
-                </button>
-            </div>
+        <!-- Dynamic Multi-Banner Recommendations & Encouragement Carousel -->
+        <div id="dash-banner-carousel-container" class="mb-8">
+            <!-- Rendered by renderBannerCarousel() -->
         </div>
-        ` : ''}
 
         <!-- Today's Summary -->
         <div class="glass-card card-shade-1 mb-8">
@@ -467,43 +494,280 @@ async function initDashboard() {
     `;
 
     attachRankEditorListeners();
-    attachDueButtonListener();
+    renderBannerCarousel();
+    startBannerAutoCycle();
+    startGradualBannerRotation();
 }
 
-function attachDueButtonListener() {
-    const btn = document.getElementById('dash-practice-due-btn');
-    if (!btn) return;
-    btn.addEventListener('click', async () => {
+function renderBannerCarousel() {
+    const container = document.getElementById('dash-banner-carousel-container');
+    if (!container) return;
+
+    if (_dashboardBanners.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    if (_activeBannerIndex >= _dashboardBanners.length) {
+        _activeBannerIndex = 0;
+    } else if (_activeBannerIndex < 0) {
+        _activeBannerIndex = _dashboardBanners.length - 1;
+    }
+
+    const currentBanner = _dashboardBanners[_activeBannerIndex];
+    const escapeHTML = window.escapeHTML || ((s) => String(s || ''));
+
+    // Theme and styling classes based on banner type
+    let borderBgClass = 'border-brand-500/40 bg-brand-500/10 shadow-[0_0_15px_rgba(139,92,246,0.15)]';
+    let titleClass = 'text-brand-300';
+    let badgeClass = 'bg-brand-500/20 text-brand-300 border border-brand-500/30';
+
+    if (currentBanner.type === 'due_review') {
+        borderBgClass = 'border-warning-500/50 bg-warning-500/10 shadow-[0_0_15px_rgba(234,179,8,0.2)]';
+        titleClass = 'text-warning-300';
+        badgeClass = 'bg-warning-500/20 text-warning-300 border border-warning-500/30';
+    } else if (currentBanner.type === 'weak_topic') {
+        borderBgClass = 'border-danger-500/40 bg-danger-500/10 shadow-[0_0_15px_rgba(239,68,68,0.15)]';
+        titleClass = 'text-danger-300';
+        badgeClass = 'bg-danger-500/20 text-danger-300 border border-danger-500/30';
+    } else if (currentBanner.type === 'switch_subject') {
+        borderBgClass = 'border-cyan-500/40 bg-cyan-500/10 shadow-[0_0_15px_rgba(6,182,212,0.15)]';
+        titleClass = 'text-cyan-300';
+        badgeClass = 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30';
+    } else if (currentBanner.type === 'encouragement') {
+        borderBgClass = 'border-emerald-500/40 bg-emerald-500/10 shadow-[0_0_15px_rgba(16,185,129,0.15)]';
+        titleClass = 'text-emerald-300';
+        badgeClass = 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+    }
+
+    container.innerHTML = `
+        <div id="dash-banner-card" class="glass-card border ${borderBgClass} p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 animate-fade-in transition-all relative overflow-hidden group">
+            <!-- Icon & Content -->
+            <div class="flex items-center gap-4 flex-1 w-full">
+                <span class="text-3xl select-none shrink-0">${currentBanner.icon || '💡'}</span>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 mb-1 flex-wrap">
+                        <h3 class="text-base font-bold ${titleClass} truncate max-w-md">
+                            ${escapeHTML(currentBanner.title)}
+                        </h3>
+                        ${currentBanner.badge ? `
+                            <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${badgeClass}">
+                                ${escapeHTML(currentBanner.badge)}
+                            </span>
+                        ` : ''}
+                    </div>
+                    <p class="text-xs text-muted leading-relaxed">
+                        ${escapeHTML(currentBanner.message)}
+                    </p>
+                </div>
+            </div>
+
+            <!-- Controls & Action Button -->
+            <div class="flex items-center gap-3 shrink-0 self-end md:self-center">
+                ${currentBanner.action_label ? `
+                    <button type="button" id="dash-banner-action-btn" class="primary-btn px-4 py-2 rounded-xl text-xs font-bold shadow-lg cursor-pointer flex items-center gap-1.5 hover:scale-105 transition-all">
+                        ${escapeHTML(currentBanner.action_label)}
+                    </button>
+                ` : ''}
+
+                <!-- Carousel Navigation Controls -->
+                <div class="flex items-center gap-1 glass-panel px-2 py-1 rounded-xl border border-gray-700/50">
+                    <button type="button" id="dash-banner-prev-btn" title="Previous Banner" class="text-muted hover:text-white p-1 rounded transition-colors cursor-pointer text-sm">
+                        ◀
+                    </button>
+                    <span class="text-[11px] font-mono text-muted px-1">
+                        ${_activeBannerIndex + 1}/${_dashboardBanners.length}
+                    </span>
+                    <button type="button" id="dash-banner-next-btn" title="Next Banner" class="text-muted hover:text-white p-1 rounded transition-colors cursor-pointer text-sm">
+                        ▶
+                    </button>
+                </div>
+            </div>
+
+            <!-- Carousel Pagination Dots -->
+            <div class="absolute bottom-1.5 left-1/2 -translate-x-1/2 flex items-center gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                ${_dashboardBanners.map((_, idx) => `
+                    <span class="w-1.5 h-1.5 rounded-full transition-all cursor-pointer ${idx === _activeBannerIndex ? 'bg-white w-4' : 'bg-gray-500 hover:bg-gray-300'}"
+                          data-banner-idx="${idx}"></span>
+                `).join('')}
+            </div>
+        </div>
+    `;
+
+    // Attach interaction listeners
+    const card = document.getElementById('dash-banner-card');
+    if (card) {
+        card.addEventListener('mouseenter', () => clearInterval(_bannerAutoCycleTimer));
+        card.addEventListener('mouseleave', () => startBannerAutoCycle());
+    }
+
+    const prevBtn = document.getElementById('dash-banner-prev-btn');
+    if (prevBtn) {
+        prevBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            _activeBannerIndex = (_activeBannerIndex - 1 + _dashboardBanners.length) % _dashboardBanners.length;
+            renderBannerCarousel();
+        });
+    }
+
+    const nextBtn = document.getElementById('dash-banner-next-btn');
+    if (nextBtn) {
+        nextBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            _activeBannerIndex = (_activeBannerIndex + 1) % _dashboardBanners.length;
+            renderBannerCarousel();
+        });
+    }
+
+    container.querySelectorAll('[data-banner-idx]').forEach(dot => {
+        dot.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const idx = parseInt(dot.getAttribute('data-banner-idx'), 10);
+            if (!isNaN(idx)) {
+                _activeBannerIndex = idx;
+                renderBannerCarousel();
+            }
+        });
+    });
+
+    const actionBtn = document.getElementById('dash-banner-action-btn');
+    if (actionBtn) {
+        actionBtn.addEventListener('click', () => handleBannerAction(currentBanner));
+    }
+}
+
+function startBannerAutoCycle() {
+    clearInterval(_bannerAutoCycleTimer);
+    if (_dashboardBanners.length <= 1) return;
+    _bannerAutoCycleTimer = setInterval(() => {
+        _activeBannerIndex = (_activeBannerIndex + 1) % _dashboardBanners.length;
+        renderBannerCarousel();
+    }, BANNER_AUTO_CYCLE_MS);
+}
+
+function startGradualBannerRotation() {
+    clearInterval(_bannerRotationIntervalTimer);
+    _bannerRotationIntervalTimer = setInterval(async () => {
+        // Gradually retire/replace 1 older banner and populate new prompts
         try {
-            btn.disabled = true;
-            btn.textContent = 'Loading questions...';
-            const sessionId = _dueSummaryData.session_id || 'sess_spaced_repetition_due';
+            const res = await fetch('/api/sessions/dashboard_prompts');
+            if (res.ok) {
+                const data = await res.json();
+                const incoming = Array.isArray(data.banners) ? data.banners : [];
+                if (incoming.length > 0) {
+                    // Retire one older encouragement banner
+                    const retireIdx = _dashboardBanners.findIndex(b => b.type === 'encouragement');
+                    if (retireIdx !== -1) {
+                        _dashboardBanners.splice(retireIdx, 1);
+                    } else if (_dashboardBanners.length >= MAX_ACTIVE_BANNERS) {
+                        _dashboardBanners.shift();
+                    }
+
+                    // Pick an incoming banner not currently displayed
+                    const currentIds = new Set(_dashboardBanners.map(b => b.id));
+                    const candidate = incoming.find(b => !currentIds.has(b.id)) || incoming[Math.floor(Math.random() * incoming.length)];
+                    if (candidate && _dashboardBanners.length < MAX_ACTIVE_BANNERS) {
+                        _dashboardBanners.push(candidate);
+                    }
+                    renderBannerCarousel();
+                }
+            }
+        } catch (e) {
+            console.debug("Banner rotation check skipped:", e);
+        }
+    }, BANNER_REPLACE_CYCLE_MS);
+}
+
+async function handleBannerAction(banner) {
+    if (!banner) return;
+
+    if (banner.action === 'review_due') {
+        const sessionId = banner.session_id || _dueSummaryData.session_id || 'sess_spaced_repetition_due';
+        try {
             const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/questions`);
             if (res.ok) {
                 const questions = await res.json();
-                if (questions && questions.length > 0) {
-                    if (typeof window.launchPreparedQuiz === 'function') {
-                        window.launchPreparedQuiz({
-                            sessionId: sessionId,
-                            customTitle: `🧠 Spaced Repetition Due Review (${questions.length})`,
-                            subjectName: 'Due Reviews',
-                            questions: questions,
-                            topicsReviewed: true,
-                            config: { mode: 'learn', spacedRepetition: true, count: questions.length }
-                        });
-                        return;
-                    }
+                if (questions && questions.length > 0 && typeof window.launchPreparedQuiz === 'function') {
+                    window.launchPreparedQuiz({
+                        sessionId: sessionId,
+                        customTitle: `🧠 Spaced Repetition Due Review (${questions.length})`,
+                        subjectName: 'Due Reviews',
+                        questions: questions,
+                        topicsReviewed: true,
+                        config: { mode: 'learn', spacedRepetition: true, count: questions.length }
+                    });
+                    return;
                 }
             }
-            // Fallback: switch to Hub
             const hubNav = document.querySelector('.nav-btn[data-target="knowledge-hub-view"]');
             if (hubNav) hubNav.click();
         } catch (e) {
             console.error("Failed to launch due review quiz:", e);
-        } finally {
-            if (btn) btn.disabled = false;
         }
-    });
+    } else if (banner.action === 'practice_topic' && banner.topic) {
+        // Launch a targeted quiz on this weak extracted topic
+        try {
+            const payload = {
+                subjects: null,
+                topics: [banner.topic],
+                count: 10,
+                spaced_repetition: true
+            };
+            const res = await fetch('/api/mcq/generate_set', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.status === 'success' && Array.isArray(data.questions) && data.questions.length > 0 && typeof window.launchPreparedQuiz === 'function') {
+                window.launchPreparedQuiz({
+                    sessionId: `sess_topic_${Date.now()}`,
+                    customTitle: `🎯 Targeted Practice: ${banner.topic}`,
+                    subjectName: banner.topic,
+                    questions: data.questions,
+                    topicsReviewed: true,
+                    config: { mode: 'learn', spacedRepetition: true, count: data.questions.length }
+                });
+                return;
+            }
+        } catch (e) {
+            console.error("Failed to generate topic set:", e);
+        }
+        // Fallback to quiz setup tab
+        const quizNav = document.querySelector('.nav-btn[data-target="quiz-view"]');
+        if (quizNav) quizNav.click();
+    } else if (banner.action === 'switch_subject' && banner.subject) {
+        // Launch or switch to subject
+        try {
+            const payload = {
+                subjects: [banner.subject],
+                topics: null,
+                count: 15,
+                spaced_repetition: true
+            };
+            const res = await fetch('/api/mcq/generate_set', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.status === 'success' && Array.isArray(data.questions) && data.questions.length > 0 && typeof window.launchPreparedQuiz === 'function') {
+                window.launchPreparedQuiz({
+                    sessionId: `sess_sub_${Date.now()}`,
+                    customTitle: `📚 Rotation: ${banner.subject}`,
+                    subjectName: banner.subject,
+                    questions: data.questions,
+                    topicsReviewed: true,
+                    config: { mode: 'learn', spacedRepetition: true, count: data.questions.length, subject: banner.subject }
+                });
+                return;
+            }
+        } catch (e) {
+            console.error("Failed to generate subject set:", e);
+        }
+        const quizNav = document.querySelector('.nav-btn[data-target="quiz-view"]');
+        if (quizNav) quizNav.click();
+    }
 }
 
 window.initDashboard = initDashboard;
