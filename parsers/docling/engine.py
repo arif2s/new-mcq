@@ -2650,7 +2650,12 @@ class AdaptivePdfLayoutEngine:
                 v_overlap_prev = min(bbox[3], prev_line["y1"]) - max(bbox[1], prev_line["y0"])
                 min_line_h = max(1.0, min(bbox[3] - bbox[1], prev_line["y1"] - prev_line["y0"]))
                 h_overlap_prev = min(bbox[2], prev_line["x1"]) - max(bbox[0], prev_line["x0"])
-                same_visual_line = same_col and h_overlap_prev <= 1.5 * self.mu_w and (v_overlap_prev > 0.35 * min_line_h or abs(bbox[1] - prev_line["y0"]) <= 0.25 * self.mu_h)
+                h_gap_prev = max(bbox[0] - prev_line["x1"], prev_line["x0"] - bbox[2])
+                same_visual_line = (
+                    same_col
+                    and (h_overlap_prev >= -1.5 * self.mu_w or h_gap_prev <= 1.5 * self.mu_w)
+                    and (v_overlap_prev > 0.35 * min_line_h or abs(bbox[1] - prev_line["y0"]) <= 0.25 * self.mu_h)
+                )
 
                 bridged_over_image = False
                 if same_col and v_gap > 1.1 * self.mu_h:
@@ -2697,23 +2702,18 @@ class AdaptivePdfLayoutEngine:
                     and next_returns_to_margin
                 )
 
-                cross_col_continuation = bool(not ends_sentence and not same_col and (starts_lower or not item.get("is_bold")))
-
+                # In dense multi-column layout, paragraphs must stay strictly bounded to their respective columns
+                # to prevent bounding boxes from crossing across the column gutter.
                 force_join = (
                     same_visual_line
                     or (
-                        not ends_sentence
-                        and (
-                            cross_col_continuation
-                            or (
-                                same_col
-                                and (starts_lower or curr_wrapped or prev_wrapped or bridged_over_image or v_gap <= 1.85 * self.mu_h)
-                            )
-                        )
+                        same_col
+                        and not ends_sentence
+                        and (starts_lower or curr_wrapped or prev_wrapped or bridged_over_image or v_gap <= 1.85 * self.mu_h)
                     )
                 )
 
-                if starts_new_bold_lead or (not force_join and (not same_col or large_v_gap or prev_short_line or first_line_indent)):
+                if not same_col or starts_new_bold_lead or (not force_join and (large_v_gap or prev_short_line or first_line_indent)):
                     flush_paragraph()
 
             line_md = item.get("md_text") or l_text

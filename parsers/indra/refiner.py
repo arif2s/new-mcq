@@ -240,12 +240,29 @@ class IndraHybridLayoutRefiner:
             {
                 "text": e.text,
                 "box": [
+                    e.bbox_norm[0] * float(ir.width_pt),
+                    e.bbox_norm[1] * float(ir.height_pt),
+                    e.bbox_norm[2] * float(ir.width_pt),
+                    e.bbox_norm[3] * float(ir.height_pt),
+                ],
+                "box_px": [
                     e.bbox_norm[0] * w_px,
                     e.bbox_norm[1] * h_px,
                     e.bbox_norm[2] * w_px,
                     e.bbox_norm[3] * h_px,
                 ],
-                "bbox_norm": e.bbox_norm,
+                "box_pt": [
+                    e.bbox_norm[0] * float(ir.width_pt),
+                    e.bbox_norm[1] * float(ir.height_pt),
+                    e.bbox_norm[2] * float(ir.width_pt),
+                    e.bbox_norm[3] * float(ir.height_pt),
+                ],
+                "bbox_norm": [
+                    float(e.bbox_norm[0]),
+                    float(e.bbox_norm[1]),
+                    float(e.bbox_norm[2]),
+                    float(e.bbox_norm[3]),
+                ],
                 "role": e.role,
                 "heading_level": e.heading_level if e.role == "heading" else 0,
             }
@@ -253,19 +270,47 @@ class IndraHybridLayoutRefiner:
             if not e.is_suppressed_furniture
         ]
 
-        out_blocks = [
-            {
-                "label": "Section-Header" if e.role == "heading" else ("List-Group" if e.role == "list_item" else "Text"),
-                "bbox": [
-                    e.bbox_norm[0] * w_px,
-                    e.bbox_norm[1] * h_px,
-                    e.bbox_norm[2] * w_px,
-                    e.bbox_norm[3] * h_px,
-                ],
-            }
-            for e in ir.elements
-            if not e.is_suppressed_furniture
-        ]
+        out_blocks = []
+        layout_boxes = []
+        for idx_e, e in enumerate(ir.elements):
+            if e.is_suppressed_furniture:
+                continue
+            lbl = "Section-Header" if e.role == "heading" else ("List-Group" if e.role == "list_item" else "Text")
+            norm_box = [
+                float(e.bbox_norm[0]),
+                float(e.bbox_norm[1]),
+                float(e.bbox_norm[2]),
+                float(e.bbox_norm[3]),
+            ]
+            px_box = [
+                norm_box[0] * w_px,
+                norm_box[1] * h_px,
+                norm_box[2] * w_px,
+                norm_box[3] * h_px,
+            ]
+            pt_box = [
+                norm_box[0] * float(ir.width_pt),
+                norm_box[1] * float(ir.height_pt),
+                norm_box[2] * float(ir.width_pt),
+                norm_box[3] * float(ir.height_pt),
+            ]
+            b_type = "heading" if e.role == "heading" else ("list" if e.role == "list_item" else "paragraph")
+            out_blocks.append({
+                "label": lbl,
+                "bbox": px_box,
+                "bbox_norm": norm_box,
+                "bbox_pt": pt_box,
+            })
+            layout_boxes.append({
+                "order": idx_e + 1,
+                "type": b_type,
+                "label": f"{lbl} #{idx_e + 1}",
+                "bbox": norm_box,
+                "bbox_norm": norm_box,
+                "bbox_px": px_box,
+                "bbox_pt": pt_box,
+                "text": e.text or "",
+            })
 
         svg_overlay = build_layout_svg_overlay(out_blocks, out_lines, w_px, h_px)
 
@@ -294,7 +339,7 @@ class IndraHybridLayoutRefiner:
             "heading_mismatches": [],
             "document_mismatches": [],
             "blocks": out_blocks,
-            "layout_boxes": out_blocks,
+            "layout_boxes": layout_boxes,
             "filtered_furniture": [],
             "media_placeholders": [],
             "second_opinion_repairs": [],

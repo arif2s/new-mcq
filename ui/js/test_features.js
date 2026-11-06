@@ -325,14 +325,15 @@
                 }
             };
 
-            boxes.forEach((b) => {
-                const order = b.order || 1;
-                const bType = (b.type || 'paragraph').toLowerCase();
-                const normBbox = b.bbox || [0, 0, 1, 1];
-                const x0 = normBbox[0] * pWidth;
-                const y0 = normBbox[1] * pHeight;
-                const x1 = normBbox[2] * pWidth;
-                const y1 = normBbox[3] * pHeight;
+            boxes.forEach((b, idx) => {
+                const order = typeof b.order === 'number' ? b.order : idx + 1;
+                const bType = (b.type || (b.label ? (b.label.toLowerCase().includes('header') ? 'heading' : (b.label.toLowerCase().includes('list') ? 'list' : 'paragraph')) : 'paragraph')).toLowerCase();
+                const rawBox = b.bbox_norm || b.bbox || [0, 0, 1, 1];
+                const isNorm = rawBox[0] <= 1.05 && rawBox[1] <= 1.05 && rawBox[2] <= 1.05 && rawBox[3] <= 1.05;
+                const x0 = isNorm ? rawBox[0] * pWidth : rawBox[0];
+                const y0 = isNorm ? rawBox[1] * pHeight : rawBox[1];
+                const x1 = isNorm ? rawBox[2] * pWidth : rawBox[2];
+                const y1 = isNorm ? rawBox[3] * pHeight : rawBox[3];
                 const w = Math.max(8, x1 - x0);
                 const h = Math.max(8, y1 - y0);
 
