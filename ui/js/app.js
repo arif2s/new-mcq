@@ -746,8 +746,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (targetId === 'knowledge-hub-view' && typeof window.loadSessions === 'function') {
                 window.loadSessions();
             }
-            if (targetId === 'dashboard-view' && typeof window.initDashboard === 'function') {
-                window.initDashboard();
+            if (targetId === 'dashboard-view') {
+                if (typeof window.initDashboard === 'function') {
+                    window.initDashboard();
+                } else if (typeof window.updateQuestionsLeftToReview === 'function') {
+                    window.updateQuestionsLeftToReview();
+                }
             }
             if (targetId === 'home-view') {
                 if (typeof window.initTestFeatures === 'function') {

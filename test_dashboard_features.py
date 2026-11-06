@@ -201,3 +201,33 @@ def test_dashboard_prompts_endpoint():
     switch_banners = [b for b in banners if b["type"] == "switch_subject"]
     assert any("Pediatrics" in b["title"] for b in switch_banners)
     assert switch_banners[0]["action"] == "switch_subject"
+
+
+def test_dashboard_prompts_due_review_banner_format():
+    """Verify that dashboard_prompts generates 'n questions left to review' due banner."""
+    client = TestClient(app)
+    now = time.time()
+
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM csv_questions WHERE id LIKE 'test_due_format_%'")
+        for i in range(3):
+            c.execute(
+                """
+                INSERT INTO csv_questions (
+                    id, question, opt_a, opt_b, opt_c, opt_d, correct_answer, explanation,
+                    state, last_review, due_timestamp, topic_name
+                ) VALUES (?, 'Due Q', 'A', 'B', 'C', 'D', 'A', 'Exp', 1, ?, ?, 'Cardiology')
+                """,
+                (f"test_due_format_{i}", now - 10, now - 10),
+            )
+        conn.commit()
+
+    resp = client.get("/api/sessions/dashboard_prompts")
+    assert resp.status_code == 200
+    data = resp.json()
+    banners = data["banners"]
+    due_banners = [b for b in banners if b["type"] == "due_review"]
+    assert len(due_banners) == 1
+    assert "left to review" in due_banners[0]["title"]
+    assert due_banners[0]["count"] >= 3

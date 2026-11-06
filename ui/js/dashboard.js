@@ -129,6 +129,7 @@ let _dashboardBanners = [];
 let _activeBannerIndex = 0;
 let _bannerAutoCycleTimer = null;
 let _bannerRotationIntervalTimer = null;
+let _newQuestionsAddedCount = 0;
 const MAX_ACTIVE_BANNERS = 10;
 const BANNER_AUTO_CYCLE_MS = 7000;       // Auto advance to next banner every 7s
 const BANNER_REPLACE_CYCLE_MS = 60000;   // Gradually retire/replace 1 older banner every 60s
@@ -144,6 +145,103 @@ async function fetchDueSummary() {
     }
 }
 
+/**
+ * Creates or updates the "n questions left to review" banner in-place.
+ */
+function updateQuestionsLeftBanner(totalDue) {
+    const count = Number(totalDue || 0);
+    const existingIdx = _dashboardBanners.findIndex(b => b.id === 'due_review_banner' || b.type === 'due_review');
+
+    if (count > 0) {
+        const bannerObj = {
+            id: 'due_review_banner',
+            type: 'due_review',
+            title: `${count} question${count === 1 ? '' : 's'} left to review 🧠`,
+            message: `You have ${count} question${count === 1 ? '' : 's'} left to review in your consolidated review set.`,
+            icon: '🧠',
+            badge: `${count} Left to Review`,
+            action: 'review_due',
+            action_label: `Review Set (${count}) →`,
+            session_id: _dueSummaryData.session_id || 'sess_spaced_repetition_due',
+            count: count
+        };
+
+        if (existingIdx !== -1) {
+            _dashboardBanners[existingIdx] = bannerObj;
+        } else {
+            // Place at the front of the carousel
+            _dashboardBanners.unshift(bannerObj);
+        }
+    } else if (existingIdx !== -1) {
+        // If 0 questions left, remove the left to review banner
+        _dashboardBanners.splice(existingIdx, 1);
+    }
+
+    // Bound banners to max 10
+    if (_dashboardBanners.length > MAX_ACTIVE_BANNERS) {
+        _dashboardBanners = _dashboardBanners.slice(0, MAX_ACTIVE_BANNERS);
+    }
+}
+
+/**
+ * Creates or updates the "n new questions to review" banner in-place.
+ */
+function updateNewQuestionsBanner(newCount) {
+    const count = Number(newCount || 0);
+    const existingIdx = _dashboardBanners.findIndex(b => b.id === 'new_review_questions_banner' || b.type === 'new_review_questions');
+
+    if (count > 0) {
+        _newQuestionsAddedCount = count;
+        const bannerObj = {
+            id: 'new_review_questions_banner',
+            type: 'new_review_questions',
+            title: `${count} new question${count === 1 ? '' : 's'} to review 🔔`,
+            message: `${count} new question${count === 1 ? '' : 's'} from your latest session ${count === 1 ? 'has' : 'have'} been added to your review set.`,
+            icon: '🔔',
+            badge: `${count} New to Review`,
+            action: 'review_due',
+            action_label: `Review Now (${count}) →`,
+            session_id: _dueSummaryData.session_id || 'sess_spaced_repetition_due',
+            count: count
+        };
+
+        if (existingIdx !== -1) {
+            _dashboardBanners[existingIdx] = bannerObj;
+        } else {
+            // If banner 1 exists at index 0, place banner 2 right after it at index 1
+            const banner1Idx = _dashboardBanners.findIndex(b => b.id === 'due_review_banner' || b.type === 'due_review');
+            const insertIdx = banner1Idx !== -1 ? banner1Idx + 1 : 0;
+            _dashboardBanners.splice(insertIdx, 0, bannerObj);
+        }
+    } else if (existingIdx !== -1) {
+        _dashboardBanners.splice(existingIdx, 1);
+    }
+
+    if (_dashboardBanners.length > MAX_ACTIVE_BANNERS) {
+        _dashboardBanners = _dashboardBanners.slice(0, MAX_ACTIVE_BANNERS);
+    }
+}
+
+/**
+ * Public update methods for external triggers
+ */
+window.updateQuestionsLeftToReview = async function() {
+    await fetchDueSummary();
+    const count = Number(_dueSummaryData.total_due || 0);
+    updateQuestionsLeftBanner(count);
+    renderBannerCarousel();
+};
+
+window.updateNewQuestionsToReview = function(addedCount) {
+    updateNewQuestionsBanner(addedCount);
+    // Focus carousel on the new questions banner when new questions are added
+    const bannerIdx = _dashboardBanners.findIndex(b => b.id === 'new_review_questions_banner');
+    if (bannerIdx !== -1) {
+        _activeBannerIndex = bannerIdx;
+    }
+    renderBannerCarousel();
+};
+
 async function fetchDashboardPrompts() {
     try {
         const res = await fetch('/api/sessions/dashboard_prompts');
@@ -151,20 +249,29 @@ async function fetchDashboardPrompts() {
             const data = await res.json();
             const incoming = Array.isArray(data.banners) ? data.banners : [];
             if (incoming.length > 0) {
-                // Always prioritize action banners (due_review, weak_topic, switch_subject) at the front
-                // and update existing banners in-place so updated counts are immediately visible.
-                const priorityBanners = incoming.filter(b => b.type !== 'encouragement');
-                const encouragementBanners = incoming.filter(b => b.type === 'encouragement');
+                // Separate incoming banners by category
+                const incomingDue = incoming.filter(b => b.id === 'due_review_banner' || b.type === 'due_review');
+                const otherIncoming = incoming.filter(b => b.id !== 'due_review_banner' && b.type !== 'due_review' && b.id !== 'new_review_questions_banner' && b.type !== 'new_review_questions');
 
-                _dashboardBanners = [
-                    ...priorityBanners,
-                    ...encouragementBanners
-                ].slice(0, MAX_ACTIVE_BANNERS);
+                // Update "questions left to review" count if present
+                const dueCount = incomingDue.length > 0 ? Number(incomingDue[0].count || _dueSummaryData.total_due || 0) : Number(_dueSummaryData.total_due || 0);
+                updateQuestionsLeftBanner(dueCount);
 
-                // If there is an active due_review banner, focus carousel on index 0
-                if (priorityBanners.some(b => b.type === 'due_review')) {
-                    _activeBannerIndex = 0;
-                } else if (_activeBannerIndex >= _dashboardBanners.length) {
+                // Preserve existing "n new questions to review" if active
+                if (_newQuestionsAddedCount > 0) {
+                    updateNewQuestionsBanner(_newQuestionsAddedCount);
+                }
+
+                // Add other banners (weak topics, subject switches, habit/milestones, encouragement) without duplicating
+                const currentIds = new Set(_dashboardBanners.map(b => b.id));
+                for (const b of otherIncoming) {
+                    if (!currentIds.has(b.id) && _dashboardBanners.length < MAX_ACTIVE_BANNERS) {
+                        _dashboardBanners.push(b);
+                        currentIds.add(b.id);
+                    }
+                }
+
+                if (_activeBannerIndex >= _dashboardBanners.length) {
                     _activeBannerIndex = 0;
                 }
             }
@@ -291,38 +398,6 @@ async function initDashboard() {
             <h1 class="text-3xl font-bold mb-2">📊 Dashboard</h1>
             <p class="subtitle">Your learning analytics at a glance</p>
         </div>
-
-        ${Number(_dueSummaryData.total_due || 0) > 0 ? `
-        <!-- Persistent Spaced Repetition & Wrong Questions Notification Alert -->
-        <div id="dash-due-notification-alert" class="glass-card border-2 border-warning-500/60 bg-warning-500/15 p-5 rounded-2xl mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-[0_0_20px_rgba(234,179,8,0.2)] animate-fade-in">
-          <div class="flex items-center gap-4">
-            <div class="w-12 h-12 rounded-2xl bg-warning-500/20 border border-warning-500/40 flex items-center justify-center text-2xl shrink-0">
-              🔔
-            </div>
-            <div>
-              <div class="flex items-center gap-2 flex-wrap">
-                <h2 class="text-base font-bold text-warning-300">
-                  Spaced Repetition &amp; Wrong Questions Ready for Review
-                </h2>
-                <span class="px-2.5 py-0.5 text-[11px] font-bold uppercase rounded-full bg-warning-500/30 text-warning-200 border border-warning-400/40">
-                  ${Number(_dueSummaryData.total_due)} Due
-                </span>
-              </div>
-              <p class="text-xs text-muted mt-1">
-                ${Number(_dueSummaryData.total_due)} wrongly answered or scheduled review question${Number(_dueSummaryData.total_due) === 1 ? ' has' : 's have'} been added to your consolidated review set in Knowledge Hub.
-              </p>
-            </div>
-          </div>
-          <div class="flex items-center gap-2.5 shrink-0 self-end sm:self-center">
-            <button type="button" id="dash-open-due-hub-btn" class="secondary-btn px-3.5 py-2 rounded-xl text-xs font-semibold cursor-pointer">
-              📚 View in Hub
-            </button>
-            <button type="button" id="dash-start-due-quiz-btn" class="primary-btn px-4 py-2 rounded-xl text-xs font-bold shadow-lg cursor-pointer">
-              ▶️ Practice Now (${Number(_dueSummaryData.total_due)})
-            </button>
-          </div>
-        </div>
-        ` : ''}
 
         <!-- Dynamic Multi-Banner Recommendations & Encouragement Carousel -->
         <div id="dash-banner-carousel-container" class="mb-8">
@@ -523,19 +598,6 @@ async function initDashboard() {
 
     attachRankEditorListeners();
 
-    document.getElementById('dash-open-due-hub-btn')?.addEventListener('click', () => {
-        if (typeof window.loadSessions === 'function') window.loadSessions();
-        const hubNav = document.querySelector('.nav-btn[data-target="knowledge-hub-view"]');
-        if (hubNav) hubNav.click();
-    });
-
-    document.getElementById('dash-start-due-quiz-btn')?.addEventListener('click', () => {
-        handleBannerAction({
-            action: 'review_due',
-            session_id: _dueSummaryData.session_id || 'sess_spaced_repetition_due'
-        });
-    });
-
     renderBannerCarousel();
     startBannerAutoCycle();
     startGradualBannerRotation();
@@ -568,6 +630,10 @@ function renderBannerCarousel() {
         borderBgClass = 'border-warning-500/50 bg-warning-500/10 shadow-[0_0_15px_rgba(234,179,8,0.2)]';
         titleClass = 'text-warning-300';
         badgeClass = 'bg-warning-500/20 text-warning-300 border border-warning-500/30';
+    } else if (currentBanner.type === 'new_review_questions') {
+        borderBgClass = 'border-amber-500/50 bg-amber-500/10 shadow-[0_0_15px_rgba(245,158,11,0.2)]';
+        titleClass = 'text-amber-300';
+        badgeClass = 'bg-amber-500/20 text-amber-300 border border-amber-500/30';
     } else if (currentBanner.type === 'weak_topic') {
         borderBgClass = 'border-danger-500/40 bg-danger-500/10 shadow-[0_0_15px_rgba(239,68,68,0.15)]';
         titleClass = 'text-danger-300';
@@ -690,24 +756,34 @@ function startBannerAutoCycle() {
 function startGradualBannerRotation() {
     clearInterval(_bannerRotationIntervalTimer);
     _bannerRotationIntervalTimer = setInterval(async () => {
-        // Gradually retire/replace 1 older banner and populate new prompts
+        // Regularly refresh questions left to review and rotate carousel prompts
         try {
+            await fetchDueSummary();
             const res = await fetch('/api/sessions/dashboard_prompts');
             if (res.ok) {
                 const data = await res.json();
                 const incoming = Array.isArray(data.banners) ? data.banners : [];
                 if (incoming.length > 0) {
-                    // Retire one older encouragement banner
-                    const retireIdx = _dashboardBanners.findIndex(b => b.type === 'encouragement');
-                    if (retireIdx !== -1) {
-                        _dashboardBanners.splice(retireIdx, 1);
-                    } else if (_dashboardBanners.length >= MAX_ACTIVE_BANNERS) {
-                        _dashboardBanners.shift();
+                    // Always update "questions left to review" banner in-place
+                    const incomingDue = incoming.filter(b => b.id === 'due_review_banner' || b.type === 'due_review');
+                    const dueCount = incomingDue.length > 0 ? Number(incomingDue[0].count || _dueSummaryData.total_due || 0) : Number(_dueSummaryData.total_due || 0);
+                    updateQuestionsLeftBanner(dueCount);
+
+                    if (_newQuestionsAddedCount > 0) {
+                        updateNewQuestionsBanner(_newQuestionsAddedCount);
                     }
 
-                    // Pick an incoming banner not currently displayed
+                    const otherIncoming = incoming.filter(b => b.id !== 'due_review_banner' && b.type !== 'due_review' && b.id !== 'new_review_questions_banner' && b.type !== 'new_review_questions');
+
+                    // Retire one older encouragement banner if needed to rotate
+                    const retireIdx = _dashboardBanners.findIndex(b => b.type === 'encouragement');
+                    if (retireIdx !== -1 && _dashboardBanners.length >= MAX_ACTIVE_BANNERS) {
+                        _dashboardBanners.splice(retireIdx, 1);
+                    }
+
+                    // Pick an incoming candidate banner not currently in carousel
                     const currentIds = new Set(_dashboardBanners.map(b => b.id));
-                    const candidate = incoming.find(b => !currentIds.has(b.id)) || incoming[Math.floor(Math.random() * incoming.length)];
+                    const candidate = otherIncoming.find(b => !currentIds.has(b.id));
                     if (candidate && _dashboardBanners.length < MAX_ACTIVE_BANNERS) {
                         _dashboardBanners.push(candidate);
                     }

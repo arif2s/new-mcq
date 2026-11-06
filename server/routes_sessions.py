@@ -1351,13 +1351,14 @@ def get_dashboard_prompts() -> Dict[str, Any]:
             banners.append({
                 "id": "due_review_banner",
                 "type": "due_review",
-                "title": f"Action Required: {total_due} Due / Wrong Question{'s' if total_due != 1 else ''} 🧠",
-                "message": f"You have {total_due} wrongly answered or spaced-repetition due question{'s' if total_due != 1 else ''} consolidated in your Knowledge Hub review set.",
+                "title": f"{total_due} question{'s' if total_due != 1 else ''} left to review 🧠",
+                "message": f"You have {total_due} question{'s' if total_due != 1 else ''} left to review in your consolidated review set.",
                 "icon": "🔔",
-                "badge": f"{total_due} Due Now",
+                "badge": f"{total_due} Left to Review",
                 "action": "review_due",
                 "action_label": f"Review Set ({total_due}) →",
-                "session_id": CONSOLIDATED_REVIEWS_SESSION_ID
+                "session_id": CONSOLIDATED_REVIEWS_SESSION_ID,
+                "count": total_due
             })
 
         # 2. Topics frequently missed (from NLP-extracted topics of wrong questions)

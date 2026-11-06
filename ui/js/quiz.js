@@ -1180,6 +1180,10 @@ async function handleQuitQuiz() {
 
         const timeUsed = times.start ? Math.floor((Date.now() - times.start) / 1000) : 0;
 
+        const isReviewSet = currentQuiz.sessionId === 'sess_spaced_repetition_due';
+        const wrongAnswersCount = answersList.filter(a => !a.isCorrect && !a.timedOut).length;
+        const newQuestionsAdded = !isReviewSet ? wrongAnswersCount : 0;
+
         await persistSessionToBackend({
             sessionId: currentQuiz.sessionId || `sess_${Date.now()}`,
             subjectName: currentQuiz.subjectName,
@@ -1191,6 +1195,10 @@ async function handleQuitQuiz() {
             isCompleted: false,
             timeUsedSeconds: timeUsed
         });
+
+        if (typeof window.updateNewQuestionsToReview === 'function' && newQuestionsAdded > 0) {
+            window.updateNewQuestionsToReview(newQuestionsAdded);
+        }
 
         if (typeof window.loadSessions === 'function') {
             window.loadSessions(true);
@@ -1503,9 +1511,17 @@ async function finishQuiz() {
     // Render results immediately without waiting for network roundtrip to eliminate click delay
     renderResults(calculatedPayload, answeredQuestions);
 
+    // Check if this was a normal question session (not the review set itself)
+    // and calculate questions added to the review set (e.g. wrong answers / grade 1)
+    const isReviewSet = currentQuiz.sessionId === 'sess_spaced_repetition_due';
+    const newQuestionsAdded = !isReviewSet ? wrongCount : 0;
+
     // Persist to backend asynchronously in background
     try {
         await persistSessionToBackend(basePayload);
+        if (typeof window.updateNewQuestionsToReview === 'function' && newQuestionsAdded > 0) {
+            window.updateNewQuestionsToReview(newQuestionsAdded);
+        }
     } catch (e) {
         console.error("Error persisting quiz session:", e);
     } finally {
