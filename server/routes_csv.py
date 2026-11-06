@@ -298,21 +298,52 @@ def search_count(req: GenerateSetRequest) -> Dict[str, Any]:
 @router.post("/api/mcq/generate_set")
 def generate_set(req: GenerateSetRequest) -> Dict[str, Any]:
     """
-    Curates a question set prioritizing overdue reviews and learning-state cards
-    when spaced repetition is enabled.
+    Curates a question set using a strict priority waterfall:
+    - Tier 1 (if spaced_repetition=True): Questions due for review (due_timestamp <= now,
+      learning/relearning state IN (1, 3), or latest session attempt was wrong).
+    - Tier 2: Unattempted questions (never reviewed in csv_questions and never answered in session_questions).
+    - Tier 3 (Fallback if topic has limited questions): Previously attempted questions (oldest reviewed first)
+      to reach the requested set count.
     """
     query, params = _build_mcq_query(req, is_count=False)
 
+    # Subquery checks against session_questions to accurately detect prior attempts & wrong answers
+    attempted_expr = (
+        "(COALESCE(q.reps, 0) > 0 OR q.last_review IS NOT NULL OR EXISTS ("
+        "SELECT 1 FROM session_questions sq "
+        "WHERE sq.question_id = q.id AND sq.selected_option IS NOT NULL AND TRIM(sq.selected_option) != ''"
+        "))"
+    )
+    due_or_wrong_expr = (
+        "((q.due_timestamp > 0 AND q.due_timestamp <= unixepoch('now')) "
+        "OR (q.last_review IS NOT NULL AND q.due_timestamp <= unixepoch('now')) "
+        "OR COALESCE(q.state, 0) IN (1, 3) "
+        "OR EXISTS ("
+        "  SELECT 1 FROM session_questions sq "
+        "  WHERE sq.question_id = q.id "
+        "    AND sq.selected_option IS NOT NULL AND TRIM(sq.selected_option) != '' "
+        "    AND sq.is_correct = 0 "
+        "    AND sq.rowid = (SELECT MAX(sq2.rowid) FROM session_questions sq2 WHERE sq2.question_id = q.id AND sq2.selected_option IS NOT NULL AND TRIM(sq2.selected_option) != '')"
+        "))"
+    )
+
     if req.spaced_repetition:
         query += (
-            " ORDER BY CASE "
-            "WHEN q.due_timestamp > 0 AND q.due_timestamp <= unixepoch('now') THEN 0 "
-            "WHEN q.last_review IS NOT NULL AND q.due_timestamp <= unixepoch('now') THEN 0 "
-            "WHEN q.state IN (1, 3) THEN 1 "
-            "ELSE 2 END, RANDOM()"
+            f" ORDER BY CASE "
+            f"WHEN {due_or_wrong_expr} THEN 0 "
+            f"WHEN NOT {attempted_expr} THEN 1 "
+            f"ELSE 2 END ASC, "
+            f"CASE WHEN {attempted_expr} AND NOT {due_or_wrong_expr} THEN COALESCE(q.last_review, 0) ELSE 0 END ASC, "
+            f"RANDOM()"
         )
     else:
-        query += " ORDER BY RANDOM()"
+        query += (
+            f" ORDER BY CASE "
+            f"WHEN NOT {attempted_expr} THEN 0 "
+            f"ELSE 1 END ASC, "
+            f"CASE WHEN {attempted_expr} THEN COALESCE(q.last_review, 0) ELSE 0 END ASC, "
+            f"RANDOM()"
+        )
 
     target_count = max(1, int(req.count or 10))
     query += " LIMIT ?"

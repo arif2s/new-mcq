@@ -851,6 +851,9 @@ async function persistSessionToBackend({
         if (typeof window.loadSessions === 'function') {
             window.loadSessions(true);
         }
+        if (typeof window.initDashboard === 'function') {
+            window.initDashboard();
+        }
     } catch (e) {
         console.error("Failed to save session to backend:", e);
     }
@@ -1343,7 +1346,7 @@ function handleSelectOption(q, option, isTimeout = false) {
     if (isCorrect) scores.correct++;
     else scores.wrong++;
 
-    if (quizConfig.spacedRepetition && !isTimeout) {
+    if (!isTimeout) {
         submitFsrsScore(q, autoRating);
     }
 

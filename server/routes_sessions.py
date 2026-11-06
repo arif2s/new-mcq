@@ -655,9 +655,55 @@ def save_session(session: SessionCreate) -> Dict[str, Any]:
                 question_params,
             )
 
+        # Ensure any wrong/correct answers recorded in session_questions also reflect in csv_questions
+        # if not already scored via /api/mcq/score, and immediately sync the consolidated Hub review set.
+        if session.answers and sid != CONSOLIDATED_REVIEWS_SESSION_ID:
+            now_epoch = time.time()
+            for ans in session.answers:
+                qid = _extract_answer_id(ans)
+                sel = _extract_answer_selected(ans)
+                if not qid or not sel:
+                    continue
+                is_corr = _extract_answer_is_correct(ans)
+                if not is_corr:
+                    cursor.execute(
+                        """
+                        UPDATE csv_questions
+                        SET state = CASE WHEN COALESCE(reps, 0) > 0 THEN 3 ELSE 1 END,
+                            lapses = COALESCE(lapses, 0) + 1,
+                            reps = COALESCE(reps, 0) + 1,
+                            last_review = ?,
+                            due_timestamp = ?
+                        WHERE id = ? AND (last_review IS NULL OR last_review < ? - 5)
+                        """,
+                        (now_epoch, now_epoch, qid, now_epoch),
+                    )
+        elif session.answers and sid == CONSOLIDATED_REVIEWS_SESSION_ID:
+            # When reviewing inside the consolidated due set, mark correctly answered items as reviewed
+            now_epoch = time.time()
+            for ans in session.answers:
+                qid = _extract_answer_id(ans)
+                sel = _extract_answer_selected(ans)
+                if not qid or not sel:
+                    continue
+                if _extract_answer_is_correct(ans):
+                    cursor.execute(
+                        """
+                        UPDATE csv_questions
+                        SET state = 2,
+                            reps = COALESCE(reps, 0) + 1,
+                            stability = CASE WHEN COALESCE(stability, 0) < 1.0 THEN 3.0 ELSE stability * 1.5 END,
+                            last_review = ?,
+                            due_timestamp = ?
+                        WHERE id = ? AND (due_timestamp <= ? OR COALESCE(state, 0) IN (1, 3))
+                        """,
+                        (now_epoch, now_epoch + 86400 * 3, qid, now_epoch),
+                    )
+
         if topics_reviewed and (not existing or existing["refs_status"] == "none"):
             _enqueue_session_processing(conn, sid)
 
+        sync_consolidated_due_session(conn)
         conn.commit()
 
     _safe_notify_session(sid, refs_status, llm_status, bool(topics_reviewed))
@@ -1003,50 +1049,83 @@ def _batch_compute_session_queue_info(
 
 CONSOLIDATED_REVIEWS_SESSION_ID = "sess_spaced_repetition_due"
 
+# Set to 0 so wrongly answered and FSRS-due questions immediately appear in the Knowledge Hub & Dashboard
+WRONG_ANSWER_COOLDOWN_SECONDS = 0
 
-WRONG_ANSWER_COOLDOWN_SECONDS = 6 * 3600  # 6-hour delay before re-prompting wrong answers
+_DUE_OR_WRONG_CSV_WHERE = """
+(
+    (q.due_timestamp > 0 AND q.due_timestamp <= unixepoch('now'))
+    OR (q.last_review IS NOT NULL AND q.due_timestamp <= unixepoch('now'))
+    OR (COALESCE(q.state, 0) IN (1, 3))
+    OR EXISTS (
+        SELECT 1 FROM session_questions sq
+        WHERE sq.question_id = q.id
+          AND sq.session_id != 'sess_spaced_repetition_due'
+          AND sq.selected_option IS NOT NULL
+          AND TRIM(sq.selected_option) != ''
+          AND sq.is_correct = 0
+          AND (q.last_review IS NULL OR COALESCE(q.state, 0) IN (0, 1, 3) OR q.due_timestamp <= unixepoch('now'))
+          AND sq.rowid = (
+              SELECT MAX(sq2.rowid) FROM session_questions sq2
+              WHERE sq2.question_id = q.id
+                AND sq2.session_id != 'sess_spaced_repetition_due'
+                AND sq2.selected_option IS NOT NULL
+                AND TRIM(sq2.selected_option) != ''
+          )
+    )
+)
+"""
+
+_DUE_OR_WRONG_MCQ_WHERE = """
+(
+    (due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
+    OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
+    OR (COALESCE(state, 0) IN (1, 3))
+)
+"""
 
 
 def sync_consolidated_due_session(conn) -> None:
     """
-    Consolidates questions due for repetition (wrong/lapsed cards and scheduled reviews
-    whose due_timestamp is now or past) into a single unified session card in Knowledge Hub.
-    Prevents clutter by keeping only ONE set in the Hub and adding questions only on or after
-    their due date, while enforcing a minimum 6-hour cooldown for newly wrong/lapsed questions.
+    Consolidates all wrongly answered questions and questions due for spaced repetition review
+    into the single unified Knowledge Hub question set ('sess_spaced_repetition_due').
     """
     cursor = conn.cursor()
-    # 1. Gather all currently due questions from csv_questions
+
+    # 1. Gather all due or wrongly answered questions from csv_questions
     cursor.execute(
         f"""
-        SELECT id, question, opt_a, opt_b, opt_c, opt_d, correct_answer, explanation,
-               llm_explanation, topic_name, due_timestamp, state, lapses, last_review
-        FROM csv_questions
-        WHERE ((due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
-               OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
-               OR (state IN (1, 3)))
-          AND NOT (state IN (1, 3) AND last_review IS NOT NULL AND last_review > unixepoch('now') - {WRONG_ANSWER_COOLDOWN_SECONDS})
-        ORDER BY due_timestamp ASC
+        SELECT q.id, q.question, q.opt_a, q.opt_b, q.opt_c, q.opt_d, q.correct_answer, q.explanation,
+               q.llm_explanation, q.topic_name, q.due_timestamp, q.state, q.lapses, q.last_review
+        FROM csv_questions q
+        WHERE {_DUE_OR_WRONG_CSV_WHERE}
+        ORDER BY CASE WHEN COALESCE(q.state, 0) IN (1, 3) THEN 0 ELSE 1 END ASC,
+                 COALESCE(q.due_timestamp, 0) ASC
         """
     )
     due_csv = [dict(r) for r in cursor.fetchall()]
 
-    # 2. Gather all currently due questions from mcq_bank
+    # 2. Gather all due or wrongly answered questions from mcq_bank
     cursor.execute(
         f"""
         SELECT id, question, opt_a, opt_b, opt_c, opt_d, correct_opt as correct_answer,
                csv_explanation as explanation, llm_explanation, source_tag as topic_name,
                due_timestamp, state, lapses, last_review
         FROM mcq_bank
-        WHERE ((due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
-               OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
-               OR (state IN (1, 3)))
-          AND NOT (state IN (1, 3) AND last_review IS NOT NULL AND last_review > unixepoch('now') - {WRONG_ANSWER_COOLDOWN_SECONDS})
-        ORDER BY due_timestamp ASC
+        WHERE {_DUE_OR_WRONG_MCQ_WHERE}
+        ORDER BY CASE WHEN COALESCE(state, 0) IN (1, 3) THEN 0 ELSE 1 END ASC,
+                 COALESCE(due_timestamp, 0) ASC
         """
     )
     due_mcq = [dict(r) for r in cursor.fetchall()]
 
-    all_due = due_csv + due_mcq
+    seen_ids = set()
+    all_due = []
+    for item in due_csv + due_mcq:
+        qid_str = str(item["id"])
+        if qid_str not in seen_ids:
+            seen_ids.add(qid_str)
+            all_due.append(item)
 
     if not all_due:
         # If no questions are currently due, remove or clean up the consolidated review session
@@ -1059,7 +1138,7 @@ def sync_consolidated_due_session(conn) -> None:
     topics_list = list(dict.fromkeys(
         q["topic_name"] for q in all_due if q.get("topic_name") and q["topic_name"] != "General Medical Concept"
     ))
-    topic_items = [{"name": t, "selected": True} for t in topics_list]
+    topic_items = [{"name": t, "topic_name": t, "verified": True, "selected": True} for t in topics_list]
 
     now_ts = float(time.time() * 1000)
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -1079,6 +1158,12 @@ def sync_consolidated_due_session(conn) -> None:
             subject_name = excluded.subject_name,
             total_questions = excluded.total_questions,
             unanswered = excluded.total_questions,
+            correct_answers = 0,
+            wrong_answers = 0,
+            score = 0,
+            max_score = excluded.total_questions,
+            accuracy = 0.0,
+            is_completed = 0,
             date = excluded.date,
             timestamp = excluded.timestamp,
             topics_reviewed = excluded.topics_reviewed,
@@ -1088,8 +1173,8 @@ def sync_consolidated_due_session(conn) -> None:
         """,
         (
             CONSOLIDATED_REVIEWS_SESSION_ID,
-            "Spaced Repetition",
-            f"🧠 Due for Review ({total_q} Questions)",
+            "Spaced Repetition & Wrong Qs",
+            f"🧠 Due & Wrong Review Set ({total_q} Questions)",
             today_str,
             now_ts,
             0.0,
@@ -1152,38 +1237,31 @@ def sync_consolidated_due_session(conn) -> None:
 @router.get("/due_summary")
 def get_due_summary() -> Dict[str, Any]:
     """
-    Returns count and details of questions currently due for repetition review.
-    Excludes questions wrong within the last 6 hours so users aren't immediately prompted.
+    Returns count and details of questions currently due for repetition review or answered wrong.
     """
     with closing(get_db_connection()) as conn:
+        sync_consolidated_due_session(conn)
         cursor = conn.cursor()
         cursor.execute(
-            f"""
-            SELECT COUNT(*) FROM csv_questions
-            WHERE ((due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
-               OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
-               OR (state IN (1, 3)))
-              AND NOT (state IN (1, 3) AND last_review IS NOT NULL AND last_review > unixepoch('now') - {WRONG_ANSWER_COOLDOWN_SECONDS})
-            """
+            f"SELECT COUNT(*) as cnt, SUM(CASE WHEN COALESCE(q.state, 0) IN (1, 3) THEN 1 ELSE 0 END) as wrong_cnt FROM csv_questions q WHERE {_DUE_OR_WRONG_CSV_WHERE}"
         )
-        csv_count = cursor.fetchone()[0] or 0
+        csv_row = cursor.fetchone()
+        csv_count = int(csv_row["cnt"] or 0) if csv_row else 0
+        wrong_count = int(csv_row["wrong_cnt"] or 0) if csv_row else 0
 
         cursor.execute(
-            f"""
-            SELECT COUNT(*) FROM mcq_bank
-            WHERE ((due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
-               OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
-               OR (state IN (1, 3)))
-              AND NOT (state IN (1, 3) AND last_review IS NOT NULL AND last_review > unixepoch('now') - {WRONG_ANSWER_COOLDOWN_SECONDS})
-            """
+            f"SELECT COUNT(*) as cnt FROM mcq_bank WHERE {_DUE_OR_WRONG_MCQ_WHERE}"
         )
-        mcq_count = cursor.fetchone()[0] or 0
+        mcq_row = cursor.fetchone()
+        mcq_count = int(mcq_row["cnt"] or 0) if mcq_row else 0
 
         total_due = int(csv_count + mcq_count)
 
     return {
         "status": "success",
         "total_due": total_due,
+        "wrong_count": wrong_count,
+        "due_review_count": max(0, total_due - wrong_count),
         "session_id": CONSOLIDATED_REVIEWS_SESSION_ID if total_due > 0 else None,
     }
 
@@ -1256,26 +1334,15 @@ def get_dashboard_prompts() -> Dict[str, Any]:
     with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
 
-        # 1. Due set summary (cooldown checked)
+        # 1. Due & Wrong set summary (synced immediately)
+        sync_consolidated_due_session(conn)
         cursor.execute(
-            f"""
-            SELECT COUNT(*) FROM csv_questions
-            WHERE ((due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
-               OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
-               OR (state IN (1, 3)))
-              AND NOT (state IN (1, 3) AND last_review IS NOT NULL AND last_review > unixepoch('now') - {WRONG_ANSWER_COOLDOWN_SECONDS})
-            """
+            f"SELECT COUNT(*) FROM csv_questions q WHERE {_DUE_OR_WRONG_CSV_WHERE}"
         )
         csv_due = cursor.fetchone()[0] or 0
 
         cursor.execute(
-            f"""
-            SELECT COUNT(*) FROM mcq_bank
-            WHERE ((due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
-               OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
-               OR (state IN (1, 3)))
-              AND NOT (state IN (1, 3) AND last_review IS NOT NULL AND last_review > unixepoch('now') - {WRONG_ANSWER_COOLDOWN_SECONDS})
-            """
+            f"SELECT COUNT(*) FROM mcq_bank WHERE {_DUE_OR_WRONG_MCQ_WHERE}"
         )
         mcq_due = cursor.fetchone()[0] or 0
         total_due = int(csv_due + mcq_due)
@@ -1284,12 +1351,12 @@ def get_dashboard_prompts() -> Dict[str, Any]:
             banners.append({
                 "id": "due_review_banner",
                 "type": "due_review",
-                "title": "Spaced Repetition Due for Review 🧠",
-                "message": f"You have {total_due} question{'s' if total_due != 1 else ''} scheduled for spaced repetition review today.",
+                "title": f"Action Required: {total_due} Due / Wrong Question{'s' if total_due != 1 else ''} 🧠",
+                "message": f"You have {total_due} wrongly answered or spaced-repetition due question{'s' if total_due != 1 else ''} consolidated in your Knowledge Hub review set.",
                 "icon": "🔔",
-                "badge": f"{total_due} Due",
+                "badge": f"{total_due} Due Now",
                 "action": "review_due",
-                "action_label": f"Review Due ({total_due}) →",
+                "action_label": f"Review Set ({total_due}) →",
                 "session_id": CONSOLIDATED_REVIEWS_SESSION_ID
             })
 

@@ -150,26 +150,22 @@ async function fetchDashboardPrompts() {
         if (res.ok) {
             const data = await res.json();
             const incoming = Array.isArray(data.banners) ? data.banners : [];
-            if (_dashboardBanners.length === 0) {
-                _dashboardBanners = incoming.slice(0, MAX_ACTIVE_BANNERS);
-            } else {
-                // Merge new insights gracefully while respecting the 10-banner maximum window
-                const existingIds = new Set(_dashboardBanners.map(b => b.id));
-                const newItems = incoming.filter(b => !existingIds.has(b.id));
-                if (newItems.length > 0) {
-                    // Gradual replacement: add new item to the back and remove oldest non-pinned banner
-                    newItems.forEach(item => {
-                        if (_dashboardBanners.length >= MAX_ACTIVE_BANNERS) {
-                            // Find an encouragement banner to retire first, else shift the first non-due banner
-                            const retireIdx = _dashboardBanners.findIndex(b => b.type === 'encouragement');
-                            if (retireIdx !== -1) {
-                                _dashboardBanners.splice(retireIdx, 1);
-                            } else {
-                                _dashboardBanners.shift();
-                            }
-                        }
-                        _dashboardBanners.push(item);
-                    });
+            if (incoming.length > 0) {
+                // Always prioritize action banners (due_review, weak_topic, switch_subject) at the front
+                // and update existing banners in-place so updated counts are immediately visible.
+                const priorityBanners = incoming.filter(b => b.type !== 'encouragement');
+                const encouragementBanners = incoming.filter(b => b.type === 'encouragement');
+
+                _dashboardBanners = [
+                    ...priorityBanners,
+                    ...encouragementBanners
+                ].slice(0, MAX_ACTIVE_BANNERS);
+
+                // If there is an active due_review banner, focus carousel on index 0
+                if (priorityBanners.some(b => b.type === 'due_review')) {
+                    _activeBannerIndex = 0;
+                } else if (_activeBannerIndex >= _dashboardBanners.length) {
+                    _activeBannerIndex = 0;
                 }
             }
         }
@@ -295,6 +291,38 @@ async function initDashboard() {
             <h1 class="text-3xl font-bold mb-2">📊 Dashboard</h1>
             <p class="subtitle">Your learning analytics at a glance</p>
         </div>
+
+        ${Number(_dueSummaryData.total_due || 0) > 0 ? `
+        <!-- Persistent Spaced Repetition & Wrong Questions Notification Alert -->
+        <div id="dash-due-notification-alert" class="glass-card border-2 border-warning-500/60 bg-warning-500/15 p-5 rounded-2xl mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-[0_0_20px_rgba(234,179,8,0.2)] animate-fade-in">
+          <div class="flex items-center gap-4">
+            <div class="w-12 h-12 rounded-2xl bg-warning-500/20 border border-warning-500/40 flex items-center justify-center text-2xl shrink-0">
+              🔔
+            </div>
+            <div>
+              <div class="flex items-center gap-2 flex-wrap">
+                <h2 class="text-base font-bold text-warning-300">
+                  Spaced Repetition &amp; Wrong Questions Ready for Review
+                </h2>
+                <span class="px-2.5 py-0.5 text-[11px] font-bold uppercase rounded-full bg-warning-500/30 text-warning-200 border border-warning-400/40">
+                  ${Number(_dueSummaryData.total_due)} Due
+                </span>
+              </div>
+              <p class="text-xs text-muted mt-1">
+                ${Number(_dueSummaryData.total_due)} wrongly answered or scheduled review question${Number(_dueSummaryData.total_due) === 1 ? ' has' : 's have'} been added to your consolidated review set in Knowledge Hub.
+              </p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2.5 shrink-0 self-end sm:self-center">
+            <button type="button" id="dash-open-due-hub-btn" class="secondary-btn px-3.5 py-2 rounded-xl text-xs font-semibold cursor-pointer">
+              📚 View in Hub
+            </button>
+            <button type="button" id="dash-start-due-quiz-btn" class="primary-btn px-4 py-2 rounded-xl text-xs font-bold shadow-lg cursor-pointer">
+              ▶️ Practice Now (${Number(_dueSummaryData.total_due)})
+            </button>
+          </div>
+        </div>
+        ` : ''}
 
         <!-- Dynamic Multi-Banner Recommendations & Encouragement Carousel -->
         <div id="dash-banner-carousel-container" class="mb-8">
@@ -494,6 +522,20 @@ async function initDashboard() {
     `;
 
     attachRankEditorListeners();
+
+    document.getElementById('dash-open-due-hub-btn')?.addEventListener('click', () => {
+        if (typeof window.loadSessions === 'function') window.loadSessions();
+        const hubNav = document.querySelector('.nav-btn[data-target="knowledge-hub-view"]');
+        if (hubNav) hubNav.click();
+    });
+
+    document.getElementById('dash-start-due-quiz-btn')?.addEventListener('click', () => {
+        handleBannerAction({
+            action: 'review_due',
+            session_id: _dueSummaryData.session_id || 'sess_spaced_repetition_due'
+        });
+    });
+
     renderBannerCarousel();
     startBannerAutoCycle();
     startGradualBannerRotation();
