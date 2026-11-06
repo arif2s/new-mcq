@@ -6,8 +6,11 @@
 - **Runtime Environment**: Python 3.10+ async backend (FastAPI/Uvicorn), SQLite (WAL mode), pywebview (Windows Edge Chromium) or browser client, Vanilla HTML5/JS/CSS frontend.
 - **Tech Stack**:
   - *Backend*: FastAPI, Uvicorn, SQLite3, Tantivy (BM25 lexical index), LanceDB (CPU vector + FTS hybrid search), ONNX Runtime (SapBERT 768d / MiniLM 384d), FlashRank (ms-marco-TinyBERT-L-2-v2 / ms-marco-MiniLM-L-6-v2 cross-encoder reranking), SciSpaCy (UMLS/MeSH ontologies & SciPy sparse TF-IDF matcher), Docling v2 & Docling v3 (visual layout, booktabs reconstruction, OCR line-crop re-reading & PP-OCR ONNX layout parser), Datalab Indra OCR ONNX (text/math/scanned PDF parser), & PyMuPDF / AdaptivePdfLayoutEngine (PDF text extraction), LibZim (ZIM reader), Tiktoken.
-  - *Frontend*: Vanilla HTML5/JS (ES6+), CSS3 with glassmorphism theme CSS variables (`ui/css/main.css`), Marked.js, KaTeX, DOMPurify, interact.js. Local offline vendor fallback assets automatically checked and cached under `ui/vendor/`.
-  - *External Readers / Bridges*: SumatraPDF (`-reuse-instance`), Obsidian URI protocol (`obsidian://`), LM Studio API (`http://127.0.0.1:1234/v1`).
+  - *Frontend*: Vanilla HTML5/JS (ES6+), CSS3 with glassmorphism theme CSS variables (`ui/css/main.css`), Marked.js, KaTeX, DOMPurify, interact.js. Local offline vendor fallback assets automatically checked and cached under `ui/vendor/`. High-frequency actions use segmented button groups (`.segmented-group` / `.segmented-btn` with `role="radiogroup"` / `role="radio"`) with two-way binding to underlying `<select>` elements.
+  - *External Readers / Bridges*: SumatraPDF (`-reuse-instance`), Obsidian URI protocol (`obsidian://`), LM Studio API (`http://127.0.0.1:1234/v1`), In-app ZIM Document Reader modal (`#zim-viewer-container`, 1200px max-width, translucent backdrop filter, `body.zim-reader-open` viewport isolation, backdrop click & Escape dismissal).
+- **Clinical Spaced Repetition Engine**:
+  - FSRS v4.5 scheduling engine with immediate repetition for lapses: rating 'Again' (`grade == 1`) enforces `interval_days = 0`, `interval_seconds = 0`, and `due_timestamp = current_ts`, ensuring wrong questions immediately queue for the next quiz set.
+  - Due review consolidation & cooldown: Overdue reviews are unified into a single Knowledge Hub session (`sess_spaced_repetition_due` titled `🧠 Due for Review`) via `sync_consolidated_due_session`. Questions answered incorrectly within the last 6 hours (`last_review > unixepoch('now') - 21600`) are excluded from due counts and dashboard reminders to prevent immediate repetitive fatigue.
 - **Hardware Budgets & Execution Constraints**:
   - *VRAM Budget & GPU Policy*:
     - Default Baseline: Zero VRAM for routine backend processes (`CUDA_VISIBLE_DEVICES=""`), reserving 100% VRAM (4.2–4.8 GB on 6 GB GPUs) for local LM Studio GGUF models.
@@ -63,13 +66,13 @@
 │   ├── indra_parser.py                # Datalab Indra OCR ONNX parser with LaTeX math & layout block extraction.
 │   ├── indra/                         # Modularized Datalab Indra OCR subpackage.
 │   │   ├── __init__.py                # Package facade exporting profiles, types, rules, strategies, engine, and refiner.
-│   │   ├── types.py                   # Type definitions (BBox, RGB, PageElement, PageElements, TableGrid, ThreadSafeLRUCache).
-│   │   ├── profiles.py                # Document layout profiles (NativeDigital, Textbook, Booklet, Article) and geometry policies.
-│   │   ├── rules.py                   # RegexCatalog, color distance, HSV saturation, deskew, and line enrichment.
-│   │   ├── strategies.py              # Layout strategy hierarchy, furniture suppression, strip-channel columns, element scoring.
-│   │   ├── engine.py                  # IndraModularEngine, FallbackChain (ONNX, pdfplumber, pypdfium2), 2D table grid builder.
-│   │   ├── document.py                # DocumentHeadingTracker and cross-page hierarchical heading tree compiler.
-│   │   └── refiner.py                 # IndraHybridLayoutRefiner and interactive SVG bounding box overlay generator.
+│   │   ├── types.py                   # Type definitions (BBox, RGB, PageElement, PageElements, TableGrid, ThreadSafeLRUCache) with achromatic -1.0 hue sentinels and consensus tracking.
+│   │   ├── profiles.py                # Document layout profiles (NativeDigital, Textbook, Booklet, Article), 7-factor heading weights, and asymmetric gutter geometry.
+│   │   ├── rules.py                   # Granular 12-family prefix catalog, SharedLineProcessor (clean, classify, enrich), icon bullet & TOC dot-leader filters, deskew math.
+│   │   ├── strategies.py              # Layout strategy hierarchy, vertical wrapped element merging (_merge_wrapped_elements), acronym tail recovery, and clinical subheadings a)-d).
+│   │   ├── engine.py                  # IndraModularEngine, FallbackChain (ONNX, pdfplumber, pypdfium2), 2D table grid builder, chromatic pill banner recovery, physiological subscripts (PaO2).
+│   │   ├── document.py                # Dual-mode lazy & streaming TOC tracking (DocumentHeadingTracker) with v37 disk caching and cross-page hierarchy compilation.
+│   │   └── refiner.py                 # IndraHybridLayoutRefiner and interactive SVG bounding box overlay generator with deduplicated heading emission.
 │   ├── pdf_extractor.py               # Lightweight PyMuPDF fallback fast text slicer with page heading detection.
 │   ├── pdf_parser.py                  # Standalone 6-stage layout reconstruction pipeline (PyMuPDF AdaptivePdfLayoutEngine).
 │   ├── obsidian_reader.py             # Obsidian markdown frontmatter stripper, wikilink cleaner, and section reader.
@@ -87,7 +90,7 @@
 │   ├── routes_notes.py                # External app bridges (SumatraPDF launch, Obsidian native URI, ZIM asset/article proxy).
 │   ├── routes_queue.py                # RAG task queue state management, topic ignoring, priority overrides, and queue clear/retry.
 │   ├── routes_search.py               # Multi-source hybrid search API (LanceDB + Tantivy + ZIM + SciSpaCy).
-│   ├── routes_sessions.py             # Quiz session persistence, answer recording, session history, and RAG session reprocessing.
+│   ├── routes_sessions.py             # Quiz session persistence, answer recording, session history, due repetition consolidation, due summary, and dashboard prompts.
 │   ├── routes_sources.py              # Source management (PDF, Obsidian, ZIM), wallpaper listing, and background indexer execution.
 │   └── routes_state.py                # Persistent state GET/PUT storage and vendor asset check.
 └── ui/
@@ -103,14 +106,14 @@
         ├── search.js                  # Search view controller, inspector filters, result rendering, and citation launcher.
         ├── queue.js                   # Live task queue status table and controls.
         ├── vault.js                   # Source management panel, index trigger, and progress bar binder.
-        ├── dashboard.js               # Performance dashboard, daily statistics, and rank simulation.
+        ├── dashboard.js               # Performance dashboard, daily statistics, dynamic prompt banner carousel (weak topics, subject rotation, encouragement), and rank simulation.
         ├── expertise.js               # Clinical domain mastery breakdown and radar/progress UI.
         ├── habits.js                  # Habit streak tracker and activity heatmaps.
-        ├── settings.js                # System settings, model diagnostics, SciSpaCy model manager, and state export/import.
+        ├── settings.js                # System settings, active model switching, prefetch downloader, model diagnostics, SciSpaCy model manager, and state export/import.
         ├── test_features.js           # Interactive feature test bench (PDF, DB search, models, KaTeX, pipeline runner).
         ├── analysis.js                # Visual PDF layout analysis workspace, bbox drag/resize (interact.js), category tagger, auto-save.
         ├── analysis_toc.js            # Table of Contents hierarchical validation workspace, heading tree, tier shifting (H1-H6).
-        └── reader.js                  # Reader view initialization wrapper and in-app document viewer.
+        └── reader.js                  # Reader view initialization wrapper, in-app document viewer, and modal controller.
 ```
 
 ---
@@ -132,7 +135,7 @@
 - `agents.topic_extractor`: Re-exports `extract_topics`, `extract_topics_local`, `filter_sibling_topics`, `get_topic_aliases`, `generate_candidate_variants`, `canonicalize_clinical_phrase`, `extract_clinical_modifiers`, `extract_all_clinical_modifiers`, `get_ignored_topics_set`, `add_ignored_topic`, `remove_ignored_topic`, `normalize_topic_key`, `resolve_zim_topic`, `get_medspacy_model` from `agents.tema_q.topic_extractor`.
 - `agents.tema_q.topic_extractor`:
   - `extract_topics(text: str, explanation: str = "", strategy: str = "medspacy", use_zim_refinement: bool = False, use_tantivy_refinement: bool = False, **kwargs) -> list[str]`
-  - `extract_topics_local(question: str = "", options: Optional[Any] = None, explanation: str = "", strategy: str = "medspacy", use_zim_refinement: bool = False, use_tantivy_refinement: bool = False, text: Optional[str] = None, **kwargs) -> dict[str, Any]`
+  - `extract_topics_local(question: str = "", options: Optional[Any] = None, explanation: str = "", strategy: str = "medspacy", use_zim_refinement: bool = False, use_tantivy_refinement: bool = False, text: Optional[str] = None, **kwargs) -> dict[str, Any]`: Uses MedSpaCy ConText negation and clinical target rules to bind CUIs and semantic categories directly, bypassing brittle subclause splitting to prevent false-positive clause negation (e.g. "dyspnea but no asthma"); uses thread-local SQLite pooling (`_get_thread_db_connection()`) and LRU caching (`maxsize=16384`).
   - `filter_sibling_topics(query: str, chunks: list[dict]) -> list[dict]`
   - `get_topic_aliases(term: str, max_aliases: int = 20) -> list[str]`
   - `generate_candidate_variants(term: str) -> list[str]`
@@ -180,7 +183,7 @@
   - `prioritize_session_tasks(session_id: str) -> int`
 - `core.scheduler`:
   - `map_fsrs_state_to_status(state: int, stability: float = 0.0, reps: int = 0) -> str`: Maps FSRS numeric state and stability to UI status labels (`'new'`, `'learning'`, `'review'`, `'mastered'`).
-  - `calculate_fsrs_next_interval(rating: int, state: int, difficulty: float, stability: float, reps: int, lapses: int, now: Optional[float] = None) -> dict[str, Any]`: Computes updated FSRS v4.5 metrics using exact power-law interval scaling ($I = S \cdot 1.0$ at 90% retention), $D_0(3)$ mean reversion, stability floor protection ($\ge 0.1$), and optional `due_timestamp` calculation; returns `FSRS Stats Dict`.
+  - `calculate_fsrs_next_interval(rating: int, state: int, difficulty: float, stability: float, reps: int, lapses: int, now: Optional[float] = None) -> dict[str, Any]`: Computes updated FSRS v4.5 metrics using exact power-law interval scaling ($I = S \cdot 1.0$ at 90% retention), $D_0(3)$ mean reversion, stability floor protection ($\ge 0.1$), and optional `due_timestamp` calculation; when `rating == 1` ('Again'), forces `interval_days = 0`, `interval_seconds = 0`, and sets `due_timestamp = now` so lapsed cards repeat on the next quiz set; returns `FSRS Stats Dict`.
 - `core.reporter`:
   - `generate_topic_report(topic: str, search_results: Optional[Union[dict, list]] = None, synthesis_output: Optional[dict] = None) -> str`: Compiles structured HTML dossier in `storage/reports/` adhering to `SynthesisOutputDict` (`display_title`, `enhanced_explanation`, `unified_article`, `distractor_analysis`, `variance_audit`, `top_references`); implements Invariant 13 polymorphic reference normalization, markdown-to-HTML rendering, and process/thread-safe atomic temp file replacement.
 
@@ -256,13 +259,15 @@
   - `ingest_to_lancedb(file_path: Union[str, Path], source_article: str, main_topic: str = "", mode: str = "auto", math: bool = False) -> int`
 - `parsers.indra`:
   - Re-exports core profiles, types, rules, strategies, engine components, and refiner functions:
-  - `parsers.indra.types`: `BBox`, `RGB`, `ElementRole`, `HeadingPrototype`, `PageElement`, `PageElements`, `TableGrid`, `ThreadSafeLRUCache`.
-  - `parsers.indra.profiles`: `ColumnMode`, `CoordinateZone`, `FurnitureSuppressionPolicy`, `HeadingWeightPolicy`, `LAYOUT_PROFILES`, `LayoutProfile`, `PageGeometryPolicy`, `StrategyKey`.
-  - `parsers.indra.rules`: `RegexCatalog`, `deskew_bbox_norm(bbox, angle)`, `enrich_lines(lines, ...)`, `overlap_ratio(b1, b2)`, `rgb_distance(c1, c2)`, `rgb_saturation(rgb)`, `rgb_to_hsv(rgb)`, `union_bbox(boxes)`.
-  - `parsers.indra.strategies`: `LayoutStrategy`, `NativeDigitalStrategy`, `ScannedTwoColumnTextbookStrategy`, `IllustratedBookletStrategy`, `AcademicArticleStrategy`, `LayoutStrategyRegistry`.
-  - `parsers.indra.engine`: `FallbackChain`, `IndraModularEngine(mode, math, furniture, dpi, threads, image_ocr)`, `reconstruct_2d_table_grid(words, ...)` (direct ONNX invocation with optional GPU provider routing, falling back gracefully to pdfplumber vector text and pypdfium2 OCR).
-  - `parsers.indra.document`: `DocumentHeadingTracker(root_title)`, `get_or_create_document_tracker(file_path, root_title)` (maintains running multi-page heading hierarchies and compiles validated heading trees).
-  - `parsers.indra.refiner`: `IndraHybridLayoutRefiner(page_elements)`, `build_layout_svg_overlay(page_elements, width, height)` (generates interactive SVG overlays and structured markdown blocks).
+  - `parsers.indra.types`: `BBox`, `RGB`, `ElementRole`, `HeadingPrototype`, `PageElement`, `PageElements`, `TableGrid`, `ThreadSafeLRUCache`; initializes `fg_hue = -1.0` and `bg_hue = -1.0` as achromatic sentinels, adds consensus tracking fields (`indent_ratio`, `line_count`, `confidence`, `embedded_toc_level`, `rotation`, `indra_role`).
+  - `parsers.indra.profiles`: `ColumnMode`, `CoordinateZone`, `FurnitureSuppressionPolicy`, `HeadingWeightPolicy`, `LAYOUT_PROFILES`, `LayoutProfile`, `PageGeometryPolicy`, `StrategyKey`; incorporates 7-factor heading weights, asymmetric gutter thresholds, and expanded header zone ratios.
+  - `parsers.indra.rules`: `RegexCatalog` (12 prefix families including `ALPHA_LOWER`, `ALPHA_UPPER`, `DECIMAL`; regex filters for `ICON_BULLET_MARKER`, `TOC_DOT_LEADER`, `CONTRIBUTOR_ROW`, `SITUATION_HEADER`), `SharedLineProcessor(clean, classify, enrich)`, `deskew_bbox_norm(bbox, angle)`, `enrich_lines(lines, ...)`, `overlap_ratio(b1, b2)`, `rgb_distance(c1, c2)`, `rgb_saturation(rgb)`, `rgb_to_hsv(rgb)`, `union_bbox(boxes)`.
+  - `parsers.indra.strategies`: `LayoutStrategy`, `NativeDigitalStrategy`, `ScannedTwoColumnTextbookStrategy`, `IllustratedBookletStrategy`, `AcademicArticleStrategy`, `LayoutStrategyRegistry`; provides `_merge_wrapped_elements` (parenthetical acronym tails, *Situation multi-line exemptions) and clinical subheading classification a)-d).
+  - `parsers.indra.engine`: `FallbackChain`, `IndraModularEngine(mode, math, furniture, dpi, threads, image_ocr)`, `reconstruct_2d_table_grid(words, ...)`, `_crosses_dynamic_channel`, `_detect_and_ocr_chromatic_pill_banners`, physiological subscript attachment (PaO2, PaCO2) with zero-VRAM CPU/opportunistic GPU routing.
+  - `parsers.indra.document`: `DocumentHeadingTracker(root_title)`, `get_or_create_document_tracker(file_path, default_title, reset, target_page, full_scan, progress_callback)`; supports dual-mode lazy & streaming TOC tracking with v37 disk caching (`_get_toc_disk_cache_path`).
+  - `parsers.indra.refiner`: `IndraHybridLayoutRefiner(page_elements)`, `build_layout_svg_overlay(page_elements, width, height)`; deduplicates consensus lines and suppresses duplicate heading/list item emissions in output markdown.
+- `parsers.indra_parser`:
+  - Enforces strict architectural line limit guardrail (`<= 673` lines) by delegating parsing workflows to `parsers.indra` subpackage while preserving legacy top-level signatures.
 - `parsers.pdf_extractor`:
   - `clean_pdf_text(text: str) -> str`: Normalizes typographical ligatures (fi, fl, ffi), repairs line-break hyphenations, strips null bytes and form feeds, and cleans whitespace.
   - `extract_page_slice(file_path: Union[str, Path], page_number: int) -> str`: LRU-cached (maxsize=256) text extraction with natural reading order (`sort=True`) and bounds safety (rejects `page_number < 1`).
@@ -280,9 +285,9 @@
   - `class ZimAsset(tuple)`: Polyfill supporting `tuple[bytes, str]` unpacking and dictionary/property access (`.content`, `.mimetype`, `.zim_path`).
   - `get_enabled_zim_paths(force_refresh: bool = False) -> list[str]`
   - `get_archive(zim_path: str) -> Optional[Any]`
-  - `resolve_zim_topic(term: str) -> dict[str, Any]`
+  - `resolve_zim_topic(term: str) -> dict[str, Any]`: Uses thread-local SQLite pooling (`_get_thread_db_connection()`) and bounded LRU caching (`_cached_resolve_zim_topic`, maxsize=16384).
   - `get_zim_article(zim_path: str, title: str, max_chars: int = 4500) -> str`
-  - `get_zim_article_html(title_or_path: str, zim_path: Optional[str] = None) -> dict[str, Any]` (scopes extracted HTML inside `<div class="mw-parser-output">`)
+  - `get_zim_article_html(title_or_path: str, zim_path: Optional[str] = None) -> dict[str, Any]`: Scopes extracted HTML inside `<div class="mw-parser-output">`, rewrites media and SVG asset URLs (`<image>`, `<object>`, `<embed>`, `<source>`), and sanitizes inline styles on Wikipedia navboxes while preserving structural widths.
   - `get_zim_asset(asset_path: str, zim_path: str = "") -> Optional[ZimAsset]`
   - `search_zim_articles(query: str, limit: int = 3) -> list[ChunkDict]`
   - `expand_query_via_zim(query: str) -> str`
@@ -345,7 +350,7 @@
   - `GET /api/csv/subjects`, `POST /api/csv/subjects`, `GET /api/mcq/subjects`, `POST /api/mcq/subjects` -> `get_subjects() -> list[SubjectResponse]`: Aggregates question counts per subject file stem.
   - `GET /api/csv/topics`, `POST /api/csv/topics`, `GET /api/mcq/topics`, `POST /api/mcq/topics` -> `get_topics(subject: Optional[str] = None) -> list[TopicResponse]`: Lists topic counts with optional subject filtering.
   - `POST /api/csv/search_count` & `POST /api/mcq/search_count` -> `search_count(req: GenerateSetRequest) -> dict[str, Any]`: Computes matching question count over FTS5 and subject/topic filters.
-  - `POST /api/csv/generate_set` & `POST /api/mcq/generate_set` -> `generate_set(req: GenerateSetRequest) -> dict[str, Any]`: Curates question set with FSRS due-priority ordering and randomized fallbacks.
+  - `POST /api/csv/generate_set` & `POST /api/mcq/generate_set` -> `generate_set(req: GenerateSetRequest) -> dict[str, Any]`: Curates question set prioritizing overdue cards (`due_timestamp <= unixepoch('now')`) and learning state questions (`state IN (1, 3)`) ahead of unreviewed questions so wrong questions repeat on the next quiz set.
   - `GET /api/csv/fsrs_summary`, `POST /api/csv/fsrs_summary`, `GET /api/mcq/fsrs_summary`, `POST /api/mcq/fsrs_summary` -> `get_fsrs_summary() -> dict[str, Any]`: Real-time FSRS card status distribution (`new`, `learning`, `review`, `mastered`).
   - `GET /api/csv/db_status` & `GET /api/mcq/db_status` -> `get_db_status() -> dict[str, Any]`: Checks question bank population.
   - `POST /api/csv/build_db` & `POST /api/mcq/build_db` -> `build_db(background_tasks: BackgroundTasks) -> dict[str, Any]`: Offloads background CSV ingestion.
@@ -403,6 +408,9 @@
     - Returns: `{"status": "success", "top_hit": ChunkDict | None, "all_results": SearchResultsDict, "candidates": list[ChunkDict], "query": str, "aliases": list[str]}`.
   - `GET /api/search/diagnostics/{lm_studio|db|sumatrapdf|tantivy}`: Legacy compatibility aliases for `/api/models/diagnostics/*`.
 - `server.routes_sessions`:
+  - `sync_consolidated_due_session(conn) -> None`: Consolidates overdue and learning questions into unified `sess_spaced_repetition_due` with minimum 6-hour delay window for wrong answers.
+  - `GET /api/sessions/due_summary` -> `get_due_summary() -> dict[str, Any]`: Returns `{status: "success", total_due: int, session_id: Optional[str]}`.
+  - `GET /api/sessions/dashboard_prompts` -> `get_dashboard_prompts() -> dict[str, Any]`: Computes intelligent banner list (due reviews, high-yield weak topics derived from NLP-extracted topics, subject rotations unattempted in 3+ days, and rotating encouragement messages).
   - `POST /api/sessions/save` -> `save_session(session: SessionCreate) -> dict[str, Any]`
   - `GET /api/sessions/history` -> `get_session_history() -> list[dict[str, Any]]`
   - `GET /api/sessions/{session_id}` -> `get_session_by_id(session_id: str) -> dict[str, Any]`
@@ -440,14 +448,14 @@
   - `DELETE /api/state/{key}` -> `delete_state_key(key: str) -> dict[str, str]`: Deletes state entry from SQLite.
 
 ### Frontend Modules (`ui/js/`)
-- `ui/js/app.js`: `switchTab(tabName: str)`, `openInspector(forceOpen: bool = true)`, `closeInspector()`, `extractAndApplyPalette(imgElement: HTMLImageElement)`, `updateThemeAndBackground()`, citation delegation on click (`data-source-type`, `data-file-path`, `data-page`).
+- `ui/js/app.js`: `switchTab(tabName: str)`, `openInspector(forceOpen: bool = true)`, `closeInspector()`, `openDocumentReader({title, sourceType, htmlContent, markdownContent, filePath, anchor})` (renders 1200px max-width glass card, sets `body.zim-reader-open`, dismisses on backdrop click or Escape), `closeDocumentReader()`, `renderMarkdownAndMath(text: str)`, `escapeHTML(str: str)`, `extractAndApplyPalette(imgElement: HTMLImageElement)`, `updateThemeAndBackground()`, citation delegation on click (`data-source-type`, `data-file-path`, `data-page`).
 - `ui/js/state.js`: `AppPersistence.fetchState()`, `AppPersistence.saveState()`, `AppPersistence.updateState(patch)`
-- `ui/js/quiz.js`: `initQuizSetup()`, `beginQuizRunner()`, `handleSelectOption(optLetter: str)`, `updateInspectorForQuestion(q)`, `renderTopicVerificationModalDOM()`
+- `ui/js/quiz.js`: `initQuizSetup()`, `beginQuizRunner()`, `handleSelectOption(optLetter: str)`, `handleQuitQuiz()`, `updateInspectorForQuestion(q)`, `renderTopicVerificationModalDOM()` (records and restores `scrollTop` position of `#topic-editor-content`), `openExplanationNoteModal(q)` (opens expanded Markdown/KaTeX explanation note modal `#explanation-note-modal`, dismissible via backdrop click or Escape), separates FSRS rating controls (`#fsrs-rating-container`) and CSV explanation (`#feedback-container`) into distinct cards.
 - `ui/js/hub.js`: `renderHub()`, `openTopicCarousel(topicKey: str)`, `openTopicCarouselForQuiz(topicKey: str)`, `openSessionReview(sessionId: str)`
 - `ui/js/search.js`: `performGlobalSearch(query: str)`, `renderCentralSearchResults(results)`, `renderSearchFilterInspector()`
 - `ui/js/queue.js`: `fetchQueueStatus()`, `renderQueue()`, `initQueueWebSocket()`
 - `ui/js/vault.js`: `fetchSources()`, `renderSources()`, `updateProgressUI(percent, msg)`
-- `ui/js/dashboard.js`: `initDashboard()`, `renderRankEditor()`
+- `ui/js/dashboard.js`: `initDashboard()`, `fetchDashboardPrompts()`, `renderBannerCarousel()` (rotates dynamic carousel of up to 10 banners: spaced repetition due reviews, NLP weak topics, 3+ day subject rotation prompts, and motivational messages), `handleBannerAction(banner)`, `startBannerAutoCycle()`, `startGradualBannerRotation()`, `renderRankEditor()`
 - `ui/js/expertise.js`: `initExpertiseMap()`
 - `ui/js/habits.js`: `initHabits()`
 - `ui/js/settings.js`: `initSettings()`, `loadDiagnostics()`, `loadScispacyModels()`
@@ -782,6 +790,30 @@ CREATE INDEX idx_annotated_bboxes_page ON user_annotated_bboxes (file_path, page
   ```
 
 ### Key API DTOs & JSON Payloads
+- **Dashboard Prompt Banner DTO** (`server/routes_sessions.py` -> `ui/js/dashboard.js`):
+  ```json
+  {
+    "id": "weak_topic_kawasaki_disease",
+    "type": "weak_topic | due_review | switch_subject | encouragement",
+    "title": "Target Weak Topic: Kawasaki Disease 🎯",
+    "message": "You've missed 3 questions related to Kawasaki Disease. A focused review will solidify this concept!",
+    "icon": "🎯",
+    "badge": "High Yield Weak Area",
+    "action": "practice_topic | review_due | switch_subject",
+    "action_label": "Practice Kawasaki Disease →",
+    "topic": "Kawasaki Disease",
+    "subject": "Pediatrics",
+    "session_id": "sess_spaced_repetition_due"
+  }
+  ```
+- **Due Repetition Summary DTO** (`GET /api/sessions/due_summary`):
+  ```json
+  {
+    "status": "success",
+    "total_due": 12,
+    "session_id": "sess_spaced_repetition_due"
+  }
+  ```
 - `SearchRequest`:
   ```python
   {
@@ -950,8 +982,16 @@ CREATE INDEX idx_annotated_bboxes_page ON user_annotated_bboxes (file_path, page
   - `flashrankModel`: `str`
   - `dailyGoal`: `int`
   - `streakData`: `dict`
-- Dynamic CSS Variables (`:root` mutated by `ui/js/app.js` based on wallpaper extraction):
-  - `--bg-primary`, `--bg-glass`, `--text-primary`, `--text-muted`, `--accent-primary`, `--accent-secondary`, `--border-glass`
+- Dynamic CSS Custom Properties (`ui/css/main.css` across `:root` and `body.dark-theme`):
+  - Theme neutrals: `--c-neutral-100`, `--c-neutral-200`, `--c-neutral-300`, `--c-neutral-400`, `--c-neutral-500`
+  - Glass tokens: `--bg-primary`, `--bg-glass`, `--text-primary`, `--text-muted`, `--accent-primary`, `--accent-secondary`, `--border-glass`
+  - Segmented controls: `--segmented-bg`, `--segmented-border`, `--segmented-active-bg`
+  - Code & readers: `--code-bg`, `.modal-backdrop`, `.glass-card`, `body.zim-reader-open`
+  - High-contrast card overrides on panels and badges ensuring WCAG AA compliance across light and dark themes.
+- UI Interaction Controls:
+  - Segmented button groups: `.segmented-group` and `.segmented-btn` with `role="radiogroup"` / `role="radio"` retain underlying form `<select>` elements for seamless two-way state synchronization.
+  - ZIM Document Reader modal: `#zim-viewer-container` renders articles up to 1200px wide within `.glass-card` on a translucent backdrop, isolates background scrolling via `body.zim-reader-open`, and dismisses upon clicking outside or pressing Escape.
+  - Explanation Note Modal: `#explanation-note-modal` presents expanded Markdown/KaTeX explanation notes on clicking the review explanation card, closing on backdrop click or Escape.
 - Citation Click Delegation:
   - Elements with `.citation-link` carry `data-source-type="pdf"|"obsidian"|"zim"`, `data-file-path="..."`, `data-page="..."`. Delegated at `document` level in `ui/js/app.js`.
 
@@ -989,7 +1029,23 @@ CREATE INDEX idx_annotated_bboxes_page ON user_annotated_bboxes (file_path, page
    ui/js/app.js (fetchWallpapersList) -> GET /api/sources/wallpapers -> Load Canvas
      └── extractAndApplyPalette() -> Calculates HSL hues, contrast ratios, luminance -> updates CSS variables on :root
 
-5. PDF Visual Layout Analysis & Ingestion Pipeline:
+5. Spaced Repetition Due Review & Dashboard Prompt Carousel:
+   ui/js/dashboard.js -> GET /api/sessions/dashboard_prompts & GET /api/sessions/due_summary
+     ├── server/routes_sessions.py (sync_consolidated_due_session) -> Checks due_timestamp <= unixepoch('now')
+     │     └── Excludes questions wrong within 6h cooldown (last_review > now - 21600)
+     ├── server/routes_sessions.py (Computes weak topics via NLP-extracted topics + subject switches)
+     └── ui/js/dashboard.js (renderBannerCarousel) -> Rotates interactive carousel with direct quiz runner launch
+
+6. In-App Document Reader & ZIM Article Viewer:
+   Citation Click / Knowledge Hub -> ui/js/app.js (openDocumentReader)
+     ├── GET /api/notes/zim-article -> parsers/zim_reader.py (get_zim_article_html)
+     │     ├── Scopes inside <div class="mw-parser-output">
+     │     ├── Rewrites media and SVG embeds (<image>, <object>, <embed>, <source>)
+     │     └── Sanitizes inline styling on MediaWiki navboxes
+     ├── DOMPurify.sanitize() with full SVG & table tags -> Mounts into #zim-content-area
+     └── Applies body.zim-reader-open, expands to 1200px max-width, dismisses on backdrop click or Escape
+
+7. PDF Visual Layout Analysis & Ingestion Pipeline:
    ui/js/analysis.js -> POST /api/analysis/initialize -> SQLite layout_analysis_progress
      ├── GET /api/analysis/page-data -> parsers/indra/engine.py (IndraModularEngine fallback chain)
      │     └── Renders base64 canvas + interactive SVG overlays (.bbox-overlay-element via interact.js)
@@ -1036,3 +1092,8 @@ CREATE INDEX idx_annotated_bboxes_page ON user_annotated_bboxes (file_path, page
 22. **Docling & Indra Offline Execution Safety**: Layout and OCR parsers (`parsers/docling_v2_parser.py`, `parsers/docling_v3_parser.py`, `parsers/indra_parser.py`) MUST set `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` (plus `INDRA_OCR_MODEL_DIR` for Indra) when local model weights are detected, enforcing 100% offline execution without online Hugging Face Hub hangs.
 23. **Non-Collapsing Inspector on Background Topic Extraction**: In `ui/js/app.js` and `ui/js/quiz.js`, `openInspector(forceOpen)` defaults `forceOpen` to `true`. When called with `forceOpen = false` during automatic background updates (`updateInspectorForQuestion`), inspector content MUST update without reopening the right sidebar if it was collapsed by the user.
 24. **PDF Layout Analysis & Bounding Box Transaction Isolation**: Page bounding box modifications (`POST /api/analysis/save-page`) MUST be persisted atomically within a single SQLite transaction (clearing existing bboxes for the specific page and inserting active `BBoxItem` records) to prevent partial annotation writes. Heading level updates (`POST /api/analysis/update-heading`) must update `user_annotated_bboxes` immediately, and document finalization (`POST /api/analysis/finalize`) must mark `layout_analysis_progress(status='completed')` and reflect validated state across Vault source lists without deleting raw bounding box review history.
+25. **Spaced Repetition Due Review Cooldown & Session Consolidation**: Due repetition questions MUST be consolidated into a single Knowledge Hub session (`sess_spaced_repetition_due` titled `🧠 Due for Review`) via `sync_consolidated_due_session`. Questions answered incorrectly within the last 6 hours (`last_review > unixepoch('now') - 21600`) MUST be excluded from due review counts (`GET /api/sessions/due_summary`) and dashboard prompt reminders to prevent cognitive exhaustion from immediate repetitive re-prompting. However, in `core/scheduler.py`, rating 'Again' (`grade == 1`) MUST configure `interval_days = 0`, `interval_seconds = 0`, and set `due_timestamp = current_ts` so wrong questions repeat on the subsequent quiz run.
+26. **ZIM Reader Modal Width, Translucent Backdrop & Asset Tag Rewrite Integrity**: In `ui/js/app.js` and `ui/css/main.css`, the ZIM viewer (`#zim-viewer-container`) MUST expand to a 1200px max-width `.glass-card` centered over a translucent backdrop filter, apply `body.zim-reader-open` to hide underlying `.view-section` text while keeping the body wallpaper visible, and close cleanly via `window.closeDocumentReader()` upon clicking anywhere outside the central article card or pressing Escape. In `parsers/zim_reader.py`, asset rewriting MUST capture SVG embedded references (`<image xlink:href="...">`, `<object data="...">`, `<embed src="...">`, `<source srcset="...">`) in addition to standard `<img>` and `<a>` tags, and sanitize hardcoded inline colors on MediaWiki navboxes while preserving structural widths.
+27. **Segmented Controls Two-Way Binding & Accessibility Role Contract**: UI segmented button groups (`.segmented-group` and `.segmented-btn`) replacing select dropdowns for frequent actions (source type, layout profile, obsidian click mode, wallpaper timer, database target) MUST retain the underlying `<select>` element in the DOM, synchronize selections bidirectionally between button clicks and `<select>` change events, and declare `role="radiogroup"` on the container and `role="radio"` / `aria-checked` on individual option buttons for full assistive accessibility.
+28. **Indra OCR Achromatic Hue Sentinels & Multi-Line Continuation Integrity**: In `parsers/indra/types.py`, default hue values for `PageElement` and `HeadingPrototype` MUST be initialized to `-1.0` (`fg_hue = -1.0`, `bg_hue = -1.0`) to unambiguously differentiate achromatic elements (pure grays, whites, blacks) from chromatic elements with hue 0.0 (red). In `parsers/indra/strategies.py`, `_merge_wrapped_elements` MUST merge vertical wrapped lines sharing identical column index and visual styles within `v_gap <= 0.038`, specifically exempting parenthetical acronym tails (`(COPD):`) and *Situation headers from being broken into fragmented blocks.
+29. **Theme Contrast & Dark/Light Semantic Palette Variable Isolation**: In `ui/css/main.css`, theme neutrals (`--c-neutral-100` through `--c-neutral-500`), segmented variables (`--segmented-bg`, `--segmented-border`, `--segmented-active-bg`), and code backgrounds (`--code-bg`) MUST be defined across `:root` and `body.dark-theme`, providing contextual overrides on panels and cards for Tailwind dark-mode utilities (`text-gray-*`, `text-slate-*`, `text-white`) to ensure high contrast and WCAG AA readability without altering colored badges or buttons.
