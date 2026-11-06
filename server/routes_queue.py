@@ -268,7 +268,6 @@ def extract_topics(req: PrepareRequest) -> Dict[str, Any]:
             for d in extracted_data.get("topic_details", [])
             if d.get("name")
             and d.get("name") != "General Medical Concept"
-            and normalize_topic_key(d["name"]) not in ignored_keys
         ]
 
         # Prioritize explicit CSV topic name if not generic
@@ -282,7 +281,6 @@ def extract_topics(req: PrepareRequest) -> Dict[str, Any]:
             csv_norm = normalize_topic_key(csv_t)
             if (
                 csv_norm
-                and csv_norm not in ignored_keys
                 and not any(
                     normalize_topic_key(d["name"]) == csv_norm for d in details
                 )
@@ -302,14 +300,16 @@ def extract_topics(req: PrepareRequest) -> Dict[str, Any]:
 
         for d in details:
             norm = normalize_topic_key(d["name"])
-            if not norm or norm in ignored_keys:
+            if not norm:
                 continue
+            is_ignored = norm in ignored_keys
             if norm not in consolidated_map:
                 consolidated_map[norm] = {
                     "name": d["name"],
                     "topic_name": d["name"],
                     "verified": bool(d.get("verified", False)),
-                    "selected": bool(d.get("selected", False)),
+                    "selected": False if is_ignored else bool(d.get("selected", False)),
+                    "ignored": is_ignored,
                     "confidence": d.get("confidence", "low"),
                     "count": 1,
                     "question_ids": [q_id],
@@ -323,7 +323,8 @@ def extract_topics(req: PrepareRequest) -> Dict[str, Any]:
                     entry["question_ids"].append(q_id)
                 if d.get("verified"):
                     entry["verified"] = True
-                    entry["selected"] = True
+                    if not is_ignored:
+                        entry["selected"] = True
                     entry["confidence"] = "high"
 
         results.append({

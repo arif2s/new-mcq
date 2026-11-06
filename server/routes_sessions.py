@@ -18,6 +18,7 @@ from agents.tema_q.topic_extractor import (
     extract_topics_local,
     get_ignored_topics_set,
     normalize_topic_key,
+    record_topic_note_selections,
 )
 from core.database import get_db_connection
 from core.queue_manager import (
@@ -434,6 +435,13 @@ def save_session(session: SessionCreate) -> Dict[str, Any]:
             else:
                 refs_status = "processing"
                 llm_status = "processing" if is_llm_processing_enabled() else "none"
+
+            selected_names = [
+                t["name"] for t in normalized_topics
+                if t.get("selected") and t.get("name")
+            ]
+            if selected_names:
+                record_topic_note_selections(selected_names)
         else:
             refs_status = existing["refs_status"] if existing else "none"
             llm_status = existing["llm_status"] if existing else "none"
@@ -842,6 +850,13 @@ def update_session_topics(
                 (refs_status, llm_status, json.dumps(normalized), session_id),
             )
             _enqueue_session_processing(conn, session_id)
+
+            selected_names = [
+                t["name"] for t in normalized_topics
+                if t.get("selected") and t.get("name")
+            ]
+            if selected_names:
+                record_topic_note_selections(selected_names)
         else:
             cursor.execute(
                 "UPDATE quiz_sessions SET topic_list_json = ? WHERE id = ?",
@@ -1406,7 +1421,7 @@ def get_dashboard_prompts() -> Dict[str, Any]:
             key=lambda x: -x[1]
         )
 
-        for top_name, wrong_count in sorted_weak_topics[:3]:
+        for top_name, wrong_count in sorted_weak_topics[:6]:
             banners.append({
                 "id": f"weak_topic_{_to_synthesis_key(top_name)}",
                 "type": "weak_topic",
@@ -1462,7 +1477,7 @@ def get_dashboard_prompts() -> Dict[str, Any]:
     # Return full list so frontend can maintain a window of up to 10 active banners
     return {
         "status": "success",
-        "banners": banners[:15],
+        "banners": banners,
         "total_available": len(banners)
     }
 

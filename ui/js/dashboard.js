@@ -134,6 +134,216 @@ const MAX_ACTIVE_BANNERS = 10;
 const BANNER_AUTO_CYCLE_MS = 7000;       // Auto advance to next banner every 7s
 const BANNER_REPLACE_CYCLE_MS = 60000;   // Gradually retire/replace 1 older banner every 60s
 
+// Reserved quota configuration (Requirements 1, 2 & 3)
+// 2 for weak topics, 2 for revision sets, 2 for motivation, 2 for habit tracking / daily goals, rest for others
+const CAROUSEL_RESERVED_QUOTAS = {
+    weak_topic: 2,
+    review_set: 2,
+    motivation: 2,
+    habit_goal: 2
+};
+
+function _getBannerCategory(banner) {
+    if (!banner) return 'other';
+    const type = banner.type;
+    if (type === 'weak_topic') return 'weak_topic';
+    if (type === 'due_review' || type === 'new_review_questions' || banner.action === 'review_due') return 'review_set';
+    if (type === 'encouragement' || type === 'motivation') return 'motivation';
+    if (type === 'habit_goal' || type === 'habit') return 'habit_goal';
+    return 'other';
+}
+
+/**
+ * Builds dynamic habit tracking / daily goals banners from AppState.
+ */
+function generateHabitGoalBanners() {
+    const banners = [];
+    if (!window.AppState || typeof window.AppState.get !== 'function') return banners;
+    const state = window.AppState.get() || {};
+    const dailyTargets = state.dailyTargets || { questionsTarget: 50 };
+    const targetQuestions = Math.max(1, Number(dailyTargets.questionsTarget || 50));
+
+    // Calculate today's stats
+    const todayStr = getTodayString();
+    let todayCount = 0;
+    if (Array.isArray(state.habitLog)) {
+        const todayHabit = state.habitLog.find(h => h && String(h.date).slice(0, 10) === todayStr);
+        if (todayHabit) todayCount = Number(todayHabit.questionsAnswered || 0);
+    }
+    if (todayCount === 0 && Array.isArray(state.testResults)) {
+        const resultsToday = state.testResults.filter(r => {
+            if (r.date && String(r.date).slice(0, 10) === todayStr) return true;
+            const tsMs = _normalizeTimestampMs(r.timestamp || r.lastAttempted || r.last_attempted);
+            return tsMs && getLocalDateString(new Date(tsMs)) === todayStr;
+        });
+        todayCount = resultsToday.reduce((acc, r) => acc + Number(r.totalQuestions ?? r.total_questions ?? 0), 0);
+    }
+
+    const pct = Math.min(100, Math.round((todayCount / targetQuestions) * 100));
+    const streakDays = Number(state.streakDays || 0);
+
+    // 1. General Daily Goal Banner
+    if (todayCount >= targetQuestions) {
+        banners.push({
+            id: 'habit_goal_completed_banner',
+            type: 'habit_goal',
+            title: `Daily Goal Achieved! 🏆 (${todayCount}/${targetQuestions} Qs)`,
+            message: `Outstanding work! You smashed today's goal of ${targetQuestions} questions. ${streakDays > 0 ? `Current streak: ${streakDays} day${streakDays === 1 ? '' : 's'} 🔥` : 'Keep the momentum going!'}`,
+            icon: '🏆',
+            badge: `${pct}% Complete`,
+            action: 'view_habits',
+            action_label: 'View Habits →'
+        });
+    } else {
+        const remaining = targetQuestions - todayCount;
+        banners.push({
+            id: 'habit_goal_daily_banner',
+            type: 'habit_goal',
+            title: `Daily Goal: ${todayCount}/${targetQuestions} Qs (${pct}%) 🎯`,
+            message: `${remaining} more question${remaining === 1 ? '' : 's'} needed today to reach your goal. Consistency turns practice into mastery!`,
+            icon: '🎯',
+            badge: `${pct}% Done`,
+            action: 'view_habits',
+            action_label: 'Open Tracker →'
+        });
+    }
+
+    // 2. Custom Daily Goals or Streak Banner
+    const customGoals = Array.isArray(dailyTargets.customGoals) ? dailyTargets.customGoals : [];
+    if (customGoals.length > 0) {
+        const activeCustom = customGoals[0];
+        const cTarget = Math.max(1, Number(activeCustom.targetQuestions || 10));
+        let cCount = 0;
+        if (Array.isArray(state.testResults)) {
+            const todayTests = state.testResults.filter(r => {
+                if (r.date && String(r.date).slice(0, 10) === todayStr) return true;
+                const tsMs = _normalizeTimestampMs(r.timestamp || r.lastAttempted || r.last_attempted);
+                return tsMs && getLocalDateString(new Date(tsMs)) === todayStr;
+            });
+            const filterVal = (activeCustom.value || '').toLowerCase().trim();
+            todayTests.forEach(r => {
+                const subj = (r.subjectName || r.subject_name || '').toLowerCase();
+                const customT = (r.customTitle || r.custom_title || '').toLowerCase();
+                if (subj.includes(filterVal) || customT.includes(filterVal)) {
+                    cCount += Number(r.totalQuestions ?? r.total_questions ?? 0);
+                }
+            });
+        }
+        const cPct = Math.min(100, Math.round((cCount / cTarget) * 100));
+        banners.push({
+            id: `habit_goal_custom_${_to_synthesis_key(activeCustom.name || activeCustom.value || 'custom')}`,
+            type: 'habit_goal',
+            title: `Custom Goal: ${activeCustom.name || activeCustom.value} 📌`,
+            message: `Progress: ${cCount}/${cTarget} Qs (${cPct}%). Target focus on ${activeCustom.targetType || 'subject'}: ${activeCustom.value}.`,
+            icon: '📌',
+            badge: `${cPct}% Completed`,
+            action: 'view_habits',
+            action_label: 'View Goal →'
+        });
+    } else {
+        banners.push({
+            id: 'habit_streak_banner',
+            type: 'habit_goal',
+            title: `Study Streak: ${streakDays} Day${streakDays === 1 ? '' : 's'} 🔥`,
+            message: streakDays > 0
+                ? `You've studied ${streakDays} day${streakDays === 1 ? '' : 's'} consecutively. Keep answering questions today to preserve your flame!`
+                : "Start a study streak today! Answering even a few questions every day builds lasting clinical recall.",
+            icon: '🔥',
+            badge: `${streakDays} Days`,
+            action: 'view_habits',
+            action_label: 'Habit Log →'
+        });
+    }
+
+    return banners;
+}
+
+/**
+ * Inserts or updates an incoming banner according to reserved carousel quotas (Requirement 1 & 2):
+ * - 2 slots reserved for weak_topic
+ * - 2 slots reserved for review_set
+ * - 2 slots reserved for motivation
+ * - 2 slots reserved for habit_goal
+ * - Remaining slots filled with other types (e.g. switch_subject).
+ * - New banners replace unreserved/oldest banners first before replacing currently shown banner of the same type.
+ */
+function integrateBannerWithReservations(newBanner) {
+    if (!newBanner || !newBanner.id) return;
+    const existingIdx = _dashboardBanners.findIndex(b => b.id === newBanner.id);
+    if (existingIdx !== -1) {
+        _dashboardBanners[existingIdx] = newBanner;
+        return;
+    }
+
+    const cat = _getBannerCategory(newBanner);
+    const catBanners = _dashboardBanners.filter(b => _getBannerCategory(b) === cat);
+    const quota = CAROUSEL_RESERVED_QUOTAS[cat] ?? 2;
+
+    if (_dashboardBanners.length < MAX_ACTIVE_BANNERS) {
+        if (catBanners.length < quota) {
+            _dashboardBanners.push(newBanner);
+            return;
+        }
+    }
+
+    // If banner list is at or above capacity, or category quota is full:
+    // First, try to replace oldest unreserved banner (cat 'other' or category exceeding its quota)
+    let replaceIdx = -1;
+    for (let i = 0; i < _dashboardBanners.length; i++) {
+        if (i === _activeBannerIndex) continue; // Do not replace the currently viewed banner
+        const bCat = _getBannerCategory(_dashboardBanners[i]);
+        const bQuota = CAROUSEL_RESERVED_QUOTAS[bCat] ?? 0;
+        const bCatCount = _dashboardBanners.filter(b => _getBannerCategory(b) === bCat).length;
+        if (bCat === 'other' || bCatCount > bQuota) {
+            replaceIdx = i;
+            break;
+        }
+    }
+
+    // If no unreserved banner can be replaced, replace oldest banner of the same category
+    if (replaceIdx === -1) {
+        for (let i = 0; i < _dashboardBanners.length; i++) {
+            if (i === _activeBannerIndex) continue;
+            if (_getBannerCategory(_dashboardBanners[i]) === cat) {
+                replaceIdx = i;
+                break;
+            }
+        }
+    }
+
+    // If still no replacement found, replace oldest non-active banner
+    if (replaceIdx === -1) {
+        for (let i = 0; i < _dashboardBanners.length; i++) {
+            if (i !== _activeBannerIndex) {
+                replaceIdx = i;
+                break;
+            }
+        }
+    }
+
+    if (replaceIdx !== -1) {
+        _dashboardBanners[replaceIdx] = newBanner;
+    } else if (_dashboardBanners.length < MAX_ACTIVE_BANNERS) {
+        _dashboardBanners.push(newBanner);
+    }
+}
+
+/**
+ * Removes a specific banner by id (Requirement 3).
+ * When review banner action is clicked, it is removed and frees space for other banners.
+ */
+function removeBannerById(bannerId) {
+    if (!bannerId) return;
+    const idx = _dashboardBanners.findIndex(b => b.id === bannerId);
+    if (idx !== -1) {
+        _dashboardBanners.splice(idx, 1);
+        if (_activeBannerIndex >= _dashboardBanners.length) {
+            _activeBannerIndex = Math.max(0, _dashboardBanners.length - 1);
+        }
+        renderBannerCarousel();
+    }
+}
+
 async function fetchDueSummary() {
     try {
         const res = await fetch('/api/sessions/due_summary');
@@ -169,15 +379,12 @@ function updateQuestionsLeftBanner(totalDue) {
         if (existingIdx !== -1) {
             _dashboardBanners[existingIdx] = bannerObj;
         } else {
-            // Place at the front of the carousel
-            _dashboardBanners.unshift(bannerObj);
+            integrateBannerWithReservations(bannerObj);
         }
     } else if (existingIdx !== -1) {
-        // If 0 questions left, remove the left to review banner
         _dashboardBanners.splice(existingIdx, 1);
     }
 
-    // Bound banners to max 10
     if (_dashboardBanners.length > MAX_ACTIVE_BANNERS) {
         _dashboardBanners = _dashboardBanners.slice(0, MAX_ACTIVE_BANNERS);
     }
@@ -208,10 +415,7 @@ function updateNewQuestionsBanner(newCount) {
         if (existingIdx !== -1) {
             _dashboardBanners[existingIdx] = bannerObj;
         } else {
-            // If banner 1 exists at index 0, place banner 2 right after it at index 1
-            const banner1Idx = _dashboardBanners.findIndex(b => b.id === 'due_review_banner' || b.type === 'due_review');
-            const insertIdx = banner1Idx !== -1 ? banner1Idx + 1 : 0;
-            _dashboardBanners.splice(insertIdx, 0, bannerObj);
+            integrateBannerWithReservations(bannerObj);
         }
     } else if (existingIdx !== -1) {
         _dashboardBanners.splice(existingIdx, 1);
@@ -248,32 +452,30 @@ async function fetchDashboardPrompts() {
         if (res.ok) {
             const data = await res.json();
             const incoming = Array.isArray(data.banners) ? data.banners : [];
-            if (incoming.length > 0) {
-                // Separate incoming banners by category
-                const incomingDue = incoming.filter(b => b.id === 'due_review_banner' || b.type === 'due_review');
-                const otherIncoming = incoming.filter(b => b.id !== 'due_review_banner' && b.type !== 'due_review' && b.id !== 'new_review_questions_banner' && b.type !== 'new_review_questions');
 
-                // Update "questions left to review" count if present
-                const dueCount = incomingDue.length > 0 ? Number(incomingDue[0].count || _dueSummaryData.total_due || 0) : Number(_dueSummaryData.total_due || 0);
-                updateQuestionsLeftBanner(dueCount);
+            // 1. Revision set banners (up to 2 slots reserved)
+            const incomingDue = incoming.filter(b => b.id === 'due_review_banner' || b.type === 'due_review');
+            const dueCount = incomingDue.length > 0 ? Number(incomingDue[0].count || _dueSummaryData.total_due || 0) : Number(_dueSummaryData.total_due || 0);
+            updateQuestionsLeftBanner(dueCount);
 
-                // Preserve existing "n new questions to review" if active
-                if (_newQuestionsAddedCount > 0) {
-                    updateNewQuestionsBanner(_newQuestionsAddedCount);
-                }
+            if (_newQuestionsAddedCount > 0) {
+                updateNewQuestionsBanner(_newQuestionsAddedCount);
+            }
 
-                // Add other banners (weak topics, subject switches, habit/milestones, encouragement) without duplicating
-                const currentIds = new Set(_dashboardBanners.map(b => b.id));
-                for (const b of otherIncoming) {
-                    if (!currentIds.has(b.id) && _dashboardBanners.length < MAX_ACTIVE_BANNERS) {
-                        _dashboardBanners.push(b);
-                        currentIds.add(b.id);
-                    }
-                }
+            // 2. Habit tracking & daily goals banners (up to 2 slots reserved)
+            const habitBanners = generateHabitGoalBanners();
+            for (const hb of habitBanners) {
+                integrateBannerWithReservations(hb);
+            }
 
-                if (_activeBannerIndex >= _dashboardBanners.length) {
-                    _activeBannerIndex = 0;
-                }
+            // 3. Integrate weak topics, motivation, and other banners with slot quotas
+            const otherIncoming = incoming.filter(b => b.id !== 'due_review_banner' && b.type !== 'due_review' && b.id !== 'new_review_questions_banner' && b.type !== 'new_review_questions');
+            for (const b of otherIncoming) {
+                integrateBannerWithReservations(b);
+            }
+
+            if (_activeBannerIndex >= _dashboardBanners.length) {
+                _activeBannerIndex = 0;
             }
         }
     } catch (e) {
@@ -456,28 +658,71 @@ async function initDashboard() {
         </div>
 
         <div class="grid md:grid-cols-2 gap-6 mb-8">
-          <!-- SR Status -->
+          <!-- SR Status (Requirement 9: Flexible Effort-Based Scaling and Colorful Bars) -->
           <div class="glass-card card-shade-3">
-            <h3 class="text-lg font-semibold mb-4 opacity-90">🧠 Spaced Repetition Status</h3>
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-lg font-semibold opacity-90">🧠 Spaced Repetition Status</h3>
+              <span class="text-xs text-muted font-mono">${(ankiStats.mastered + ankiStats.review + ankiStats.learning).toLocaleString()} active / ${totalAnkiCards.toLocaleString()} total</span>
+            </div>
             <div class="space-y-4 mt-2">
-              ${['mastered', 'review', 'learning', 'new'].map(level => {
-                  const count = ankiStats[level] || 0;
-                  const pct = totalAnkiCards > 0 ? (count / totalAnkiCards) * 100 : 0;
-                  const colors = {
-                      mastered: 'bg-success-500',
-                      review: 'bg-brand-500',
-                      learning: 'bg-warning-500',
-                      new: 'bg-gray-500'
-                  };
-                  return `
-                  <div class="flex items-center justify-between">
-                    <span class="text-sm capitalize w-20">${level}</span>
-                    <div class="flex-1 mx-4 glass-panel rounded-full h-2.5 shadow-inner">
-                      <div class="${colors[level]} h-2.5 rounded-full" style="width: ${pct.toFixed(1)}%"></div>
-                    </div>
-                    <span class="text-sm font-medium w-14 text-right font-mono">${count.toLocaleString()}</span>
-                  </div>`;
-              }).join('')}
+              ${(() => {
+                  // Total active deck cards engaged by the user
+                  const activeDeckCount = (ankiStats.mastered || 0) + (ankiStats.review || 0) + (ankiStats.learning || 0);
+                  // Daily effort benchmark: today's questions answered gives immediate positive expansion
+                  const todayEffort = Math.max(Number(todayStats.questionsAnswered || 0), 10);
+                  // Effective denominator for active card progress: flexible benchmark prevents 200k+ new cards from flattening active bars
+                  const activeDenominator = Math.max(activeDeckCount, todayEffort * 3, 20);
+
+                  const barConfigs = [
+                      {
+                          level: 'mastered',
+                          label: 'Mastered',
+                          color: 'bg-gradient-to-r from-emerald-500 to-teal-400 shadow-[0_0_10px_rgba(16,185,129,0.5)]',
+                          textColor: 'text-emerald-400'
+                      },
+                      {
+                          level: 'review',
+                          label: 'Review',
+                          color: 'bg-gradient-to-r from-blue-500 to-indigo-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]',
+                          textColor: 'text-blue-400'
+                      },
+                      {
+                          level: 'learning',
+                          label: 'Learning',
+                          color: 'bg-gradient-to-r from-amber-500 to-orange-400 shadow-[0_0_10px_rgba(245,158,11,0.5)]',
+                          textColor: 'text-amber-400'
+                      },
+                      {
+                          level: 'new',
+                          label: 'New Pool',
+                          color: 'bg-gradient-to-r from-purple-500 to-pink-500 shadow-[0_0_8px_rgba(168,85,247,0.4)]',
+                          textColor: 'text-purple-300'
+                      }
+                  ];
+
+                  return barConfigs.map(cfg => {
+                      const count = ankiStats[cfg.level] || 0;
+                      let widthPct = 0;
+                      if (cfg.level === 'new') {
+                          // Unstudied pool: relative to total cards or safe baseline
+                          widthPct = totalAnkiCards > 0 ? Math.min(100, Math.max(5, (count / totalAnkiCards) * 100)) : 0;
+                      } else {
+                          // Active cards: flexible effort-based scaling relative to activeDenominator with minimum visual visibility
+                          if (count > 0) {
+                              widthPct = Math.min(100, Math.max(8, (count / activeDenominator) * 100));
+                          }
+                      }
+
+                      return `
+                      <div class="flex items-center justify-between">
+                        <span class="text-sm capitalize font-medium w-24 ${cfg.textColor}">${cfg.label}</span>
+                        <div class="flex-1 mx-4 glass-panel rounded-full h-3 shadow-inner border border-gray-700/50 overflow-hidden">
+                          <div class="${cfg.color} h-3 rounded-full transition-all duration-700" style="width: ${widthPct.toFixed(1)}%"></div>
+                        </div>
+                        <span class="text-sm font-bold w-16 text-right font-mono">${count.toLocaleString()}</span>
+                      </div>`;
+                  }).join('');
+              })()}
             </div>
           </div>
 
@@ -505,17 +750,36 @@ async function initDashboard() {
         </div>
 
         <div class="grid md:grid-cols-2 gap-6 mb-8">
-            <!-- Hourly Activity -->
+            <!-- Hourly Activity (Requirement 9: Flexible Scaling & Colorful Bars) -->
             <div class="glass-card">
-                <h3 class="text-lg font-semibold mb-4 opacity-90">🕒 Today's Activity by Hour</h3>
-                <div class="flex items-end gap-1 h-32 mb-2 border-b border-gray-700/50 pb-1">
-                    ${hourlyData.map(h => `
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold opacity-90">🕒 Today's Activity by Hour</h3>
+                    <span class="text-xs text-brand-300 font-medium">Peak: ${maxQ} Qs/hr</span>
+                </div>
+                <div class="flex items-end gap-1.5 h-32 mb-2 border-b border-gray-700/50 pb-1">
+                    ${hourlyData.map(h => {
+                        // Dynamic colorful styling based on effort and hour period
+                        let barColor = 'glass-panel';
+                        if (h.questions > 0) {
+                            const ratio = h.questions / maxQ;
+                            if (ratio >= 0.75) {
+                                barColor = 'bg-gradient-to-t from-pink-500 via-purple-500 to-indigo-400 shadow-[0_0_12px_rgba(236,72,153,0.7)]';
+                            } else if (ratio >= 0.4) {
+                                barColor = 'bg-gradient-to-t from-cyan-500 to-blue-400 shadow-[0_0_10px_rgba(6,182,212,0.6)]';
+                            } else {
+                                barColor = 'bg-gradient-to-t from-emerald-500 to-teal-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]';
+                            }
+                        }
+                        // Flexible height scaling: minimum 8% for any activity, scaled to peak
+                        const barHeight = h.questions > 0 ? Math.max(Math.round((h.questions / maxQ) * 100), 8) : 2;
+
+                        return `
                         <div class="flex-1 flex flex-col items-center group relative cursor-crosshair h-full justify-end">
-                            <div class="w-full rounded-t transition-all ${h.questions > 0 ? 'bg-brand-500 hover:bg-brand-400 shadow-[0_0_8px_rgba(139,92,246,0.6)]' : 'glass-panel'}"
-                                 style="height: ${h.questions > 0 ? Math.max((h.questions / maxQ) * 100, 5) : 2}%;"></div>
-                            ${h.questions > 0 ? `<div class="absolute bottom-full mb-2 glass-card rounded px-2 py-1 text-xs opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap">${h.questions} Qs (${h.hour}:00)</div>` : ''}
-                        </div>
-                    `).join('')}
+                            <div class="w-full rounded-t transition-all ${barColor} hover:brightness-125"
+                                 style="height: ${barHeight}%;"></div>
+                            ${h.questions > 0 ? `<div class="absolute bottom-full mb-2 glass-card border border-brand-500/40 rounded-lg px-2.5 py-1 text-xs opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap shadow-lg font-bold">${h.questions} Qs (${h.hour}:00)</div>` : ''}
+                        </div>`;
+                    }).join('')}
                 </div>
                 <div class="flex justify-between text-xs text-muted">
                     <span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>11pm</span>
@@ -646,6 +910,10 @@ function renderBannerCarousel() {
         borderBgClass = 'border-emerald-500/40 bg-emerald-500/10 shadow-[0_0_15px_rgba(16,185,129,0.15)]';
         titleClass = 'text-emerald-300';
         badgeClass = 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+    } else if (currentBanner.type === 'habit_goal') {
+        borderBgClass = 'border-purple-500/40 bg-purple-500/10 shadow-[0_0_15px_rgba(168,85,247,0.15)]';
+        titleClass = 'text-purple-300';
+        badgeClass = 'bg-purple-500/20 text-purple-300 border border-purple-500/30';
     }
 
     container.innerHTML = `
@@ -773,19 +1041,19 @@ function startGradualBannerRotation() {
                         updateNewQuestionsBanner(_newQuestionsAddedCount);
                     }
 
-                    const otherIncoming = incoming.filter(b => b.id !== 'due_review_banner' && b.type !== 'due_review' && b.id !== 'new_review_questions_banner' && b.type !== 'new_review_questions');
-
-                    // Retire one older encouragement banner if needed to rotate
-                    const retireIdx = _dashboardBanners.findIndex(b => b.type === 'encouragement');
-                    if (retireIdx !== -1 && _dashboardBanners.length >= MAX_ACTIVE_BANNERS) {
-                        _dashboardBanners.splice(retireIdx, 1);
+                    // Refresh habit tracking / daily goals banners
+                    const habitBanners = generateHabitGoalBanners();
+                    for (const hb of habitBanners) {
+                        integrateBannerWithReservations(hb);
                     }
 
-                    // Pick an incoming candidate banner not currently in carousel
+                    const otherIncoming = incoming.filter(b => b.id !== 'due_review_banner' && b.type !== 'due_review' && b.id !== 'new_review_questions_banner' && b.type !== 'new_review_questions');
+
+                    // Pick an incoming candidate banner not currently in carousel and integrate with quota rules
                     const currentIds = new Set(_dashboardBanners.map(b => b.id));
                     const candidate = otherIncoming.find(b => !currentIds.has(b.id));
-                    if (candidate && _dashboardBanners.length < MAX_ACTIVE_BANNERS) {
-                        _dashboardBanners.push(candidate);
+                    if (candidate) {
+                        integrateBannerWithReservations(candidate);
                     }
                     renderBannerCarousel();
                 }
@@ -801,6 +1069,10 @@ async function handleBannerAction(banner) {
 
     if (banner.action === 'review_due') {
         const sessionId = banner.session_id || _dueSummaryData.session_id || 'sess_spaced_repetition_due';
+        const bannerIdToRemove = banner.id;
+        // Requirement 3: When review button is clicked, remove the banner to free carousel space
+        removeBannerById(bannerIdToRemove);
+
         try {
             const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/questions`);
             if (res.ok) {
@@ -854,6 +1126,9 @@ async function handleBannerAction(banner) {
         // Fallback to quiz setup tab
         const quizNav = document.querySelector('.nav-btn[data-target="quiz-view"]');
         if (quizNav) quizNav.click();
+    } else if (banner.action === 'view_habits') {
+        const habitNav = document.querySelector('.nav-btn[data-target="habit-tracker-view"]');
+        if (habitNav) habitNav.click();
     } else if (banner.action === 'switch_subject' && banner.subject) {
         // Launch or switch to subject
         try {

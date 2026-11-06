@@ -32,6 +32,7 @@ except ImportError:
 from agents.tema_q.topic_extractor import (
     get_ignored_topics_set,
     normalize_topic_key,
+    get_frequent_note_topics_set,
 )
 from config import LM_STUDIO_URL
 from core.database import get_db_connection
@@ -583,9 +584,16 @@ def topics_status(req: TopicsStatusRequest) -> Dict[str, Any]:
                         if has_art:
                             existing_notes.append(orig_topic)
 
+    freq_set = get_frequent_note_topics_set()
+    frequent_topics = [
+        str(t).strip() for t in req.topics
+        if t and str(t).strip() and normalize_topic_key(str(t).strip()) in freq_set
+    ]
+
     return {
         "status": "success",
         "existing_topics": list(dict.fromkeys(existing_notes)),
         "referenced_topics": list(dict.fromkeys(referenced_topics)),
         "ignored_topics": list(dict.fromkeys(ignored_matches)),
+        "frequent_note_topics": list(dict.fromkeys(frequent_topics)),
     }

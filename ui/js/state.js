@@ -1,7 +1,7 @@
 // ui/js/state.js
 
 const DEFAULT_PERSISTENCE = {
-    dailyTargets: { questionsTarget: 50, correctTarget: 40, reviewTarget: 20 },
+    dailyTargets: { questionsTarget: 50, correctTarget: 40, reviewTarget: 20, customGoals: [] },
     streakDays: 0,
     longestStreak: 0,
     habitLog: [],

@@ -19,6 +19,8 @@ from agents.tema_q.topic_extractor import (
     normalize_topic_key,
     remove_ignored_topic,
     resolve_zim_topic,
+    record_topic_note_selections,
+    get_frequent_note_topics_set,
 )
 
 __all__ = [
@@ -36,4 +38,6 @@ __all__ = [
     "normalize_topic_key",
     "resolve_zim_topic",
     "get_medspacy_model",
+    "record_topic_note_selections",
+    "get_frequent_note_topics_set",
 ]

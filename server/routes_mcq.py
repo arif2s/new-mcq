@@ -16,6 +16,7 @@ from agents.tema_q.topic_extractor import (
     extract_topics_local,
     get_ignored_topics_set,
     normalize_topic_key as _raw_normalize_topic_key,
+    get_frequent_note_topics_set,
 )
 from core.database import get_db_connection
 from core.queue_manager import is_llm_processing_enabled
@@ -533,12 +534,19 @@ def get_topics_status(payload: TopicStatusRequest) -> Dict[str, Any]:
                             statuses[orig_topic]["has_note"] = True
                             existing_notes.append(orig_topic)
 
+    freq_set = get_frequent_note_topics_set()
+    frequent_topics = [
+        t for t in clean_topics
+        if _raw_normalize_topic_key(t) in freq_set
+    ]
+
     return {
         "status": "success",
         "topics": statuses,
         "existing_topics": list(dict.fromkeys(existing_notes)),
         "referenced_topics": list(dict.fromkeys(referenced_topics)),
         "ignored_topics": list(dict.fromkeys(ignored_matches)),
+        "frequent_note_topics": list(dict.fromkeys(frequent_topics)),
     }
 
 

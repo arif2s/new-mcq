@@ -23,8 +23,9 @@ function initHabits() {
     const longestStreak = Number(state.longestStreak || 0);
     const sumFromResults = testResults.reduce((acc, r) => acc + Number(r.totalQuestions ?? r.total_questions ?? 0), 0);
     const totalQuestionsEver = Math.max(Number(state.totalQuestionsEver || 0), sumFromResults);
-    const dailyTargets = state.dailyTargets || { questionsTarget: 50, correctTarget: 40, reviewTarget: 20 };
+    const dailyTargets = state.dailyTargets || { questionsTarget: 50, correctTarget: 40, reviewTarget: 20, customGoals: [] };
     const targetQuestions = Math.max(1, Number(dailyTargets.questionsTarget || 50));
+    const customGoals = Array.isArray(dailyTargets.customGoals) ? dailyTargets.customGoals : [];
 
     // 1. Data Aggregation & O(1) Lookups (Local Calendar Dates)
     const habitMap = new Map();
@@ -35,6 +36,48 @@ function initHabits() {
     const today = new Date();
     const todayStr = _getHabitLocalDateStr(today);
     const todayCount = Number(habitMap.get(todayStr)?.questionsAnswered || 0);
+
+    // Calculate progress for custom goals today (Requirement 4)
+    const customGoalsProgress = customGoals.map((cg, idx) => {
+        const cTarget = Math.max(1, Number(cg.targetQuestions || 10));
+        let cCount = 0;
+        const filterVal = (cg.value || '').toLowerCase().trim();
+        const targetType = cg.targetType || 'subject';
+
+        const todayTests = testResults.filter(r => {
+            if (r.date && String(r.date).slice(0, 10) === todayStr) return true;
+            const ts = r.timestamp || r.lastAttempted || r.last_attempted;
+            const tsMs = Number(ts || 0) < 1e11 ? Number(ts || 0) * 1000 : Number(ts || 0);
+            return tsMs && _getHabitLocalDateStr(new Date(tsMs)) === todayStr;
+        });
+
+        todayTests.forEach(r => {
+            const subj = String(r.subjectName || r.subject_name || '').toLowerCase();
+            const customT = String(r.customTitle || r.custom_title || '').toLowerCase();
+            const topicsList = Array.isArray(r.topicList) ? r.topicList.map(t => typeof t === 'string' ? t.toLowerCase() : String(t.name || '').toLowerCase()) : [];
+            const qCount = Number(r.totalQuestions ?? r.total_questions ?? 0);
+
+            if (targetType === 'subject' && subj.includes(filterVal)) {
+                cCount += qCount;
+            } else if (targetType === 'topic' && (customT.includes(filterVal) || topicsList.some(t => t.includes(filterVal)))) {
+                cCount += qCount;
+            } else if (targetType === 'keyword' && (subj.includes(filterVal) || customT.includes(filterVal) || topicsList.some(t => t.includes(filterVal)))) {
+                cCount += qCount;
+            } else if (!targetType && (subj.includes(filterVal) || customT.includes(filterVal))) {
+                cCount += qCount;
+            }
+        });
+
+        const pct = Math.min(100, Math.round((cCount / cTarget) * 100));
+        return {
+            ...cg,
+            index: idx,
+            currentCount: cCount,
+            targetQuestions: cTarget,
+            progressPct: pct,
+            completed: cCount >= cTarget
+        };
+    });
 
     const calendarData = [];
     const iterDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 364);
@@ -133,13 +176,13 @@ function initHabits() {
         }
     }
 
-    // 4. Heatmap Generator
+    // 4. Heatmap Generator (Requirement 8)
     const getIntensity = (count) => {
-        if (count === 0) return 'glass-panel border border-gray-700/50';
-        if (count <= 5) return 'bg-success-700/60 shadow-[0_0_4px_rgba(21,128,61,0.4)]';
-        if (count <= 15) return 'bg-success-600/80 shadow-[0_0_6px_rgba(22,163,74,0.6)]';
-        if (count <= 30) return 'bg-success-500 shadow-[0_0_8px_rgba(34,197,94,0.8)]';
-        return 'bg-success-400 shadow-[0_0_10px_rgba(74,222,128,1)]';
+        if (count === 0) return 'heatmap-cell-0';
+        if (count <= 5) return 'heatmap-cell-1';
+        if (count <= 15) return 'heatmap-cell-2';
+        if (count <= 30) return 'heatmap-cell-3';
+        return 'heatmap-cell-4';
     };
 
     const heatmapColsHtml = weeks.map((week, wi) => {
@@ -232,7 +275,7 @@ function initHabits() {
                 <!-- Progress Bar -->
                 <div class="mt-4">
                     <div class="flex justify-between items-center mb-1 text-xs text-muted">
-                        <span>Today's Goal: ${todayCount}/${targetQuestions} questions</span>
+                        <span>Today's General Goal: ${todayCount}/${targetQuestions} questions</span>
                         <span class="font-medium">${goalProgress.toFixed(0)}%</span>
                     </div>
                     <div class="w-full glass-panel rounded-full h-2 shadow-inner border border-gray-700/50 overflow-hidden">
@@ -240,6 +283,61 @@ function initHabits() {
                     </div>
                 </div>
             </div>
+        </div>
+
+        <!-- Custom Daily Goals Section (Requirement 4) -->
+        <div class="glass-card card-shade-2 p-6 mb-8">
+            <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+                <div class="flex items-center gap-2">
+                    <h3 class="text-lg font-semibold opacity-90 flex items-center gap-2">
+                        🎯 Daily Custom Goals
+                    </h3>
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                        ${customGoalsProgress.length} Active
+                    </span>
+                </div>
+                <button type="button" id="btn-add-custom-goal" class="secondary-btn px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer flex items-center gap-1.5">
+                    ➕ Add Custom Goal
+                </button>
+            </div>
+
+            ${customGoalsProgress.length === 0 ? `
+                <div class="text-center py-6 glass-panel rounded-xl border border-gray-700/50 text-muted text-xs">
+                    No custom goals added for today. Click <strong>+ Add Custom Goal</strong> to focus questions on a specific Subject, CSV Topic, or Keyword!
+                </div>
+            ` : `
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    ${customGoalsProgress.map(cg => `
+                        <div class="glass-panel p-4 rounded-xl border ${cg.completed ? 'border-success-500/40 bg-success-500/5' : 'border-gray-700/50'} flex flex-col justify-between relative group">
+                            <div>
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${cg.completed ? 'bg-success-500/20 text-success-300 border border-success-500/30' : 'bg-brand-500/20 text-brand-300 border border-brand-500/30'}">
+                                        ${escapeHTML(cg.targetType)}
+                                    </span>
+                                    <button type="button" class="btn-delete-custom-goal text-muted hover:text-danger-400 opacity-60 group-hover:opacity-100 transition-opacity text-xs bg-transparent border-none cursor-pointer p-1" data-index="${cg.index}" title="Remove Goal">
+                                        ✕
+                                    </button>
+                                </div>
+                                <h4 class="text-sm font-bold truncate mb-1" title="${escapeHTML(cg.name || cg.value)}">
+                                    ${escapeHTML(cg.name || cg.value)}
+                                </h4>
+                                <p class="text-xs text-muted mb-3">
+                                    Filter: <code class="font-mono text-[11px] text-brand-300">${escapeHTML(cg.value)}</code>
+                                </p>
+                            </div>
+                            <div>
+                                <div class="flex justify-between items-center mb-1 text-[11px]">
+                                    <span class="text-muted font-medium">${cg.currentCount}/${cg.targetQuestions} Qs</span>
+                                    <span class="${cg.completed ? 'text-success-400 font-bold' : 'text-muted'}">${cg.progressPct}%</span>
+                                </div>
+                                <div class="w-full glass-panel rounded-full h-1.5 shadow-inner border border-gray-700/50 overflow-hidden">
+                                    <div class="h-1.5 rounded-full ${cg.completed ? 'bg-success-500' : 'bg-brand-500'}" style="width: ${cg.progressPct}%"></div>
+                                </div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `}
         </div>
 
         ${recommendationHtml}
@@ -301,11 +399,11 @@ function initHabits() {
 
             <div class="flex items-center gap-2 mt-4 text-xs text-muted">
                 <span>Less</span>
-                <div class="w-3 h-3 rounded-[2px] glass-panel border border-gray-700/50"></div>
-                <div class="w-3 h-3 rounded-[2px] bg-success-700/60"></div>
-                <div class="w-3 h-3 rounded-[2px] bg-success-600/80"></div>
-                <div class="w-3 h-3 rounded-[2px] bg-success-500"></div>
-                <div class="w-3 h-3 rounded-[2px] bg-success-400"></div>
+                <div class="w-3 h-3 rounded-[2px] heatmap-cell-0"></div>
+                <div class="w-3 h-3 rounded-[2px] heatmap-cell-1"></div>
+                <div class="w-3 h-3 rounded-[2px] heatmap-cell-2"></div>
+                <div class="w-3 h-3 rounded-[2px] heatmap-cell-3"></div>
+                <div class="w-3 h-3 rounded-[2px] heatmap-cell-4"></div>
                 <span>More</span>
             </div>
         </div>
@@ -332,7 +430,7 @@ function initHabits() {
     `;
 
     document.getElementById('btn-edit-daily-goal')?.addEventListener('click', () => {
-        const input = prompt("Enter your daily questions goal:", String(targetQuestions));
+        const input = prompt("Enter your general daily questions goal:", String(targetQuestions));
         if (input !== null) {
             const parsed = parseInt(input.trim(), 10);
             if (!isNaN(parsed) && parsed > 0) {
@@ -344,6 +442,58 @@ function initHabits() {
                 });
             }
         }
+    });
+
+    // Custom Goal Handlers (Requirement 4)
+    document.getElementById('btn-add-custom-goal')?.addEventListener('click', () => {
+        const typeChoice = prompt(
+            "Select goal target type:\n1 = Subject\n2 = CSV Topic\n3 = Custom Keyword\n\nEnter 1, 2, or 3:",
+            "1"
+        );
+        if (!typeChoice) return;
+
+        let targetType = 'subject';
+        if (typeChoice.trim() === '2') targetType = 'topic';
+        else if (typeChoice.trim() === '3') targetType = 'keyword';
+
+        const filterVal = prompt(`Enter ${targetType} name or keyword (e.g., Cardiology, Pharmacology, ECG):`);
+        if (!filterVal || !filterVal.trim()) return;
+
+        const countStr = prompt(`Enter number of questions to attempt for "${filterVal.trim()}":`, "20");
+        const parsedCount = parseInt(countStr ? countStr.trim() : "20", 10);
+        if (isNaN(parsedCount) || parsedCount <= 0) return;
+
+        const newGoal = {
+            id: `cg_${Date.now()}`,
+            name: `${filterVal.trim()} (${parsedCount} Qs)`,
+            targetType,
+            value: filterVal.trim(),
+            targetQuestions: parsedCount
+        };
+
+        const updatedCustomGoals = [...customGoals, newGoal];
+        window.AppState.update({
+            dailyTargets: {
+                ...dailyTargets,
+                customGoals: updatedCustomGoals
+            }
+        });
+    });
+
+    document.querySelectorAll('.btn-delete-custom-goal').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const idx = parseInt(btn.getAttribute('data-index'), 10);
+            if (!isNaN(idx) && idx >= 0 && idx < customGoals.length) {
+                const updatedCustomGoals = customGoals.filter((_, i) => i !== idx);
+                window.AppState.update({
+                    dailyTargets: {
+                        ...dailyTargets,
+                        customGoals: updatedCustomGoals
+                    }
+                });
+            }
+        });
     });
 }
 

@@ -460,7 +460,8 @@ window.openTopicVerificationModal = async function(sessionContext) {
         config: sessionContext.config || { ...quizConfig },
         isExistingHubSession: Boolean(sessionContext.isExistingHubSession),
         topicList: [],
-        existingNotesSet: new Set()
+        existingNotesSet: new Set(),
+        frequentNotesSet: new Set()
     };
 
     modal.style.display = 'flex';
@@ -493,8 +494,14 @@ window.openTopicVerificationModal = async function(sessionContext) {
         if (statusRes.ok) {
             const stData = await statusRes.json();
             (stData.existing_topics || []).forEach(t => activeVerificationSession.existingNotesSet.add(t.toLowerCase()));
+            (stData.frequent_note_topics || []).forEach(t => activeVerificationSession.frequentNotesSet.add(t.toLowerCase()));
             const ignoredLower = new Set((stData.ignored_topics || []).map(t => t.toLowerCase()));
-            topicList = topicList.filter(t => t.name && !ignoredLower.has(t.name.toLowerCase()));
+            topicList.forEach(t => {
+                if (t.name && ignoredLower.has(t.name.toLowerCase())) {
+                    t.ignored = true;
+                    t.selected = false;
+                }
+            });
         }
     } catch (_) {}
 
@@ -545,6 +552,13 @@ function renderTopicVerificationModalDOM() {
                     <span class="flex items-center gap-1.5 opacity-60">
                         <span>Grey Text:</span> Doubtful Term (Regex/medSpaCy only)
                     </span>
+                    <span class="flex items-center gap-1.5 opacity-40">
+                        <span class="line-through">Strikethrough / Greyed:</span> Ignored Term
+                    </span>
+                    <span class="flex items-center gap-1.5">
+                        <span class="w-3 h-3 rounded bg-success-500/35 border border-success-500 inline-block"></span>
+                        <span class="text-success-400 font-semibold">Green Tint Box:</span> Frequent Note Topic (>2)
+                    </span>
                 </div>
                 <div class="flex gap-2">
                     <button type="button" id="tp-select-verified-btn" class="secondary-btn px-2.5 py-1 text-xs cursor-pointer">Select Verified Only</button>
@@ -559,16 +573,31 @@ function renderTopicVerificationModalDOM() {
                     ? '<p class="text-sm text-muted m-auto">No medical topics extracted. Add a custom topic below.</p>'
                     : session.topicList.map((t, idx) => {
                         const hasNote = session.existingNotesSet.has(t.name.toLowerCase());
-                        const textClass = t.verified ? 'font-semibold text-gray-100' : 'opacity-60 text-muted font-normal';
-                        const selectedClass = t.selected
-                            ? 'border-2 border-success-500 underline decoration-success-500 decoration-2 bg-success-500/15 shadow-sm'
-                            : 'border border-gray-700 glass-panel';
+                        const isFrequent = session.frequentNotesSet.has(t.name.toLowerCase());
+                        const isIgnored = Boolean(t.ignored);
+
+                        let chipStyle = '';
+                        let textClass = '';
+                        if (isIgnored) {
+                            textClass = 'opacity-40 text-gray-400 line-through';
+                            chipStyle = 'border border-gray-600 bg-gray-800/40';
+                        } else if (t.selected) {
+                            textClass = t.verified ? 'font-semibold text-gray-100' : 'text-gray-200';
+                            if (isFrequent) {
+                                chipStyle = 'border-2 border-success-500 underline decoration-success-500 decoration-2 bg-success-500/35 shadow-md shadow-success-500/20';
+                            } else {
+                                chipStyle = 'border-2 border-success-500 underline decoration-success-500 decoration-2 bg-success-500/15 shadow-sm';
+                            }
+                        } else {
+                            textClass = t.verified ? 'font-semibold text-gray-100' : 'opacity-60 text-muted font-normal';
+                            chipStyle = isFrequent ? 'border border-success-500/50 bg-success-500/10' : 'border border-gray-700 glass-panel';
+                        }
 
                         return `
-                            <div class="topic-verify-chip inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm cursor-pointer select-none transition-all ${textClass}${selectedClass}"
+                            <div class="topic-verify-chip inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm cursor-pointer select-none transition-all ${textClass} ${chipStyle}"
                                  data-idx="${idx}"
-                                 title="Single-click: Toggle selection | Double-click: Add '${window.escapeHTML(t.name)}' to permanent Ignore List">
-                                <span class="chip-label">${window.escapeHTML(t.name)}</span>${hasNote ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-success-500/20 text-success-300 no-underline" title="Notes already synthesized">✓ Cached</span>' : ''}
+                                 title="Single-click: Toggle selection | Double-click: ${isIgnored ? 'Unignore topic' : 'Add to permanent Ignore List'}">
+                                <span class="chip-label">${window.escapeHTML(t.name)}</span>${hasNote ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-success-500/20 text-success-300 no-underline" title="Notes already synthesized">✓ Cached</span>' : ''}${isFrequent ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-success-500/30 text-success-300 no-underline font-bold" title="Frequent note topic (>2)">★ Top Note</span>' : ''}${isIgnored ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-400 no-underline" title="Permanently Ignored (Double-click to unignore)">Ignored</span>' : ''}
                                 <button type="button" class="chip-edit-btn text-xs opacity-60 hover:opacity-100 bg-transparent border-none cursor-pointer ml-1 no-underline" data-idx="${idx}" title="Edit topic name">✎</button>
                             </div>
                         `;
@@ -612,6 +641,10 @@ function renderTopicVerificationModalDOM() {
             clickTimer = setTimeout(() => {
                 const item = session.topicList[idx];
                 if (item) {
+                    if (item.ignored) {
+                        showToast(`"${item.name}" is on the Ignore List. Double-click to unignore.`);
+                        return;
+                    }
                     item.selected = !item.selected;
                     renderTopicVerificationModalDOM();
                 }
@@ -624,19 +657,30 @@ function renderTopicVerificationModalDOM() {
             const item = session.topicList[idx];
             if (!item) return;
 
-            const removedName = item.name;
-            session.topicList.splice(idx, 1);
+            const targetName = item.name;
+            const willIgnore = !item.ignored;
+            item.ignored = willIgnore;
+            item.selected = willIgnore ? false : true;
             renderTopicVerificationModalDOM();
 
             try {
-                await fetch('/api/queue/ignore_topic', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ topic: removedName })
-                });
-                showToast(`Added "${removedName}" to permanent Ignore List.`);
+                if (willIgnore) {
+                    await fetch('/api/queue/ignore_topic', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ topic: targetName })
+                    });
+                    showToast(`Added "${targetName}" to permanent Ignore List (Ignore_list.txt).`);
+                } else {
+                    await fetch('/api/queue/unignore_topic', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ topic: targetName })
+                    });
+                    showToast(`Removed "${targetName}" from Ignore List.`);
+                }
             } catch (err) {
-                console.error("Failed to ignore topic:", err);
+                console.error("Failed to toggle topic ignore status:", err);
             }
         });
     });

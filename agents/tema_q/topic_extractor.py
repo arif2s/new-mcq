@@ -300,6 +300,38 @@ def normalize_topic_key(text: str) -> str:
     return norm.strip()
 
 
+IGNORE_LIST_FILE: Path = Path(getattr(config, "BASE_DIR", Path(__file__).resolve().parent.parent.parent)) / "Ignore_list.txt"
+TOPIC_LIST_FILE: Path = Path(getattr(config, "BASE_DIR", Path(__file__).resolve().parent.parent.parent)) / "topic.txt"
+
+def _sync_ignore_list_file_from_db(conn: sqlite3.Connection) -> None:
+    """Writes all ignored topics from the SQLite table to Ignore_list.txt in the project root."""
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT original_text FROM ignored_topics ORDER BY original_text ASC")
+        rows = cursor.fetchall()
+        lines = [str(r[0]).strip() for r in rows if r and r[0] and str(r[0]).strip()]
+        IGNORE_LIST_FILE.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Could not write Ignore_list.txt: %s", exc)
+
+def _sync_db_from_ignore_list_file(conn: sqlite3.Connection) -> None:
+    """Reads Ignore_list.txt if it exists and populates ignored_topics table in SQLite."""
+    if not IGNORE_LIST_FILE.exists():
+        return
+    try:
+        content = IGNORE_LIST_FILE.read_text(encoding="utf-8")
+        lines = [line.strip() for line in content.splitlines() if line.strip()]
+        for line in lines:
+            key = normalize_topic_key(line)
+            if key:
+                conn.execute(
+                    "INSERT OR IGNORE INTO ignored_topics (topic_norm, original_text, created_at) VALUES (?, ?, ?)",
+                    (key, line, time.time())
+                )
+        conn.commit()
+    except Exception as exc:
+        logger.warning("Could not sync from Ignore_list.txt: %s", exc)
+
 def _ensure_ignored_topics_table_once(conn: sqlite3.Connection) -> None:
     global _IGNORED_TABLE_VERIFIED
     if _IGNORED_TABLE_VERIFIED:
@@ -317,9 +349,22 @@ def _ensure_ignored_topics_table_once(conn: sqlite3.Connection) -> None:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS topic_note_counts (
+                    topic_norm TEXT PRIMARY KEY,
+                    original_text TEXT NOT NULL,
+                    note_count INTEGER DEFAULT 1,
+                    updated_at REAL DEFAULT (unixepoch('now'))
+                )
+                """
+            )
+            _sync_db_from_ignore_list_file(conn)
+            _sync_ignore_list_file_from_db(conn)
             _IGNORED_TABLE_VERIFIED = True
         except Exception as exc:
             logger.debug("Failed checking ignored_topics table: %s", exc)
+
 
 
 def get_ignored_topics_set(force_refresh: bool = False) -> Set[str]:
@@ -358,7 +403,7 @@ def get_ignored_topics_set(force_refresh: bool = False) -> Set[str]:
 
 
 def add_ignored_topic(term: str) -> bool:
-    """Adds a term to the persistent ignored_topics SQLite table and invalidates cache."""
+    """Adds a term to the persistent ignored_topics SQLite table, syncs Ignore_list.txt, and invalidates cache."""
     key = normalize_topic_key(term)
     if not key:
         return False
@@ -369,6 +414,8 @@ def add_ignored_topic(term: str) -> bool:
                 "INSERT OR REPLACE INTO ignored_topics (topic_norm, original_text, created_at) VALUES (?, ?, ?)",
                 (key, str(term).strip(), time.time()),
             )
+            conn.commit()
+            _sync_ignore_list_file_from_db(conn)
         with _IGNORED_TOPICS_LOCK:
             if _IGNORED_TOPICS_CACHE is not None:
                 _IGNORED_TOPICS_CACHE.add(key)
@@ -379,7 +426,7 @@ def add_ignored_topic(term: str) -> bool:
 
 
 def remove_ignored_topic(term: str) -> bool:
-    """Removes a term from the persistent ignored_topics SQLite table and invalidates cache."""
+    """Removes a term from the persistent ignored_topics SQLite table, syncs Ignore_list.txt, and invalidates cache."""
     key = normalize_topic_key(term)
     if not key:
         return False
@@ -387,6 +434,8 @@ def remove_ignored_topic(term: str) -> bool:
         with contextlib.closing(get_db_connection()) as conn:
             _ensure_ignored_topics_table_once(conn)
             conn.execute("DELETE FROM ignored_topics WHERE topic_norm = ?", (key,))
+            conn.commit()
+            _sync_ignore_list_file_from_db(conn)
         with _IGNORED_TOPICS_LOCK:
             if _IGNORED_TOPICS_CACHE is not None:
                 _IGNORED_TOPICS_CACHE.discard(key)
@@ -394,6 +443,59 @@ def remove_ignored_topic(term: str) -> bool:
     except Exception as exc:
         logger.error("Error removing ignored topic '%s': %s", term, exc)
         return False
+
+
+def record_topic_note_selections(topics: List[str]) -> None:
+    """
+    Increments note selection counts for the given topics in SQLite topic_note_counts.
+    If note_count > 2, persists the topic into topic.txt in the project root folder.
+    """
+    if not topics:
+        return
+    try:
+        with contextlib.closing(get_db_connection()) as conn:
+            _ensure_ignored_topics_table_once(conn)
+            cursor = conn.cursor()
+            for t in topics:
+                if not t or not str(t).strip():
+                    continue
+                clean_t = str(t).strip()
+                key = normalize_topic_key(clean_t)
+                if not key or key == "general medical concept":
+                    continue
+                cursor.execute(
+                    """
+                    INSERT INTO topic_note_counts (topic_norm, original_text, note_count, updated_at)
+                    VALUES (?, ?, 1, unixepoch('now'))
+                    ON CONFLICT(topic_norm) DO UPDATE SET
+                        note_count = note_count + 1,
+                        updated_at = unixepoch('now')
+                    """,
+                    (key, clean_t)
+                )
+            conn.commit()
+
+            cursor.execute(
+                "SELECT original_text FROM topic_note_counts WHERE note_count > 2 ORDER BY original_text ASC"
+            )
+            rows = cursor.fetchall()
+            lines = [str(r[0]).strip() for r in rows if r and r[0] and str(r[0]).strip()]
+            TOPIC_LIST_FILE.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Error recording topic note selections: %s", exc)
+
+
+def get_frequent_note_topics_set() -> Set[str]:
+    """Retrieves normalized topic keys that have been selected for notes > 2 times."""
+    try:
+        with contextlib.closing(get_db_connection()) as conn:
+            _ensure_ignored_topics_table_once(conn)
+            cursor = conn.cursor()
+            cursor.execute("SELECT topic_norm FROM topic_note_counts WHERE note_count > 2")
+            return {str(r[0]) for r in cursor.fetchall() if r and r[0]}
+    except Exception as exc:
+        logger.warning("Error retrieving frequent note topics: %s", exc)
+        return set()
 
 
 # ---------------------------------------------------------------------------
