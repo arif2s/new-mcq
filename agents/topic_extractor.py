@@ -21,6 +21,7 @@ from agents.tema_q.topic_extractor import (
     resolve_zim_topic,
     record_topic_note_selections,
     get_frequent_note_topics_set,
+    classify_medical_domain,
 )
 
 __all__ = [
@@ -40,4 +41,5 @@ __all__ = [
     "get_medspacy_model",
     "record_topic_note_selections",
     "get_frequent_note_topics_set",
+    "classify_medical_domain",
 ]

@@ -2059,6 +2059,105 @@ def filter_sibling_topics(
     return filtered if filtered else chunks
 
 
+_MEDICOLEGAL_KEYWORDS: Set[str] = {
+    "ipc", "bns", "crpc", "bnss", "iea", "bsa", "section", "autopsy", "postmortem",
+    "rigor mortis", "algor mortis", "livor mortis", "cadaveric", "putrefaction",
+    "mummification", "adipocere", "drowning", "hanging", "strangulation", "throttling",
+    "smothering", "gagging", "choking", "burking", "infanticide", "battered baby",
+    "virginity", "defloration", "pregnancy", "abortion", "impotence", "sterility",
+    "inquest", "subpoena", "perjury", "dying declaration", "dying deposition",
+    "consent", "malpractice", "negligence", "res ipsa loquitur", "euthanasia",
+    "firearm", "rifling", "choking", "tattooing", "blackening", "abrasion",
+    "contusion", "bruise", "laceration", "incised wound", "stab wound", "hesitation cuts",
+    "defense wounds", "pugilistic", "heat hematoma", "antemortem", "postmortem",
+    "thanatology", "forensic", "medicolegal", "testamentary", "mcnaughten",
+}
+
+_PUBLIC_HEALTH_KEYWORDS: Set[str] = {
+    "epidemiology", "incidence", "prevalence", "mortality rate", "morbidity",
+    "case fatality", "odds ratio", "relative risk", "attributable risk",
+    "sensitivity", "specificity", "predictive value", "screening", "surveillance",
+    "outbreak", "epidemic", "pandemic", "endemic", "sporadic", "zoonosis",
+    "herd immunity", "incubation period", "serial interval", "generation time",
+    "secondary attack rate", "primary prevention", "secondary prevention",
+    "tertiary prevention", "primordial prevention", "immunization", "vaccine",
+    "cold chain", "vvm", "national health mission", "nhm", "rntcp", "ntep",
+    "nvbdcp", "icds", "asha", "anganwadi", "phc", "chc", "subcentre",
+    "demographic cycle", "fertility rate", "birth rate", "death rate", "imr", "mmr",
+    "water purification", "chlorination", "horrock", "air pollution", "waste management",
+    "biomedical waste", "vector control", "sanitation", "quarantine", "isolation",
+}
+
+_PATHOLOGY_MORPHOLOGY_KEYWORDS: Set[str] = {
+    "amyloidosis", "necrosis", "apoptosis", "calcification", "hypertrophy",
+    "hyperplasia", "metaplasia", "dysplasia", "anaplasia", "hamartoma",
+    "choristoma", "granuloma", "infarction", "thrombosis", "embolism",
+    "biopsy", "histopathology", "microscopy", "gross morphology", "congo red",
+    "birbeck", "psammoma", "reed-sternberg", "aschoff", "councilman", "mallory",
+    "negri", "lewy", "neurofibrillary", "senile plaque", "russell body",
+}
+
+_COMMON_CLINICAL_DISEASE_PREFIXES: Set[str] = {
+    "myocardial", "cerebral", "pulmonary", "renal", "splenic", "bowel", "mesenteric", "hepatic",
+}
+
+
+def classify_medical_domain(topic: str, context_text: str = "") -> str:
+    """
+    Classifies a clinical topic into one of 7 specialized subtopic domains:
+    'medicolegal', 'public_health', 'microorganism', 'drug_chemical',
+    'anatomy', 'pathology', or 'disease'.
+    """
+    combined = f"{topic or ''} {context_text or ''}".strip().lower()
+    t_low = (topic or "").strip().lower()
+    if not t_low:
+        return "disease"
+
+    # 1. Medicolegal / Forensic Medicine
+    if any(_contains_phrase_bounded(combined, kw) for kw in _MEDICOLEGAL_KEYWORDS):
+        if any(_contains_phrase_bounded(t_low, kw) for kw in _MEDICOLEGAL_KEYWORDS) or "forensic" in combined:
+            return "medicolegal"
+
+    # 2. Public Health / Preventive & Social Medicine (PSM)
+    if any(_contains_phrase_bounded(t_low, kw) for kw in _PUBLIC_HEALTH_KEYWORDS):
+        return "public_health"
+
+    # 3. Microorganism (Bacteria, Viruses, Fungi, Parasites)
+    if (
+        any(g in t_low for g in KNOWN_GENERA)
+        or any(v in t_low for v in VIRAL_PARASITIC_ENTITIES)
+        or bool(ABBREV_SPECIES_REGEX.search(topic or ""))
+        or any(w in t_low for w in ("bacillus", "bacilli", "coccus", "cocci", "virus", "parasite", "fungus", "protozoa", "helminth"))
+    ):
+        return "microorganism"
+
+    # 4. Pharmacology / Drugs / Toxicology
+    if (
+        t_low in KNOWN_DRUGS
+        or any(t_low.endswith(sfx) for sfx in PHARMA_SUFFIXES)
+        or any(w in t_low for w in ("poisoning", "toxicity", "overdose", "antidote", "pharmacokinetics"))
+    ):
+        return "drug_chemical"
+
+    # 5. Anatomy / Embryology
+    ont = _resolve_clinical_concept(t_low)
+    if ont.get("semantic_category") == "anatomy" or any(
+        t_low.endswith(w)
+        for w in ("nerve", "artery", "vein", "muscle", "ligament", "foramen", "fossa", "canal", "triangle", "plexus", "ganglion", "sinus", "fasci", "bone", "joint")
+    ):
+        return "anatomy"
+
+    # 6. General / Systemic Pathology processes (excluding clinical organ-specific disease conditions)
+    if any(_contains_phrase_bounded(t_low, kw) for kw in _PATHOLOGY_MORPHOLOGY_KEYWORDS):
+        words = t_low.split()
+        if len(words) >= 2 and words[0] in _COMMON_CLINICAL_DISEASE_PREFIXES:
+            return "disease"
+        return "pathology"
+
+    # 7. Default to Clinical Disease / Syndrome / Procedure
+    return "disease"
+
+
 # ---------------------------------------------------------------------------
 # Module Public Exports
 # ---------------------------------------------------------------------------
@@ -2077,4 +2176,7 @@ __all__ = [
     "get_medspacy_model",
     "normalize_topic_key",
     "resolve_zim_topic",
+    "record_topic_note_selections",
+    "get_frequent_note_topics_set",
+    "classify_medical_domain",
 ]

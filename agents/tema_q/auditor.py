@@ -63,6 +63,94 @@ def _calculate_token_jaccard(s1: str, s2: str) -> float:
     return len(t1 & t2) / len(t1 | t2)
 
 
+def _count_words(text: str) -> int:
+    return len((text or "").split())
+
+
+def _token_containment(short_norm: str, long_norm: str) -> float:
+    """Computes fraction of tokens in short_norm that are present in long_norm."""
+    t_short = {w for w in short_norm.split() if len(w) >= 3}
+    t_long = {w for w in long_norm.split() if len(w) >= 3}
+    if not t_short or not t_long:
+        return 0.0
+    return len(t_short & t_long) / len(t_short)
+
+
+def filter_novel_secondary_sentences(
+    secondary_text: str,
+    base_points: List[Dict[str, Any]],
+    max_words: int = 400,
+) -> str:
+    """
+    CPU pre-filter for Tema_Q Pass 2: strips sentences from secondary_text that are
+    already covered by base_points unless they contain novel numeric dosages or staging values.
+    """
+    if not secondary_text or not secondary_text.strip():
+        return ""
+    if not base_points:
+        words = secondary_text.split()
+        return " ".join(words[:max_words])
+
+    base_norms = [_normalize_text(pt.get("point", "")) for pt in base_points if pt.get("point")]
+    base_combined = " ".join(pt.get("point", "") for pt in base_points if pt.get("point"))
+    base_nums = {val.lower() for val, _ in _NUMERIC_DOSAGE_PATTERN.findall(base_combined)}
+
+    sents = re.split(r"(?<=[.!?])\s+", secondary_text.strip())
+    novel_sents: List[str] = []
+    used_words = 0
+
+    for s in sents:
+        s_clean = s.strip()
+        if not s_clean:
+            continue
+        s_norm = _normalize_text(s_clean)
+        if not s_norm:
+            continue
+
+        s_nums = {val.lower() for val, _ in _NUMERIC_DOSAGE_PATTERN.findall(s_clean)}
+        has_new_numbers = bool(s_nums - base_nums) or bool(_VARIANCE_PATTERN.search(s_clean))
+
+        is_covered = any(
+            _calculate_token_jaccard(s_norm, bn) >= 0.72 or _token_containment(s_norm, bn) >= 0.80
+            for bn in base_norms
+        )
+        if is_covered and not has_new_numbers:
+            continue
+
+        w_cnt = len(s_clean.split())
+        if used_words + w_cnt > max_words and novel_sents:
+            break
+        novel_sents.append(s_clean)
+        used_words += w_cnt
+
+    return " ".join(novel_sents).strip()
+
+
+def _enforce_points_word_budget(
+    points: List[Dict[str, Any]], max_words: int
+) -> List[Dict[str, Any]]:
+    """Bounds clinical_points to max_words while prioritizing numeric/staging bullets."""
+    bounded: List[Dict[str, Any]] = []
+    running_words = 0
+    for pt in points:
+        txt = str(pt.get("point") or "").strip()
+        if not txt:
+            continue
+        w_cnt = _count_words(txt)
+        if running_words + w_cnt <= max_words:
+            bounded.append(pt)
+            running_words += w_cnt
+        else:
+            remaining = max_words - running_words
+            if remaining >= 12:
+                truncated_txt = " ".join(txt.split()[:remaining]).rstrip(".,;:") + "."
+                pt_copy = dict(pt)
+                pt_copy["point"] = truncated_txt
+                bounded.append(pt_copy)
+            break
+    return bounded
+
+
 def _extract_canonical_stages(text: str) -> Dict[str, Set[str]]:
     """Extracts staging/grading mentions normalized across Roman and Arabic numerals."""
     stages_by_prefix: Dict[str, Set[str]] = {}
@@ -183,11 +271,14 @@ def merge_json_nodes(
     base_json: Optional[Dict[str, Any]],
     second_json: Optional[Dict[str, Any]],
     metadata: Optional[Dict[str, Any]] = None,
+    max_words: int = 1000,
+    primary_max_words: int = 500,
 ) -> Dict[str, Any]:
     """
     Matches and merges clinical JSON subtopic nodes deterministically in Python (Section 3).
     Combines clinical points using token Jaccard similarity (>= 0.75) deduplication,
-    attributes source/page metadata, merges conditional contexts, and attaches variance audits.
+    attributes source/page metadata, merges conditional contexts, attaches variance audits,
+    and enforces hard word budgets (primary_max_words=500, max_words=1000).
     """
     base = base_json if isinstance(base_json, dict) else {}
     sec = second_json if isinstance(second_json, dict) else {}
@@ -227,7 +318,7 @@ def merge_json_nodes(
             coerced = _coerce_clinical_point(raw_pt, meta_source, meta_page)
             if coerced:
                 pts.append(coerced)
-        merged["clinical_points"] = pts
+        merged["clinical_points"] = _enforce_points_word_budget(pts, primary_max_words)
         return merged
 
     base_points: List[Dict[str, Any]] = []
@@ -241,7 +332,7 @@ def merge_json_nodes(
         merged["section"] = str(base.get("section") or "Clinical Summary")
         merged["subtopic"] = str(base.get("subtopic") or "General")
         merged["conditional_context"] = str(base.get("conditional_context") or "").strip()
-        merged["clinical_points"] = base_points
+        merged["clinical_points"] = _enforce_points_word_budget(base_points, max_words)
         merged["discrepancies"] = str(
             base.get("discrepancies") or base.get("variance_audit") or ""
         ).strip()
@@ -273,12 +364,6 @@ def merge_json_nodes(
         elif _normalize_text(sec_context) not in _normalize_text(merged["conditional_context"]):
             merged["conditional_context"] += f"; {sec_context}"
 
-    existing_point_norms: Dict[str, str] = {
-        _normalize_text(pt["point"]): pt["point"]
-        for pt in merged["clinical_points"]
-        if pt.get("point") and _normalize_text(pt["point"])
-    }
-
     sec_points: List[Dict[str, Any]] = []
     for raw_pt in sec.get("clinical_points", []) or []:
         coerced = _coerce_clinical_point(raw_pt, meta_source, meta_page)
@@ -290,15 +375,37 @@ def merge_json_nodes(
         if not norm_text:
             continue
 
-        # Balanced deduplication: exact match or token Jaccard overlap >= 0.75 (Section 3)
-        is_duplicate = norm_text in existing_point_norms or any(
-            _calculate_token_jaccard(norm_text, ex_norm) >= 0.75
-            for ex_norm in existing_point_norms
+        # In-place micro-upgrade check:
+        # If containment >= 0.80 and secondary has numeric dosage/staging while existing does not,
+        # upgrade existing point in-place with more specific details.
+        upgraded = False
+        for ex_pt in merged["clinical_points"]:
+            ex_norm = _normalize_text(ex_pt.get("point", ""))
+            if not ex_norm:
+                continue
+            if _token_containment(ex_norm, norm_text) >= 0.80 and bool(
+                _NUMERIC_DOSAGE_PATTERN.search(pt_text)
+            ) and not bool(_NUMERIC_DOSAGE_PATTERN.search(ex_pt.get("point", ""))):
+                ex_pt["point"] = pt_text
+                ex_pt["source"] = f"{ex_pt.get('source', '')} + {meta_source}".strip("+ ")
+                upgraded = True
+                break
+
+        if upgraded:
+            continue
+
+        # Balanced deduplication: exact match or token Jaccard overlap >= 0.75
+        is_duplicate = any(
+            norm_text == _normalize_text(ex_pt.get("point", ""))
+            or _calculate_token_jaccard(norm_text, _normalize_text(ex_pt.get("point", ""))) >= 0.75
+            for ex_pt in merged["clinical_points"]
         )
 
         if not is_duplicate:
             merged["clinical_points"].append(coerced)
-            existing_point_norms[norm_text] = pt_text
+
+    # Cap total points at max_words
+    merged["clinical_points"] = _enforce_points_word_budget(merged["clinical_points"], max_words)
 
     # Combine explicit discrepancies from both nodes + heuristic variance detection
     base_full_text = _extract_node_text(base, base_points)
@@ -319,4 +426,8 @@ def merge_json_nodes(
     return merged
 
 
-__all__ = ["detect_clinical_variances", "merge_json_nodes"]
+__all__ = [
+    "detect_clinical_variances",
+    "merge_json_nodes",
+    "filter_novel_secondary_sentences",
+]

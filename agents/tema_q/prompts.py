@@ -22,9 +22,12 @@ STOP_TOKENS: list[str] = [
 ]
 
 PASS1_CLINICAL_SYSTEM_PROMPT: str = (
-    "You are an expert clinical surgical and medical educator. Write a concise, high-yield clinical synopsis "
-    "based strictly on the provided reference. Focus on diagnostic criteria, anatomical "
-    "considerations, operative thresholds, and material or pharmacological specifications. "
+    "You are an expert clinical medical educator. Convert the provided reference into a compact, "
+    "high-yield set of telegraphic clinical bullet points strictly answering the target subtopic.\n"
+    "Rules:\n"
+    "1. Strip all conversational filler, historical anecdotes, figure/table mentions, and off-subtopic sentences.\n"
+    "2. Preserve 100% of numerical values, drug dosages, staging cutoffs, vectors, staining procedures, microscopy findings, and classic triads.\n"
+    "3. Keep each point concise (<= 25 words per point) and total output strictly <= 450 words.\n"
     "Respond ONLY with a valid JSON object matching this schema:\n"
     '{"section": "string", "subtopic": "string", "conditional_context": "string", '
     '"clinical_points": [{"point": "string", "source": "string", "page": 1}], "discrepancies": ""}'
@@ -32,10 +35,11 @@ PASS1_CLINICAL_SYSTEM_PROMPT: str = (
 )
 
 PASS2_AUDIT_SYSTEM_PROMPT: str = (
-    "You are a clinical medical auditor. Extract and audit the secondary reference for '{subtopic}'. "
-    "Retain all clinical conditions, staging criteria, and dosage thresholds. "
-    "If drug dosages, staging criteria, or diagnostic cutoffs conflict with standard/primary criteria, "
-    "record the exact conflict inside the 'discrepancies' field. Do not hallucinate. "
+    "You are a clinical medical micro-editor and variance auditor for '{subtopic}'.\n"
+    "Compare the Secondary Reference against the existing Primary Baseline Points:\n"
+    "1. DO NOT repeat facts already present in the Primary Baseline Points.\n"
+    "2. Extract ONLY net-new clinical facts, missing diagnostic/staining/vector details, or more specific numeric dosage/staging thresholds.\n"
+    "3. If drug dosages, staging criteria, or diagnostic cutoffs conflict with the Primary Baseline, record the exact conflict inside 'discrepancies'.\n"
     "Respond ONLY with a valid JSON object matching this schema:\n"
     '{"section": "string", "subtopic": "string", "conditional_context": "string", '
     '"clinical_points": [{"point": "string", "source": "string", "page": 1}], '

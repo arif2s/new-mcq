@@ -29,7 +29,7 @@ try:
 except Exception:
     _tokenizer = None
 
-from agents.tema_q.auditor import merge_json_nodes
+from agents.tema_q.auditor import filter_novel_secondary_sentences, merge_json_nodes
 from agents.tema_q.prompts import (
     DISTRACTOR_ANALYSIS_PROMPT,
     EXPLANATION_GENERATION_PROMPT,
@@ -38,6 +38,7 @@ from agents.tema_q.prompts import (
     STOP_TOKENS,
     TOPIC_EXTRACTION_SYSTEM_PROMPT,
 )
+from agents.tema_q.subtopic_router import route_and_prune_subtopics
 from config import DEFAULT_MODEL, LM_STUDIO_TIMEOUT, LM_STUDIO_URL, MAX_CONTEXT_TOKENS
 from core.database import get_db_connection
 from parsers.docling_parser import extract_structured_layout
@@ -241,7 +242,24 @@ def _get_pdf_parser_setting() -> str:
 
 def _extract_pdf_sync(file_path: str, page: int) -> str:
     parser = _get_pdf_parser_setting()
-    if parser == "docling_v2":
+    if parser == "indra":
+        try:
+            from parsers.indra_parser import extract_page_with_indra
+            res = extract_page_with_indra(file_path, page_number=page)
+            lines = res.get("lines") or []
+            if lines:
+                prose_lines = [
+                    f"{'#' * int(ln.get('heading_level') or 2)} {ln['text']}"
+                    if ln.get("role") == "heading"
+                    else str(ln.get("text") or "")
+                    for ln in lines
+                    if ln.get("role") not in ("furniture", "figure_caption")
+                ]
+                if prose_lines:
+                    return "\n".join(prose_lines)
+        except Exception as exc:
+            logger.warning("Indra extraction fallback: %s", exc)
+    elif parser == "docling_v2":
         try:
             from parsers.docling_v2_parser import extract_structured_layout as extract_v2
             res = extract_v2(file_path, page)
@@ -510,15 +528,34 @@ def _format_article_as_markdown(article: Dict[str, Any], topic: str) -> str:
     if context:
         lines.append(f"**Clinical Context:** {context}\n")
 
-    points = article.get("clinical_points") or []
-    for pt in points:
-        if isinstance(pt, dict) and pt.get("point"):
-            src = pt.get("source")
-            pg = pt.get("page")
-            cite = f" *({src}{f', p.{pg}' if pg else ''})*" if src else ""
-            lines.append(f"- {pt['point']}{cite}")
-        elif isinstance(pt, str) and pt.strip():
-            lines.append(f"- {pt.strip()}")
+    subtopics = article.get("subtopics")
+    if isinstance(subtopics, list) and subtopics:
+        for sub in subtopics:
+            if not isinstance(sub, dict):
+                continue
+            sub_title = str(sub.get("subtopic") or sub.get("display_name") or "").strip()
+            if sub_title:
+                lines.append(f"### {sub_title}")
+            sub_pts = sub.get("clinical_points") or []
+            for pt in sub_pts:
+                if isinstance(pt, dict) and pt.get("point"):
+                    src = pt.get("source")
+                    pg = pt.get("page")
+                    cite = f" *({src}{f', p.{pg}' if pg else ''})*" if src else ""
+                    lines.append(f"- {pt['point']}{cite}")
+                elif isinstance(pt, str) and pt.strip():
+                    lines.append(f"- {pt.strip()}")
+            lines.append("")
+    else:
+        points = article.get("clinical_points") or []
+        for pt in points:
+            if isinstance(pt, dict) and pt.get("point"):
+                src = pt.get("source")
+                pg = pt.get("page")
+                cite = f" *({src}{f', p.{pg}' if pg else ''})*" if src else ""
+                lines.append(f"- {pt['point']}{cite}")
+            elif isinstance(pt, str) and pt.strip():
+                lines.append(f"- {pt.strip()}")
 
     if not lines and article.get("raw_text"):
         return str(article["raw_text"]).strip()
@@ -570,85 +607,172 @@ async def run_tema_q_synthesis(
 
     lm_available = True
 
-    # Pre-Pass Relevance Gate
-    valid_documents: List[Dict[str, Any]] = []
-    for doc in documents:
-        bounded_doc = truncate_to_token_limit(doc["header"], 500)
-        gate_prompt = (
-            f"Does this text contain useful clinical or scientific information related to '{topic}'? "
-            f"Answer ONLY 'YES' or 'NO'."
-        )
-        try:
-            gate_resp = await call_llm_async(
-                "You are a clinical relevance filter.",
-                gate_prompt + f"\n\nText:\n{bounded_doc}",
-                max_tokens=10,
+    # Fast CPU Question-Anchored Subtopic Router & Pruner
+    subtopic_buckets = await asyncio.to_thread(
+        route_and_prune_subtopics, topic, documents, mcq_context
+    )
+
+    synthesized_subtopic_nodes: List[Dict[str, Any]] = []
+
+    if subtopic_buckets:
+        for bucket in subtopic_buckets:
+            sub_title = bucket.display_name
+            pass2_sys_prompt = PASS2_AUDIT_SYSTEM_PROMPT.replace("{subtopic}", sub_title)
+
+            # Pass 1: Primary Source Bulletization (<= 500 words)
+            pass1_user_msg = (
+                f"Clinical Topic: {topic}\n"
+                f"Target Subtopic: {bucket.display_name} ({bucket.question_anchor})\n\n"
+                f"Primary Reference:\n{bucket.primary_text}"
             )
-            if "NO" not in gate_resp.upper() or "YES" in gate_resp.upper():
-                valid_documents.append(doc)
-        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.HTTPError) as net_err:
-            logger.warning("LM Studio is offline/unreachable (%s); bypassing LLM gates.", net_err)
-            lm_available = False
-            valid_documents = list(documents)
-            break
-        except Exception:
-            valid_documents.append(doc)
 
-    if not valid_documents:
-        valid_documents = documents[:2]
+            base_note_json: Dict[str, Any] = {}
+            if lm_available:
+                try:
+                    base_note_str = await call_llm_async(
+                        PASS1_CLINICAL_SYSTEM_PROMPT, pass1_user_msg, max_tokens=600
+                    )
+                    parsed_base = parse_llm_json(base_note_str)
+                    if isinstance(parsed_base, list):
+                        base_note_json = {
+                            "section": "Clinical Summary",
+                            "subtopic": sub_title,
+                            "conditional_context": "",
+                            "clinical_points": parsed_base,
+                            "discrepancies": "",
+                        }
+                    elif isinstance(parsed_base, dict):
+                        base_note_json = parsed_base
+                        base_note_json["subtopic"] = sub_title
+                    else:
+                        base_note_json = {
+                            "section": "Clinical Summary",
+                            "subtopic": sub_title,
+                            "conditional_context": "",
+                            "clinical_points": [
+                                {
+                                    "point": str(base_note_str)[:500],
+                                    "source": bucket.primary_source_label,
+                                    "page": bucket.primary_page,
+                                }
+                            ],
+                            "discrepancies": "",
+                        }
+                except (httpx.ConnectError, httpx.ConnectTimeout, httpx.HTTPError) as net_err:
+                    logger.warning("LM Studio offline during Pass 1: %s", net_err)
+                    lm_available = False
+                except Exception as exc:
+                    logger.error("Pass 1 LLM synthesis failed for subtopic '%s': %s", sub_title, exc)
 
-    # Pass 1: Primary Reference Synthesis
-    doc1 = valid_documents[0]
-    bounded_doc1 = truncate_to_token_limit(doc1["header"], 2000)
-    pass1_user_msg = f"Clinical Topic: {topic}\n\nPrimary Reference:\n{bounded_doc1}"
-
-    if lm_available:
-        try:
-            base_note_str = await call_llm_async(
-                PASS1_CLINICAL_SYSTEM_PROMPT, pass1_user_msg, max_tokens=600
-            )
-            parsed_base = parse_llm_json(base_note_str)
-            if isinstance(parsed_base, list):
-                base_note_json: Dict[str, Any] = {
-                    "section": "Clinical Summary",
-                    "subtopic": topic,
-                    "conditional_context": "",
-                    "clinical_points": parsed_base,
-                    "discrepancies": "",
-                }
-            elif isinstance(parsed_base, dict):
-                base_note_json = parsed_base
-            else:
+            if not base_note_json:
                 base_note_json = {
                     "section": "Clinical Summary",
-                    "subtopic": topic,
+                    "subtopic": sub_title,
                     "conditional_context": "",
                     "clinical_points": [
                         {
-                            "point": str(base_note_str)[:500],
-                            "source": doc1["source_label"],
-                            "page": doc1["page"],
+                            "point": bucket.primary_text[:500],
+                            "source": bucket.primary_source_label,
+                            "page": bucket.primary_page,
                         }
                     ],
                     "discrepancies": "",
                 }
-        except Exception as exc:
-            logger.error("Pass 1 LLM synthesis failed for '%s': %s", topic, exc)
-            lm_available = False
-            base_note_json = {
-                "section": "Clinical Summary",
-                "subtopic": topic,
-                "conditional_context": "",
-                "clinical_points": [
-                    {
-                        "point": doc1["raw_text"][:500],
-                        "source": doc1["source_label"],
-                        "page": doc1["page"],
+
+            subtopic_node = merge_json_nodes(
+                None,
+                base_note_json,
+                metadata={"source": bucket.primary_source_label, "page": bucket.primary_page},
+                primary_max_words=500,
+            )
+
+            # Pass 2+: Secondary Sources Delta Micro-Editing (<= 1000 words combined)
+            for sec_entry in bucket.secondary_entries:
+                sec_text = sec_entry.get("text") or ""
+                sec_src = sec_entry.get("source_label") or "Secondary Reference"
+                sec_page = sec_entry.get("page") or 1
+
+                novel_sec_text = filter_novel_secondary_sentences(
+                    sec_text, subtopic_node.get("clinical_points", []), max_words=400
+                )
+                if not novel_sec_text:
+                    continue
+
+                sec_json: Dict[str, Any] = {}
+                if lm_available:
+                    sec_msg = (
+                        f"Clinical Topic: {topic}\n"
+                        f"Target Subtopic: {sub_title} ({bucket.question_anchor})\n"
+                        f"Primary Baseline Points:\n{json.dumps(subtopic_node.get('clinical_points', []))}\n\n"
+                        f"Secondary Reference:\n{novel_sec_text}"
+                    )
+                    try:
+                        sec_json_str = await call_llm_async(
+                            pass2_sys_prompt, sec_msg, max_tokens=500
+                        )
+                        sec_parsed = parse_llm_json(sec_json_str)
+                        if isinstance(sec_parsed, list):
+                            sec_json = {
+                                "section": "Clinical Summary",
+                                "subtopic": sub_title,
+                                "conditional_context": "",
+                                "clinical_points": sec_parsed,
+                                "discrepancies": "",
+                            }
+                        elif isinstance(sec_parsed, dict):
+                            sec_json = sec_parsed
+                            sec_json["subtopic"] = sub_title
+                    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.HTTPError):
+                        lm_available = False
+                    except Exception as exc:
+                        logger.warning("Pass 2 LLM audit fallback for '%s': %s", sub_title, exc)
+
+                if not sec_json:
+                    sec_json = {
+                        "section": "Clinical Summary",
+                        "subtopic": sub_title,
+                        "conditional_context": "",
+                        "clinical_points": [
+                            {
+                                "point": novel_sec_text[:500],
+                                "source": sec_src,
+                                "page": sec_page,
+                            }
+                        ],
+                        "discrepancies": "",
                     }
-                ],
-                "discrepancies": "",
-            }
+
+                subtopic_node = merge_json_nodes(
+                    subtopic_node,
+                    sec_json,
+                    metadata={"source": sec_src, "page": sec_page},
+                    max_words=1000,
+                )
+
+            synthesized_subtopic_nodes.append(subtopic_node)
+
+    if synthesized_subtopic_nodes:
+        all_points: List[Dict[str, Any]] = []
+        all_disc: List[str] = []
+        all_ctx: List[str] = []
+        for node in synthesized_subtopic_nodes:
+            all_points.extend(node.get("clinical_points", []))
+            if node.get("conditional_context"):
+                all_ctx.append(node["conditional_context"])
+            if node.get("discrepancies"):
+                all_disc.append(node["discrepancies"])
+
+        final_article = {
+            "section": "Clinical Summary",
+            "subtopic": topic,
+            "conditional_context": "; ".join(all_ctx),
+            "clinical_points": all_points,
+            "subtopics": synthesized_subtopic_nodes,
+            "discrepancies": "\n".join(all_disc).strip(),
+        }
     else:
+        # Fallback if no subtopic buckets were formed
+        doc1 = documents[0]
         base_note_json = {
             "section": "Clinical Summary",
             "subtopic": topic,
@@ -662,97 +786,11 @@ async def run_tema_q_synthesis(
             ],
             "discrepancies": "",
         }
-
-    final_article = merge_json_nodes(
-        None,
-        base_note_json,
-        metadata={"source": doc1["source_label"], "page": doc1["page"]},
-    )
-
-    # Pass 2+: Iterative Secondary Reference Integration & Variance Auditing
-    doc_budget = 1200
-    pass2_sys_prompt = PASS2_AUDIT_SYSTEM_PROMPT.replace("{subtopic}", topic)
-
-    for doc_sec in valid_documents[1:]:
-        if lm_available:
-            used_tokens = (
-                count_tokens(json.dumps(final_article))
-                + count_tokens(pass2_sys_prompt)
-                + 150
-            )
-            dynamic_doc_budget = min(doc_budget, MAX_CONTEXT_TOKENS - used_tokens - 600)
-            if dynamic_doc_budget < 200:
-                break
-
-            bounded_sec = truncate_to_token_limit(
-                doc_sec["header"], max(dynamic_doc_budget, 400)
-            )
-            sec_msg = f"Clinical Topic: {topic}\n\nSecondary Reference:\n{bounded_sec}"
-
-            try:
-                sec_json_str = await call_llm_async(
-                    pass2_sys_prompt, sec_msg, max_tokens=600
-                )
-                sec_parsed = parse_llm_json(sec_json_str)
-                if isinstance(sec_parsed, list):
-                    sec_json: Dict[str, Any] = {
-                        "section": "Clinical Summary",
-                        "subtopic": topic,
-                        "conditional_context": "",
-                        "clinical_points": sec_parsed,
-                        "discrepancies": "",
-                    }
-                elif isinstance(sec_parsed, dict):
-                    sec_json = sec_parsed
-                else:
-                    sec_json = {
-                        "section": "Clinical Summary",
-                        "subtopic": topic,
-                        "conditional_context": "",
-                        "clinical_points": [
-                            {
-                                "point": doc_sec["raw_text"][:500],
-                                "source": doc_sec["source_label"],
-                                "page": doc_sec["page"],
-                            }
-                        ],
-                        "discrepancies": "",
-                    }
-            except Exception as exc:
-                logger.warning("Pass 2 LLM audit fallback for '%s': %s", topic, exc)
-                sec_json = {
-                    "section": "Clinical Summary",
-                    "subtopic": topic,
-                    "conditional_context": "",
-                    "clinical_points": [
-                        {
-                            "point": doc_sec["raw_text"][:500],
-                            "source": doc_sec["source_label"],
-                            "page": doc_sec["page"],
-                        }
-                    ],
-                    "discrepancies": "",
-                }
-        else:
-            # Offline heuristic fallback: still merge secondary reference & run variance detector
-            sec_json = {
-                "section": "Clinical Summary",
-                "subtopic": topic,
-                "conditional_context": "",
-                "clinical_points": [
-                    {
-                        "point": doc_sec["raw_text"][:500],
-                        "source": doc_sec["source_label"],
-                        "page": doc_sec["page"],
-                    }
-                ],
-                "discrepancies": "",
-            }
-
         final_article = merge_json_nodes(
-            final_article,
-            sec_json,
-            metadata={"source": doc_sec["source_label"], "page": doc_sec["page"]},
+            None,
+            base_note_json,
+            metadata={"source": doc1["source_label"], "page": doc1["page"]},
+            primary_max_words=500,
         )
 
     # Pass 3: Optional MCQ Distractor Audit

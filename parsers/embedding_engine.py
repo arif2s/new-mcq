@@ -5,7 +5,7 @@ import os
 import threading
 from contextlib import closing
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Enforce Invariant 1: Zero VRAM for Backend (strictly CPU-only ONNX execution)
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -450,9 +450,11 @@ class CPUEmbeddingEngine:
         normalized_embeddings = mean_pooled / np.clip(norms, a_min=1e-12, a_max=None)
         return normalized_embeddings.astype(np.float32).tolist()
 
-    def embed(self, texts: List[str]) -> List[List[float]]:
+    def embed(self, texts: Union[str, List[str]]) -> Any:
         if not texts:
             return []
+        if isinstance(texts, str):
+            return self.embed_single(texts)
 
         with self._lock:
             if self.session is None or self.tokenizer is None:
@@ -469,6 +471,24 @@ class CPUEmbeddingEngine:
             except Exception as exc:
                 logger.error("Failed to compute embeddings: %s", exc)
                 return []
+
+    def score_texts_against_anchors(
+        self, texts: List[str], anchors: List[str]
+    ) -> Optional[np.ndarray]:
+        """
+        Computes an (N_texts x M_anchors) cosine similarity matrix in a single batched pass.
+        Returns None if offline ONNX model is unavailable.
+        """
+        if not texts or not anchors:
+            return None
+        combined = list(texts) + list(anchors)
+        vecs = self.embed(combined)
+        if not vecs or len(vecs) != len(combined):
+            return None
+        mat = np.asarray(vecs, dtype=np.float32)
+        text_mat = mat[: len(texts)]
+        anchor_mat = mat[len(texts) :]
+        return np.matmul(text_mat, anchor_mat.T)
 
     def embed_single(self, text: str) -> List[float]:
         results = self.embed([text])
