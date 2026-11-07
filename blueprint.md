@@ -444,7 +444,7 @@
   - `GET /api/sources` -> `get_sources() -> list[dict[str, Any]]`: Queries configured sources from `knowledge_sources` table.
   - `POST /api/sources` -> `add_source(payload: SourcePayload) -> dict[str, str]`: Upserts knowledge source record into SQLite.
   - `POST /api/sources/{source_id}/toggle` -> `toggle_source(source_id: str) -> dict[str, Any]`: Toggles source `enabled` state.
-  - `PATCH /api/sources/{source_id}/engine` & `POST /api/sources/{source_id}/engine` -> `update_source_engine(source_id: str, payload: EnginePayload) -> dict[str, Any]`: Updates `pdfEngine` (`fitz`, `docling`, `docling_v2`, `docling_v3`, `indra`, `indra_math`, `indra_ocr`) on a configured PDF source.
+  - `PATCH /api/sources/{source_id}/engine` & `POST /api/sources/{source_id}/engine` -> `update_source_engine(source_id: str, payload: EnginePayload) -> dict[str, Any]`: Updates `pdfEngine` (`fitz`, `docling`, `docling_v2`, `docling_v3`, `docling_v1_heading_opt`, `indra`, `indra_math`, `indra_ocr`, `indra_base_heading_opt`) on a configured PDF source.
   - `DELETE /api/sources/{source_id}` -> `delete_source(source_id: str) -> dict[str, str]`: Deletes source from SQLite.
   - `POST /api/sources/index` -> `index_sources(background_tasks: BackgroundTasks) -> dict[str, str]`: Concurrency-guarded background indexer trigger (returns `status="busy"` if already running).
   - `POST /api/sources/open_pdf` -> `open_pdf(payload: OpenPdfPayload) -> dict[str, str]`: Windows deep-link launcher for SumatraPDF using `-reuse-instance` and `-page` flags with `.pdf` path validation and auto-discovery in `%LOCALAPPDATA%` and `%ProgramFiles%`.

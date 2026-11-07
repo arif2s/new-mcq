@@ -346,3 +346,7 @@ def render_topic_pages_to_base64(
         doc.close()
 
     return results
+
+
+# Interoperability alias conforming to blueprint specification
+index_pdf_document_topics = index_pdf_topics_to_db

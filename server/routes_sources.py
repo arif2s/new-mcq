@@ -275,7 +275,17 @@ def toggle_source(source_id: str) -> Dict[str, Any]:
 def update_source_engine(source_id: str, payload: EnginePayload) -> Dict[str, Any]:
     """Updates the PDF parsing engine on an existing knowledge source."""
     new_engine = payload.pdfEngine.strip().lower()
-    allowed_engines = ("fitz", "docling", "docling_v2", "docling_v3", "indra", "indra_math", "indra_ocr")
+    allowed_engines = (
+        "fitz",
+        "docling",
+        "docling_v2",
+        "docling_v3",
+        "docling_v1_heading_opt",
+        "indra",
+        "indra_math",
+        "indra_ocr",
+        "indra_base_heading_opt",
+    )
     if new_engine not in allowed_engines:
         raise HTTPException(
             status_code=400,
@@ -592,9 +602,9 @@ async def run_indexing() -> None:
 
                             try:
                                 sections = []
-                                if pdf_engine in ("indra", "indra_math", "indra_ocr"):
+                                if pdf_engine in ("indra", "indra_math", "indra_ocr", "indra_base_heading_opt"):
                                     import parsers.indra_parser as indra_p
-                                    i_mode = "ocr" if pdf_engine == "indra_ocr" else "auto"
+                                    i_mode = "ocr" if pdf_engine == "indra_ocr" else ("base_heading_opt" if pdf_engine == "indra_base_heading_opt" else "auto")
                                     i_math = (pdf_engine == "indra_math")
                                     try:
                                         sections = await asyncio.to_thread(
@@ -616,6 +626,41 @@ async def run_indexing() -> None:
                                             status="running",
                                         )
                                         raise indra_err
+                                elif pdf_engine == "docling_v1_heading_opt":
+                                    try:
+                                        from parsers.docling_v1_heading_opt import (
+                                            extract_page_with_docling_v1_heading_opt,
+                                        )
+                                        import pypdfium2 as pdfium_mod
+
+                                        def _extract_all_docling_v1_heading_opt(p_path: Path):
+                                            doc_p = pdfium_mod.PdfDocument(str(p_path))
+                                            num_pages = len(doc_p)
+                                            doc_p.close()
+                                            secs = []
+                                            for p_i in range(1, num_pages + 1):
+                                                p_res = extract_page_with_docling_v1_heading_opt(p_path, page_number=p_i)
+                                                for s_path, s_sub, s_blks in p_res.get("sections_for_chunks", []):
+                                                    txt = "\n\n".join(s_blks).strip()
+                                                    if txt:
+                                                        secs.append({
+                                                            "page": p_i,
+                                                            "page_number": p_i,
+                                                            "heading": s_path,
+                                                            "heading_path": s_path,
+                                                            "subheading": s_sub,
+                                                            "text": txt,
+                                                            "article_length": len(txt),
+                                                        })
+                                            return secs
+
+                                        sections = await asyncio.to_thread(_extract_all_docling_v1_heading_opt, file_path)
+                                    except Exception as d_err:
+                                        logger.warning(
+                                            "docling_v1_heading_opt extraction failed for %s: %s",
+                                            file_path,
+                                            d_err,
+                                        )
                                 elif pdf_engine == "docling_v3":
                                     try:
                                         from parsers.docling_v3_parser import (
@@ -662,7 +707,7 @@ async def run_indexing() -> None:
                                             d_err,
                                         )
 
-                                if not sections and pdf_engine not in ("indra", "indra_math", "indra_ocr"):
+                                if not sections and pdf_engine not in ("indra", "indra_math", "indra_ocr", "indra_base_heading_opt"):
                                     sections = await asyncio.to_thread(
                                         extract_pdf_pages,
                                         str(file_path),
@@ -673,6 +718,18 @@ async def run_indexing() -> None:
 
                                 if not sections:
                                     continue
+
+                                # Index PDF topic hierarchy into pdf_topic_index
+                                try:
+                                    from parsers.pdf_topic_indexer import index_pdf_document_topics
+                                    await asyncio.to_thread(
+                                        index_pdf_document_topics,
+                                        str(file_path),
+                                        default_title=file_path.stem,
+                                        engine_source=pdf_engine,
+                                    )
+                                except Exception as idx_err:
+                                    logger.warning("Topic indexing failed for %s: %s", file_path, idx_err)
 
                                 for sec_idx, section in enumerate(sections):
                                     page_num = max(
@@ -1167,7 +1224,37 @@ async def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
         engine_choice = (payload.engine or "adaptive").strip().lower()
         ocr_choice = (payload.ocr_engine or "auto").strip().lower()
 
-        if engine_choice in ("indra", "indra_ocr", "indra_math"):
+        if engine_choice in ("indra", "indra_ocr", "indra_math", "indra_base_heading_opt"):
+            if engine_choice == "indra_base_heading_opt":
+                from parsers.indra_base_heading_opt import extract_page_with_indra_base_heading_opt
+                result = await asyncio.to_thread(
+                    extract_page_with_indra_base_heading_opt,
+                    str(target_path),
+                    page_number=page_num,
+                    default_title=target_path.stem,
+                )
+                return {
+                    "status": "success",
+                    "file_name": target_path.name,
+                    "file_path": str(target_path),
+                    "page_number": page_num,
+                    "total_pages": page_count,
+                    "engine": "indra_base_heading_opt",
+                    "ocr_engine": ocr_choice,
+                    "available_pdfs": available_pdfs,
+                    "heading_path": result.get("heading_path", target_path.stem),
+                    "subheading": result.get("subheading", target_path.stem),
+                    "extracted_text": result.get("markdown") or result.get("text", ""),
+                    "page_image_base64": result.get("page_image_b64") or result.get("page_image_base64", ""),
+                    "layout_boxes": result.get("blocks", []),
+                    "hierarchy_tree": result.get("hierarchy_tree", []),
+                    "lines": result.get("lines", []),
+                    "svg_overlay": result.get("svg_overlay", ""),
+                    "elapsed_ms": result.get("elapsed_ms", 0.0),
+                    "page_width": result.get("page_width", 612.0),
+                    "page_height": result.get("page_height", 792.0),
+                }
+
             import parsers.indra_parser as indra_p
             i_mode = "ocr" if engine_choice == "indra_ocr" else (getattr(payload, "indra_mode", "auto") or "auto")
             i_math = True if engine_choice == "indra_math" else bool(getattr(payload, "indra_math", False))
@@ -1203,6 +1290,40 @@ async def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
                 "elapsed_ms": result.get("elapsed_ms", 0.0),
                 "page_width": result.get("page_width", 612.0),
                 "page_height": result.get("page_height", 792.0),
+            }
+
+        elif engine_choice in ("docling_v1_heading_opt", "v1_heading_opt"):
+            from parsers.docling_v1_heading_opt import extract_page_with_docling_v1_heading_opt
+            result = await asyncio.to_thread(
+                extract_page_with_docling_v1_heading_opt,
+                str(target_path),
+                page_number=page_num,
+                default_title=target_path.stem,
+            )
+            # Fetch adaptive layout image for background overlay if needed
+            res_adaptive = await asyncio.to_thread(
+                extract_page_with_adaptive_layout,
+                str(target_path),
+                page_num,
+                default_title=target_path.stem,
+            )
+            return {
+                "status": "success",
+                "file_name": target_path.name,
+                "file_path": str(target_path),
+                "page_number": page_num,
+                "total_pages": page_count,
+                "engine": "docling_v1_heading_opt",
+                "ocr_engine": ocr_choice,
+                "available_pdfs": available_pdfs,
+                "heading_path": result.get("heading_path", target_path.stem),
+                "subheading": result.get("subheading", target_path.stem),
+                "extracted_text": result.get("markdown") or result.get("text", ""),
+                "page_image_base64": res_adaptive.get("page_image_base64", ""),
+                "layout_boxes": res_adaptive.get("layout_boxes", []),
+                "hierarchy_tree": result.get("hierarchy_tree", []),
+                "page_width": res_adaptive.get("page_width", 612.0),
+                "page_height": res_adaptive.get("page_height", 792.0),
             }
 
         elif engine_choice in ("docling_v3", "v3"):

@@ -119,10 +119,12 @@
                         <select id="pdf-engine-select" class="glass-input text-xs w-full py-2">
                             <option value="fitz">Fitz (Fast Slicer)</option>
                             <option value="indra">Indra OCR ONNX (Auto Text + OCR)</option>
+                            <option value="indra_base_heading_opt">Indra Base (Pure OCR + Heading Opt)</option>
                             <option value="indra_math">Indra OCR ONNX (+ LaTeX Math)</option>
                             <option value="indra_ocr">Indra OCR ONNX (Force Full OCR)</option>
                             <option value="adaptive">Adaptive Geometric (PyMuPDF)</option>
                             <option value="docling_v2">Docling v2 (Fast Geometric + Hybrid)</option>
+                            <option value="docling_v1_heading_opt">Docling v1 (TableFormer + Heading Opt)</option>
                             <option value="docling_v3" selected>Docling v3 (Visual Self-Correction + Multi-OCR)</option>
                             <option value="docling">Docling v1 ML Structural Markdown</option>
                             <option value="headings">PyMuPDF Heuristic Headings</option>

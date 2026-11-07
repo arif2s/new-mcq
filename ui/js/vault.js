@@ -15,6 +15,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const pdfEngineIndraLabel = document.getElementById('pdf-engine-indra-label');
   const pdfEngineIndraMathLabel = document.getElementById('pdf-engine-indra-math-label');
   const pdfEngineIndraOcrLabel = document.getElementById('pdf-engine-indra-ocr-label');
+  const pdfEngineIndraBaseOptLabel = document.getElementById('pdf-engine-indra-base-opt-label');
+  const pdfEngineDoclingV1OptLabel = document.getElementById('pdf-engine-docling-v1-opt-label');
   const startIndexingBtn = document.getElementById('start-indexing-btn');
   const indexingBtnText = document.getElementById('indexing-btn-text');
   const indexingIconPlay = document.getElementById('indexing-icon-play');
@@ -115,10 +117,12 @@ document.addEventListener('DOMContentLoaded', () => {
             <select class="pdf-engine-select glass-select text-xs py-1 px-2 rounded font-mono" data-id="${escapeHTML(src.id)}">
               <option value="fitz" ${currentEngine === 'fitz' ? 'selected' : ''}>fitz — PyMuPDF (Fast Text)</option>
               <option value="indra" ${currentEngine === 'indra' ? 'selected' : ''}>indra — Indra OCR ONNX (Auto)</option>
+              <option value="indra_base_heading_opt" ${currentEngine === 'indra_base_heading_opt' ? 'selected' : ''}>indra_base_heading_opt — Indra Base (Heading Opt)</option>
               <option value="indra_math" ${currentEngine === 'indra_math' ? 'selected' : ''}>indra_math — Indra OCR (+ Math)</option>
               <option value="indra_ocr" ${currentEngine === 'indra_ocr' ? 'selected' : ''}>indra_ocr — Indra OCR (Force Full OCR)</option>
               <option value="docling_v2" ${currentEngine === 'docling_v2' ? 'selected' : ''}>docling_v2 — Docling v2 Layout</option>
               <option value="docling_v3" ${currentEngine === 'docling_v3' ? 'selected' : ''}>docling_v3 — Docling v3 Layout</option>
+              <option value="docling_v1_heading_opt" ${currentEngine === 'docling_v1_heading_opt' ? 'selected' : ''}>docling_v1_heading_opt — Docling v1 (Heading Opt)</option>
               <option value="docling" ${currentEngine === 'docling' ? 'selected' : ''}>docling — Docling v1 ML</option>
             </select>
           `;
@@ -252,7 +256,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementsByName('pdfEngine').forEach(radio => {
     radio.addEventListener('change', () => {
-      [pdfEngineFitzLabel, pdfEngineDoclingLabel, pdfEngineDoclingV2Label, pdfEngineDoclingV3Label, pdfEngineIndraLabel, pdfEngineIndraMathLabel, pdfEngineIndraOcrLabel].forEach(label => {
+      [pdfEngineFitzLabel, pdfEngineDoclingLabel, pdfEngineDoclingV2Label, pdfEngineDoclingV3Label, pdfEngineIndraLabel, pdfEngineIndraMathLabel, pdfEngineIndraOcrLabel, pdfEngineIndraBaseOptLabel, pdfEngineDoclingV1OptLabel].forEach(label => {
         label?.classList.remove('bg-brand-600/10', 'border-brand-500');
         label?.classList.add('glass-panel');
       });
@@ -261,7 +265,9 @@ document.addEventListener('DOMContentLoaded', () => {
         'docling': pdfEngineDoclingLabel,
         'docling_v2': pdfEngineDoclingV2Label,
         'docling_v3': pdfEngineDoclingV3Label,
+        'docling_v1_heading_opt': pdfEngineDoclingV1OptLabel,
         'indra': pdfEngineIndraLabel,
+        'indra_base_heading_opt': pdfEngineIndraBaseOptLabel,
         'indra_math': pdfEngineIndraMathLabel,
         'indra_ocr': pdfEngineIndraOcrLabel,
       };

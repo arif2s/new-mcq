@@ -557,6 +557,22 @@
                       <div class="text-xs text-muted mt-1 leading-relaxed">Standard Docling ML document converter with table &amp; section structure.</div>
                     </div>
                   </label>
+
+                  <label id="pdf-engine-indra-base-opt-label" for="pdf-engine-indra-base-opt" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors glass-panel border-gray-700">
+                    <input type="radio" id="pdf-engine-indra-base-opt" name="pdfEngine" value="indra_base_heading_opt" class="mt-1 text-brand-500 focus:ring-brand-500" />
+                    <div>
+                      <div class="font-medium text-sm">Indra Base (Heading Opt)</div>
+                      <div class="text-xs text-muted mt-1 leading-relaxed">Pure Base Indra OCR reading order with multi-pass heading calibration.</div>
+                    </div>
+                  </label>
+
+                  <label id="pdf-engine-docling-v1-opt-label" for="pdf-engine-docling-v1-opt" class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors glass-panel border-gray-700">
+                    <input type="radio" id="pdf-engine-docling-v1-opt" name="pdfEngine" value="docling_v1_heading_opt" class="mt-1 text-brand-500 focus:ring-brand-500" />
+                    <div>
+                      <div class="font-medium text-sm">Docling v1 (Heading Opt)</div>
+                      <div class="text-xs text-muted mt-1 leading-relaxed">Docling v1 TableFormer tables with multi-pass heading calibration.</div>
+                    </div>
+                  </label>
                 </div>
               </div>
             </div>
@@ -1134,8 +1150,10 @@
                     <option value="docling_v3">Docling v3 Multi-Engine Layout & OCR</option>
                     <option value="docling_v2">Docling v2 Hybrid Multi-Column Layout</option>
                     <option value="indra">Indra OCR ONNX (Auto Text + OCR)</option>
+                    <option value="indra_base_heading_opt">Indra Base (Pure OCR + Heading Opt)</option>
                     <option value="indra_math">Indra OCR ONNX (+ LaTeX Math)</option>
                     <option value="indra_ocr">Indra OCR ONNX (Force Full OCR)</option>
+                    <option value="docling_v1_heading_opt">Docling v1 (TableFormer + Heading Opt)</option>
                     <option value="docling">Docling v1 ML Structural Markdown</option>
                     <option value="fitz">PyMuPDF (Fitz) Fast Text Slicing</option>
                   </select>
