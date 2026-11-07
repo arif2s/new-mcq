@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import posixpath
 import re
+import sqlite3
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union

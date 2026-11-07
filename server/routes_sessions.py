@@ -6,7 +6,7 @@ import logging
 import os
 import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 # Enforce Invariant 1: Zero VRAM for backend processes
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -913,7 +913,7 @@ def update_session_topics(
             _enqueue_session_processing(conn, session_id)
 
             selected_names = [
-                t["name"] for t in normalized_topics
+                t["name"] for t in normalized
                 if t.get("selected") and t.get("name")
             ]
             if selected_names:

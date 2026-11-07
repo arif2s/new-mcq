@@ -176,6 +176,8 @@
 - `core.database`:
   - `get_db_connection() -> sqlite3.Connection` (configured per-connection with `WAL`, `busy_timeout=20000`, `foreign_keys=ON`, `synchronous=NORMAL`, `mmap_size=536870912`, `temp_store=MEMORY`, `cache_size=-64000`)
   - `initialize_database() -> None` (executes 4-stage initialization: table & FTS5 trigger creation -> idempotent column & `task_queue` FK removal migrations -> index creation -> `csv_questions_fts_docsize` external-content FTS5 rebuild check)
+  - `record_question_attempt(conn: sqlite3.Connection, question_id: str | int, is_correct: bool, attempt_ts: float | None = None, verified_topics: list | None = None, cached_refs: dict | None = None, llm_summary: str | None = None) -> None`: Fast indexed upsert into `question_metadata` tracking attempts, wrong counts, and cached references/summaries.
+  - `update_question_verified_topics(conn: sqlite3.Connection, question_id: str | int, verified_topics: list, cached_refs: dict | None = None, llm_summary: str | None = None) -> None`: Updates or initializes verified topics and cached metadata for a question in `question_metadata`.
 - `core.queue_manager`:
   - `class PriorityQueueWorker`:
     - `start() -> None`
@@ -186,8 +188,9 @@
   - `get_session_queue_info(session_id: str) -> dict[str, Any]`
   - `prioritize_session_tasks(session_id: str) -> int`
 - `core.scheduler`:
+  - `get_fsrs_parameters() -> dict[str, Any]`: Reads user-configured FSRS parameters (`requested_retention`, `max_interval_days`, `easy_bonus`, `hard_factor`) from SQLite `user_state` with safe defaults.
   - `map_fsrs_state_to_status(state: int, stability: float = 0.0, reps: int = 0) -> str`: Maps FSRS numeric state and stability to UI status labels (`'new'`, `'learning'`, `'review'`, `'mastered'`).
-  - `calculate_fsrs_next_interval(rating: int, state: int, difficulty: float, stability: float, reps: int, lapses: int, now: Optional[float] = None) -> dict[str, Any]`: Computes updated FSRS v4.5 metrics using exact power-law interval scaling ($I = S \cdot 1.0$ at 90% retention), $D_0(3)$ mean reversion, stability floor protection ($\ge 0.1$), and optional `due_timestamp` calculation; when `rating == 1` ('Again'), forces `interval_days = 0`, `interval_seconds = 0`, and sets `due_timestamp = now` so lapsed cards repeat on the next quiz set; returns `FSRS Stats Dict`.
+  - `calculate_fsrs_next_interval(rating: int, state: int, difficulty: float, stability: float, reps: int, lapses: int, now: Optional[float] = None, requested_retention: Optional[float] = None, max_interval_days: Optional[int] = None) -> dict[str, Any]`: Computes updated FSRS v4.5 metrics using exact power-law interval scaling ($I = S \cdot \text{scaler}$ adhering to user-configured retention and capped at `max_interval_days`), $D_0(3)$ mean reversion, stability floor protection ($\ge 0.1$), and optional `due_timestamp` calculation; when `rating == 1` ('Again'), forces `interval_days = 0`, `interval_seconds = 0`, and sets `due_timestamp = now` so lapsed cards repeat on the next quiz set; returns `FSRS Stats Dict`.
 - `core.reporter`:
   - `generate_topic_report(topic: str, search_results: Optional[Union[dict, list]] = None, synthesis_output: Optional[dict] = None) -> str`: Compiles structured HTML dossier in `storage/reports/` adhering to `SynthesisOutputDict` (`display_title`, `enhanced_explanation`, `unified_article`, `distractor_analysis`, `variance_audit`, `top_references`); implements Invariant 13 polymorphic reference normalization, markdown-to-HTML rendering, and process/thread-safe atomic temp file replacement.
 
@@ -379,6 +382,10 @@
   - `GET /api/mcq/synthesis?topic=...&resolve_if_missing=true` -> `get_synthesis(topic: str, resolve_if_missing: bool = True) -> dict[str, Any]`
   - `POST /api/mcq/batch_generate_references` & `POST /api/mcq/topics/generate_references` -> `batch_generate_references(payload: BatchTopicRequest) -> dict[str, Any]`
   - `POST /api/mcq/batch_generate_explanations` & `POST /api/mcq/topics/generate_explanations` -> `batch_generate_explanations(payload: BatchTopicRequest) -> dict[str, Any]`
+  - `GET /api/mcq/spaced_repetition_config` -> `get_spaced_repetition_config() -> dict[str, Any]`: Retrieves active FSRS parameters (`requested_retention`, `max_interval_days`, `easy_bonus`, `hard_factor`).
+  - `POST /api/mcq/spaced_repetition_config` -> `set_spaced_repetition_config(req: SpacedRepetitionConfigRequest) -> dict[str, Any]`: Updates and persists user-configured FSRS parameters to SQLite `user_state`.
+  - `POST /api/mcq/batch_update_all_references` -> `batch_update_all_verified_references() -> dict[str, Any]`: Aggregates all distinct verified topics across `question_metadata`, `extracted_topics`, and `session_questions` to refresh reference links in batch.
+  - `POST /api/mcq/batch_update_all_summaries` -> `batch_update_all_verified_summaries() -> dict[str, Any]`: Aggregates all distinct verified topics across `question_metadata`, `extracted_topics`, and `session_questions` to enqueue missing LM Studio summaries in batch.
 - `server.routes_models`:
   - `GET /api/models/cpu_embeddings`, `POST /api/models/cpu_embeddings`, `GET /api/models/cpu_embedding_models`, `POST /api/models/cpu_embedding_models` -> `get_cpu_embedding_models() -> dict[str, Any]`: Lists embedding models (including SapBERT Clinical Fulltext ONNX), disk caching status, and active model selection from `user_state`.
   - `GET /api/models/flashrank_models` & `POST /api/models/flashrank_models` -> `get_flashrank_models() -> dict[str, Any]`: Lists FlashRank cross-encoder reranking models and download status.
@@ -429,7 +436,7 @@
   - `GET /api/sessions/due_summary` -> `get_due_summary() -> dict[str, Any]`: Returns `{status: "success", total_due: int, session_id: Optional[str]}`.
   - `GET /api/sessions/dashboard_prompts` -> `get_dashboard_prompts() -> dict[str, Any]`: Computes intelligent banner list (due reviews, high-yield weak topics derived from NLP-extracted topics, subject rotations unattempted in 3+ days, and rotating encouragement messages).
   - `POST /api/sessions/save` -> `save_session(session: SessionCreate) -> dict[str, Any]`
-  - `GET /api/sessions/history` -> `get_session_history() -> list[dict[str, Any]]`
+  - `GET /api/sessions/history` -> `get_session_history() -> list[dict[str, Any]]`: Retrieves session history with dynamic question count and answered stats; if `auto_remove_completed_sets` is enabled in `user_state`, automatically cascades deletion of fully completed/revised sessions (excluding `sess_spaced_repetition_due`).
   - `GET /api/sessions/{session_id}` -> `get_session_by_id(session_id: str) -> dict[str, Any]`
   - `GET /api/sessions/{session_id}/questions` & `GET /api/sessions/questions/{session_id}` -> `get_session_questions(session_id: str) -> list[dict[str, Any]]`
   - `GET /api/sessions/{session_id}/extract_draft_topics` -> `get_or_extract_session_topics(session_id: str) -> dict[str, Any]`
@@ -721,6 +728,22 @@ pdf_topic_index (
 CREATE INDEX idx_pti_topic_norm ON pdf_topic_index(topic_norm);
 CREATE INDEX idx_pti_parent_norm ON pdf_topic_index(parent_norm);
 CREATE INDEX idx_pti_pdf_path ON pdf_topic_index(pdf_path);
+
+-- Fast Question Metadata & Attempt Tracking
+question_metadata (
+  question_id TEXT PRIMARY KEY,
+  attempt_count INTEGER DEFAULT 0,
+  wrong_count INTEGER DEFAULT 0,
+  last_is_correct INTEGER DEFAULT 1,
+  last_attempt_ts REAL DEFAULT 0.0,
+  verified_topics_json TEXT DEFAULT '[]',
+  cached_references_json TEXT DEFAULT '{}',
+  cached_llm_summary TEXT DEFAULT '',
+  updated_at REAL DEFAULT (unixepoch('now'))
+);
+CREATE INDEX idx_qm_attempt ON question_metadata(attempt_count);
+CREATE INDEX idx_qm_wrong ON question_metadata(wrong_count);
+CREATE INDEX idx_qm_last_attempt ON question_metadata(last_attempt_ts);
 ```
 
 ### LanceDB Index Schema (`parsers/lancedb_engine.py`)
@@ -1138,3 +1161,4 @@ CREATE INDEX idx_pti_pdf_path ON pdf_topic_index(pdf_path);
 28. **Indra OCR Achromatic Hue Sentinels & Multi-Line Continuation Integrity**: In `parsers/indra/types.py`, default hue values for `PageElement` and `HeadingPrototype` MUST be initialized to `-1.0` (`fg_hue = -1.0`, `bg_hue = -1.0`) to unambiguously differentiate achromatic elements (pure grays, whites, blacks) from chromatic elements with hue 0.0 (red). In `parsers/indra/strategies.py`, `_merge_wrapped_elements` MUST merge vertical wrapped lines sharing identical column index and visual styles within `v_gap <= 0.038`, specifically exempting parenthetical acronym tails (`(COPD):`) and *Situation headers from being broken into fragmented blocks.
 29. **Theme Contrast & Dark/Light Semantic Palette Variable Isolation**: In `ui/css/main.css`, theme neutrals (`--c-neutral-100` through `--c-neutral-500`), segmented variables (`--segmented-bg`, `--segmented-border`, `--segmented-active-bg`), and code backgrounds (`--code-bg`) MUST be defined across `:root` and `body.dark-theme`, providing contextual overrides on panels and cards for Tailwind dark-mode utilities (`text-gray-*`, `text-slate-*`, `text-white`) to ensure high contrast and WCAG AA readability without altering colored badges or buttons.
 30. **Multi-Pass Heading Calibration & Base Layout Preservation**: The heading calibration engines (`parsers/heading_toc_calibrator.py`, `parsers/indra_base_heading_opt.py`, and `parsers/docling_v1_heading_opt.py`) MUST preserve 100% of the underlying base OCR text extraction, word positions, and reading order (Marker/Surya for Indra, TableFormer for Docling v1), augmenting output strictly with non-destructive H1-H6 heading tier classification and hierarchical breadcrumbs. In `parsers/pdf_topic_indexer.py`, lookups against `pdf_topic_index` MUST enforce sibling mutual exclusion (`SIBLING_MUTUAL_EXCLUSIONS`) to prevent cross-topic pollution (e.g. Bronchopneumonia vs Lobar Pneumonia), and page-to-picture base64 rendering for LM Studio Vision-LM (VLM) synthesis MUST fall back gracefully to structured plain text if VLM execution fails or is unsupported.
+31. **Question Metadata Tracking, Session Auto-Removal & Dynamic FSRS Tuning**: Question attempt metrics (`attempt_count`, `wrong_count`, `last_is_correct`, `last_attempt_ts`) and verified clinical topics MUST be recorded atomically into `question_metadata` via `record_question_attempt` on every quiz completion. FSRS interval calculations in `core/scheduler.py` dynamically scale according to user-configured retention and interval caps (`requested_retention`, `max_interval_days`) persisted in `user_state`. When `auto_remove_completed_sets` is enabled, fetching session history (`GET /api/sessions/history`) automatically purges fully revised study sets from `quiz_sessions` and child tables (excluding `sess_spaced_repetition_due`), and reviewed questions with future due timestamps are purged immediately from the consolidated review set.
