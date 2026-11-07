@@ -79,6 +79,8 @@ class LanceDBEngine:
         if self.db is None:
             return []
         try:
+            if hasattr(self.db, "list_tables"):
+                return list(self.db.list_tables())
             return list(self.db.table_names())
         except Exception:
             return []
@@ -310,7 +312,7 @@ class LanceDBEngine:
             return []
 
     def fts_search(self, query_string: str, limit: int = 25) -> List[Dict[str, Any]]:
-        """Full-text lexical keyword search over child_content."""
+        """Full-text lexical keyword search over child_content with substring SQL filter fallback."""
         if not query_string or not query_string.strip() or self.table is None:
             return []
         try:
@@ -320,8 +322,24 @@ class LanceDBEngine:
                 raw = self.table.search(query_string).limit(int(limit)).to_list()
             return self._normalize_search_output(raw)
         except Exception as exc:
-            logger.debug("LanceDB FTS search skipped: %s", exc)
-            return []
+            logger.debug("LanceDB FTS search fell back to SQL filter: %s", exc)
+            # Fallback to substring query if inverted index has not been built yet
+            try:
+                sanitized = query_string.strip().replace("'", "''")
+                raw = (
+                    self.table.search()
+                    .where(
+                        f"child_content LIKE '%{sanitized}%' "
+                        f"OR subheading LIKE '%{sanitized}%' "
+                        f"OR main_topic LIKE '%{sanitized}%'"
+                    )
+                    .limit(int(limit))
+                    .to_list()
+                )
+                return self._normalize_search_output(raw)
+            except Exception as filter_exc:
+                logger.debug("LanceDB filter search skipped: %s", filter_exc)
+                return []
 
     def count_rows(self) -> int:
         """Returns row count without loading vector arrays into RAM."""

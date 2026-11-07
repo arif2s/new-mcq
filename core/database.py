@@ -368,6 +368,26 @@ def initialize_database() -> None:
                 updated_at REAL DEFAULT (unixepoch('now')),
                 FOREIGN KEY(file_path) REFERENCES layout_analysis_progress(file_path) ON DELETE CASCADE
             );
+
+            -- 15. PDF Topic Index (Full-PDF Hierarchical Section & Topic Index)
+            CREATE TABLE IF NOT EXISTS pdf_topic_index (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pdf_path TEXT NOT NULL,
+                pdf_title TEXT NOT NULL,
+                engine_source TEXT NOT NULL DEFAULT 'hybrid_toc',
+                heading_level INTEGER NOT NULL,
+                topic_title TEXT NOT NULL,
+                topic_norm TEXT NOT NULL,
+                parent_topic TEXT NOT NULL,
+                parent_norm TEXT NOT NULL,
+                heading_path TEXT NOT NULL,
+                heading_path_norm TEXT NOT NULL,
+                start_page INTEGER NOT NULL,
+                end_page INTEGER NOT NULL,
+                start_y0 REAL NOT NULL DEFAULT 0.0,
+                end_y1 REAL NOT NULL DEFAULT 1.0,
+                updated_at REAL DEFAULT (unixepoch('now'))
+            );
         """)
 
         # STAGE 2: Idempotent Column Additions & Schema Migrations (BEFORE Index Creation)
@@ -455,6 +475,9 @@ def initialize_database() -> None:
             CREATE INDEX IF NOT EXISTS idx_session_questions_sid ON session_questions (session_id);
             CREATE INDEX IF NOT EXISTS idx_extracted_topics_qid ON extracted_topics (question_id);
             CREATE INDEX IF NOT EXISTS idx_annotated_bboxes_page ON user_annotated_bboxes (file_path, page_number);
+            CREATE INDEX IF NOT EXISTS idx_pti_topic_norm ON pdf_topic_index(topic_norm);
+            CREATE INDEX IF NOT EXISTS idx_pti_parent_norm ON pdf_topic_index(parent_norm);
+            CREATE INDEX IF NOT EXISTS idx_pti_pdf_path ON pdf_topic_index(pdf_path);
         """)
 
         # STAGE 4: Rebuild FTS5 index if csv_questions has data but FTS5 docsize shadow table is empty

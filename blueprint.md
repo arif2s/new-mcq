@@ -52,6 +52,10 @@
 │   ├── lancedb_engine.py              # LanceDB hybrid vector storage and FTS engine for hierarchical document chunks.
 │   ├── tantivy_engine.py              # Low-latency BM25 lexical inverted index builder and depth-scored multi-depth searcher.
 │   ├── layout_profiles.py             # Dynamic profile linkers and heading policies interfacing with parsers.indra.profiles.
+│   ├── heading_toc_calibrator.py      # Shared multi-pass H1-H6 heading hierarchy, 9D visual vectors, and lazy/streaming TOC calibrator.
+│   ├── indra_base_heading_opt.py      # Pure Base Indra OCR preserving Marker/Surya layout & reading order with HSV pill recovery and heading calibration.
+│   ├── docling_v1_heading_opt.py      # Preserves Docling v1 layout, reading order, and TableFormer with multi-pass heading calibration.
+│   ├── pdf_topic_indexer.py           # Full-PDF hierarchical topic indexer (`pdf_topic_index`), sibling-safe page resolver, and pypdfium2 VLM renderer.
 │   ├── docling_parser.py              # Layout-aware PDF textbook section & table extractor using Docling ML / PyMuPDF.
 │   ├── docling_v2_parser.py           # Standalone Docling v2 layout parser with AdaptivePdfLayoutEngine base64/SVG rendering.
 │   ├── docling_v3_parser.py           # Standalone Docling v3 layout engine with dark-pixel de-bleeding & PP-OCR ONNX re-reading.
@@ -166,7 +170,7 @@
 - `agents.tema_q.session_processor`:
   - `process_session_questions(session_id: str, worker: Optional[Any] = None) -> None`
   - `process_session_llm_tasks(session_id: str, worker: Optional[Any] = None) -> None`
-- `agents.tema_q.prompts`: `STOP_TOKENS: list[str]`, `PASS1_CLINICAL_SYSTEM_PROMPT: str`, `PASS2_AUDIT_SYSTEM_PROMPT: str`, `DISTRACTOR_ANALYSIS_PROMPT: str`, `EXPLANATION_GENERATION_PROMPT: str`
+- `agents.tema_q.prompts`: `STOP_TOKENS: list[str]`, `PASS1_CLINICAL_SYSTEM_PROMPT: str`, `PASS2_AUDIT_SYSTEM_PROMPT: str`, `DISTRACTOR_ANALYSIS_PROMPT: str`, `EXPLANATION_GENERATION_PROMPT: str`, `VLM_PAGE_SYNTHESIS_SYSTEM_PROMPT: str`
 
 ### Core Modules (`core/`)
 - `core.database`:
@@ -216,6 +220,19 @@
   - `search_index(query_str: str, limit_per_source: int = 3) -> dict[str, list[dict]]`
 - `parsers.layout_profiles`:
   - Re-exports `LAYOUT_PROFILES`, `LayoutProfile`, `ColumnMode`, `CoordinateZone`, `FurnitureSuppressionPolicy`, `HeadingWeightPolicy`, `PageGeometryPolicy`, and `StrategyKey` from `parsers.indra.profiles`.
+- `parsers.heading_toc_calibrator`:
+  - `build_document_toc_and_hierarchy(file_path: Union[str, Path], root_title: str = "", full_scan: bool = False, progress_callback: Optional[Callable[[int, int], None]] = None) -> Dict[str, Any]`: Multi-pass consensus heading classifier and TOC builder using 7-factor consensus scoring over 9D visual vectors, with bounded disk caching.
+  - `score_and_resolve_heading_candidate(element: Any, profile: LayoutProfile, doc_font_stats: Dict[str, Any], page_no: int, total_pages: int, active_stack: Dict[int, str]) -> Tuple[bool, int, float]`: Evaluates visual typography, geometry, case, styling, and outline prefixes to score heading probability and tier.
+  - `classify_outline_prefix(text: str) -> Tuple[int, str]`: Detects structured prefix patterns (e.g. `1.1.2`, `Chapter 4`, `A.`) mapping to standard heading tiers.
+- `parsers.indra_base_heading_opt`:
+  - `extract_page_with_indra_base_heading_opt(file_path: Union[str, Path], page_number: int = 1, default_title: str = "", full_toc_scan: bool = False, profile_key: str = "textbook", math: bool = False, furniture: bool = False, dpi: int = 200, threads: int = 4) -> Dict[str, Any]`: Preserves 100% of Marker/Surya layout and reading order, adding HSV chromatic pill banner recovery and multi-pass heading calibration.
+- `parsers.docling_v1_heading_opt`:
+  - `extract_page_with_docling_v1_heading_opt(file_path: Union[str, Path], page_number: int = 1, default_title: str = "", full_toc_scan: bool = False) -> Dict[str, Any]`: Preserves Docling v1 layout and TableFormer tables while calibrating H1-H6 heading tiers and breadcrumbs.
+- `parsers.pdf_topic_indexer`:
+  - `ensure_pdf_topic_index_table() -> None`: Initializes the `pdf_topic_index` SQLite table and lookup indices.
+  - `index_pdf_document_topics(file_path: Union[str, Path], root_title: str = "", engine_source: str = "hybrid_toc") -> int`: Full-PDF topic indexer recording section page ranges, parent topics, and normalized keys.
+  - `lookup_pdf_topic_pages(topic: str, pdf_path: Optional[str] = None, exclude_siblings: bool = True) -> List[Dict[str, Any]]`: Sibling-safe topic resolver disambiguating mutual exclusions (e.g. Bronchopneumonia vs Lobar Pneumonia).
+  - `render_topic_pages_to_base64(pdf_path: Union[str, Path], start_page: int, end_page: int, max_pages: int = 3, dpi: int = 150) -> List[str]`: Renders PDF pages directly to base64-encoded PNG images for LM Studio VLM ingestion.
 - `parsers.docling`:
   - Re-exports `AdaptivePdfLayoutEngine`, `clean_pdf_text`, `is_ocr_garbled_text`, `repair_ocr_token_heuristics`, `get_docling_converter`, `serialize_docling_ast`, `VisualPageInspector`, `get_rapidocr_line_engine`, `get_easyocr_line_engine`, `DOCLING_REQUIRED_MODELS`, `is_docling_models_downloaded`, `download_docling_models`, `ensure_offline_mode_if_downloaded`, `rect_area`, `rects_overlap`, `point_in_rect`, and `rgb_distance`.
   - `parsers.docling.models`: `DOCLING_REQUIRED_MODELS: tuple`, `is_docling_models_downloaded() -> bool`, `download_docling_models() -> dict[str, Any]`, `ensure_offline_mode_if_downloaded() -> None`.
@@ -681,6 +698,29 @@ user_annotated_bboxes (
   FOREIGN KEY(file_path) REFERENCES layout_analysis_progress(file_path) ON DELETE CASCADE
 );
 CREATE INDEX idx_annotated_bboxes_page ON user_annotated_bboxes (file_path, page_number);
+
+-- PDF Topic Index (Full-PDF Hierarchical Section & Topic Index)
+pdf_topic_index (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pdf_path TEXT NOT NULL,
+  pdf_title TEXT NOT NULL,
+  engine_source TEXT NOT NULL DEFAULT 'hybrid_toc',
+  heading_level INTEGER NOT NULL,
+  topic_title TEXT NOT NULL,
+  topic_norm TEXT NOT NULL,
+  parent_topic TEXT NOT NULL,
+  parent_norm TEXT NOT NULL,
+  heading_path TEXT NOT NULL,
+  heading_path_norm TEXT NOT NULL,
+  start_page INTEGER NOT NULL,
+  end_page INTEGER NOT NULL,
+  start_y0 REAL NOT NULL DEFAULT 0.0,
+  end_y1 REAL NOT NULL DEFAULT 1.0,
+  updated_at REAL DEFAULT (unixepoch('now'))
+);
+CREATE INDEX idx_pti_topic_norm ON pdf_topic_index(topic_norm);
+CREATE INDEX idx_pti_parent_norm ON pdf_topic_index(parent_norm);
+CREATE INDEX idx_pti_pdf_path ON pdf_topic_index(pdf_path);
 ```
 
 ### LanceDB Index Schema (`parsers/lancedb_engine.py`)
@@ -1097,3 +1137,4 @@ CREATE INDEX idx_annotated_bboxes_page ON user_annotated_bboxes (file_path, page
 27. **Segmented Controls Two-Way Binding & Accessibility Role Contract**: UI segmented button groups (`.segmented-group` and `.segmented-btn`) replacing select dropdowns for frequent actions (source type, layout profile, obsidian click mode, wallpaper timer, database target) MUST retain the underlying `<select>` element in the DOM, synchronize selections bidirectionally between button clicks and `<select>` change events, and declare `role="radiogroup"` on the container and `role="radio"` / `aria-checked` on individual option buttons for full assistive accessibility.
 28. **Indra OCR Achromatic Hue Sentinels & Multi-Line Continuation Integrity**: In `parsers/indra/types.py`, default hue values for `PageElement` and `HeadingPrototype` MUST be initialized to `-1.0` (`fg_hue = -1.0`, `bg_hue = -1.0`) to unambiguously differentiate achromatic elements (pure grays, whites, blacks) from chromatic elements with hue 0.0 (red). In `parsers/indra/strategies.py`, `_merge_wrapped_elements` MUST merge vertical wrapped lines sharing identical column index and visual styles within `v_gap <= 0.038`, specifically exempting parenthetical acronym tails (`(COPD):`) and *Situation headers from being broken into fragmented blocks.
 29. **Theme Contrast & Dark/Light Semantic Palette Variable Isolation**: In `ui/css/main.css`, theme neutrals (`--c-neutral-100` through `--c-neutral-500`), segmented variables (`--segmented-bg`, `--segmented-border`, `--segmented-active-bg`), and code backgrounds (`--code-bg`) MUST be defined across `:root` and `body.dark-theme`, providing contextual overrides on panels and cards for Tailwind dark-mode utilities (`text-gray-*`, `text-slate-*`, `text-white`) to ensure high contrast and WCAG AA readability without altering colored badges or buttons.
+30. **Multi-Pass Heading Calibration & Base Layout Preservation**: The heading calibration engines (`parsers/heading_toc_calibrator.py`, `parsers/indra_base_heading_opt.py`, and `parsers/docling_v1_heading_opt.py`) MUST preserve 100% of the underlying base OCR text extraction, word positions, and reading order (Marker/Surya for Indra, TableFormer for Docling v1), augmenting output strictly with non-destructive H1-H6 heading tier classification and hierarchical breadcrumbs. In `parsers/pdf_topic_indexer.py`, lookups against `pdf_topic_index` MUST enforce sibling mutual exclusion (`SIBLING_MUTUAL_EXCLUSIONS`) to prevent cross-topic pollution (e.g. Bronchopneumonia vs Lobar Pneumonia), and page-to-picture base64 rendering for LM Studio Vision-LM (VLM) synthesis MUST fall back gracefully to structured plain text if VLM execution fails or is unsupported.
