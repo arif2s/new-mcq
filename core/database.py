@@ -388,6 +388,19 @@ def initialize_database() -> None:
                 end_y1 REAL NOT NULL DEFAULT 1.0,
                 updated_at REAL DEFAULT (unixepoch('now'))
             );
+
+            -- 16. Fast Question Metadata & Attempt Tracking
+            CREATE TABLE IF NOT EXISTS question_metadata (
+                question_id TEXT PRIMARY KEY,
+                attempt_count INTEGER DEFAULT 0,
+                wrong_count INTEGER DEFAULT 0,
+                last_is_correct INTEGER DEFAULT 1,
+                last_attempt_ts REAL DEFAULT 0.0,
+                verified_topics_json TEXT DEFAULT '[]',
+                cached_references_json TEXT DEFAULT '{}',
+                cached_llm_summary TEXT DEFAULT '',
+                updated_at REAL DEFAULT (unixepoch('now'))
+            );
         """)
 
         # STAGE 2: Idempotent Column Additions & Schema Migrations (BEFORE Index Creation)
@@ -462,6 +475,18 @@ def initialize_database() -> None:
         ):
             _safe_add_column(conn, "user_annotated_bboxes", col_def)
 
+        for col_def in (
+            "attempt_count INTEGER DEFAULT 0",
+            "wrong_count INTEGER DEFAULT 0",
+            "last_is_correct INTEGER DEFAULT 1",
+            "last_attempt_ts REAL DEFAULT 0.0",
+            "verified_topics_json TEXT DEFAULT '[]'",
+            "cached_references_json TEXT DEFAULT '{}'",
+            "cached_llm_summary TEXT DEFAULT ''",
+            "updated_at REAL DEFAULT (unixepoch('now'))",
+        ):
+            _safe_add_column(conn, "question_metadata", col_def)
+
         _migrate_task_queue_schema(conn)
 
         # STAGE 3: Create All Required Performance & Deduplication Indices
@@ -480,6 +505,9 @@ def initialize_database() -> None:
             CREATE INDEX IF NOT EXISTS idx_pti_topic_norm ON pdf_topic_index(topic_norm);
             CREATE INDEX IF NOT EXISTS idx_pti_parent_norm ON pdf_topic_index(parent_norm);
             CREATE INDEX IF NOT EXISTS idx_pti_pdf_path ON pdf_topic_index(pdf_path);
+            CREATE INDEX IF NOT EXISTS idx_qm_attempt ON question_metadata(attempt_count);
+            CREATE INDEX IF NOT EXISTS idx_qm_wrong ON question_metadata(wrong_count);
+            CREATE INDEX IF NOT EXISTS idx_qm_last_attempt ON question_metadata(last_attempt_ts);
         """)
 
         # STAGE 4: Rebuild FTS5 index if csv_questions has data but FTS5 docsize shadow table is empty
@@ -495,6 +523,124 @@ def initialize_database() -> None:
                 )
         except sqlite3.OperationalError as exc:
             logger.warning("FTS5 synchronization check skipped: %s", exc)
+
+
+def record_question_attempt(
+    conn: sqlite3.Connection,
+    question_id: str | int,
+    is_correct: bool,
+    attempt_ts: float | None = None,
+    verified_topics: list | None = None,
+    cached_refs: dict | None = None,
+    llm_summary: str | None = None,
+) -> None:
+    """Fast indexed upsert into question_metadata for attempt tracking and instant retrieval."""
+    import time
+    import json
+    ts = float(attempt_ts if attempt_ts is not None else time.time())
+    qid_str = str(question_id).strip()
+    if not qid_str:
+        return
+
+    corr_int = 1 if is_correct else 0
+    wrong_inc = 0 if is_correct else 1
+
+    topics_json = json.dumps(verified_topics) if verified_topics is not None else None
+    refs_json = json.dumps(cached_refs) if cached_refs is not None else None
+    summary_txt = str(llm_summary).strip() if llm_summary is not None else None
+
+    conn.execute(
+        """
+        INSERT INTO question_metadata (
+            question_id, attempt_count, wrong_count, last_is_correct, last_attempt_ts,
+            verified_topics_json, cached_references_json, cached_llm_summary, updated_at
+        ) VALUES (
+            ?, 1, ?, ?, ?,
+            COALESCE(?, '[]'), COALESCE(?, '{}'), COALESCE(?, ''), unixepoch('now')
+        )
+        ON CONFLICT(question_id) DO UPDATE SET
+            attempt_count = question_metadata.attempt_count + 1,
+            wrong_count = question_metadata.wrong_count + ?,
+            last_is_correct = excluded.last_is_correct,
+            last_attempt_ts = excluded.last_attempt_ts,
+            verified_topics_json = CASE
+                WHEN ? IS NOT NULL THEN excluded.verified_topics_json
+                ELSE question_metadata.verified_topics_json
+            END,
+            cached_references_json = CASE
+                WHEN ? IS NOT NULL THEN excluded.cached_references_json
+                ELSE question_metadata.cached_references_json
+            END,
+            cached_llm_summary = CASE
+                WHEN ? IS NOT NULL AND ? != '' THEN excluded.cached_llm_summary
+                ELSE question_metadata.cached_llm_summary
+            END,
+            updated_at = unixepoch('now')
+        """,
+        (
+            qid_str,
+            wrong_inc,
+            corr_int,
+            ts,
+            topics_json,
+            refs_json,
+            summary_txt,
+            wrong_inc,
+            topics_json,
+            refs_json,
+            summary_txt,
+            summary_txt or "",
+        ),
+    )
+
+
+def update_question_verified_topics(
+    conn: sqlite3.Connection,
+    question_id: str | int,
+    verified_topics: list,
+    cached_refs: dict | None = None,
+    llm_summary: str | None = None,
+) -> None:
+    """Updates or initializes verified topics and cached metadata for a question in question_metadata."""
+    import json
+    qid_str = str(question_id).strip()
+    if not qid_str:
+        return
+    topics_json = json.dumps(verified_topics or [])
+    refs_json = json.dumps(cached_refs) if cached_refs is not None else None
+    summary_txt = str(llm_summary).strip() if llm_summary is not None else None
+
+    conn.execute(
+        """
+        INSERT INTO question_metadata (
+            question_id, attempt_count, wrong_count, last_is_correct, last_attempt_ts,
+            verified_topics_json, cached_references_json, cached_llm_summary, updated_at
+        ) VALUES (
+            ?, 0, 0, 1, 0.0,
+            ?, COALESCE(?, '{}'), COALESCE(?, ''), unixepoch('now')
+        )
+        ON CONFLICT(question_id) DO UPDATE SET
+            verified_topics_json = excluded.verified_topics_json,
+            cached_references_json = CASE
+                WHEN ? IS NOT NULL THEN excluded.cached_references_json
+                ELSE question_metadata.cached_references_json
+            END,
+            cached_llm_summary = CASE
+                WHEN ? IS NOT NULL AND ? != '' THEN excluded.cached_llm_summary
+                ELSE question_metadata.cached_llm_summary
+            END,
+            updated_at = unixepoch('now')
+        """,
+        (
+            qid_str,
+            topics_json,
+            refs_json,
+            summary_txt,
+            refs_json,
+            summary_txt,
+            summary_txt or "",
+        ),
+    )
 
 
 def upsert_layout_analysis_progress(

@@ -36,10 +36,12 @@ W = (
     0.56995,
     2.85535,
 )
-REQUESTED_RETENTION: float = 0.9
+DEFAULT_REQUESTED_RETENTION: float = 0.9
+DEFAULT_MAX_INTERVAL_DAYS: int = 365
+REQUESTED_RETENTION: float = DEFAULT_REQUESTED_RETENTION
 
 # Precomputed decay factor: at t = S, R = (1 + FACTOR)^(-0.5) = 0.9 => FACTOR = (0.9^-2 - 1) = 19/81
-_FACTOR_FORGETTING: float = (REQUESTED_RETENTION ** -2.0) - 1.0
+_FACTOR_FORGETTING: float = (DEFAULT_REQUESTED_RETENTION ** -2.0) - 1.0
 _INTERVAL_SCALER: float = (
     (REQUESTED_RETENTION ** -2.0) - 1.0
 ) / _FACTOR_FORGETTING  # Exactly 1.0 at R=0.9
@@ -93,6 +95,38 @@ def map_fsrs_state_to_status(
     return "review"
 
 
+def get_fsrs_parameters() -> Dict[str, Any]:
+    """Reads user-configured FSRS parameters from SQLite user_state with safe defaults."""
+    from core.database import get_db_connection
+    retention = DEFAULT_REQUESTED_RETENTION
+    max_interval = DEFAULT_MAX_INTERVAL_DAYS
+    easy_bonus = 1.3
+    hard_factor = 0.8
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM user_state WHERE key = 'spaced_repetition_config'")
+            row = cursor.fetchone()
+            if row and row["value"]:
+                import json
+                cfg = json.loads(row["value"]) if isinstance(row["value"], str) else row["value"]
+                if isinstance(cfg, dict):
+                    retention = float(cfg.get("requested_retention", retention))
+                    max_interval = int(cfg.get("max_interval_days", max_interval))
+                    easy_bonus = float(cfg.get("easy_bonus", easy_bonus))
+                    hard_factor = float(cfg.get("hard_factor", hard_factor))
+    except Exception:
+        pass
+    retention = max(0.70, min(0.99, retention))
+    max_interval = max(1, min(3650, max_interval))
+    return {
+        "requested_retention": retention,
+        "max_interval_days": max_interval,
+        "easy_bonus": easy_bonus,
+        "hard_factor": hard_factor,
+    }
+
+
 def calculate_fsrs_next_interval(
     rating: int,
     state: int,
@@ -101,6 +135,8 @@ def calculate_fsrs_next_interval(
     reps: int,
     lapses: int,
     now: Optional[float] = None,
+    requested_retention: Optional[float] = None,
+    max_interval_days: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Computes updated FSRS v4.5 metrics adhering to the Section 3 & Section 4 FSRS Stats Dict contract.
@@ -167,13 +203,28 @@ def calculate_fsrs_next_interval(
             next_state = 2  # Review
             next_lapses = curr_lapses
 
-    # Compute interval in days and seconds (I = S * 1.0 at 90% retention)
+    # Resolve user-tweaked FSRS parameters
+    params = get_fsrs_parameters()
+    target_r = float(requested_retention if requested_retention is not None else params["requested_retention"])
+    target_r = max(0.70, min(0.99, target_r))
+    max_days = int(max_interval_days if max_interval_days is not None else params["max_interval_days"])
+
+    # Decay factor formula: I = S * (R^(-1/decay) - 1) / (0.9^(-1/decay) - 1) with standard power -2.0
+    factor_r = (target_r ** -2.0) - 1.0
+    scaler = factor_r / _FACTOR_FORGETTING
+
+    # Compute interval in days and seconds
     # When grade == 1 (Again), card enters learning/relearning and is due immediately (or next set)
     if grade == 1:
         interval_days = 0
         interval_seconds = 0
     else:
-        interval_days = max(1, round(next_s * _INTERVAL_SCALER))
+        raw_interval = next_s * scaler
+        if grade == 4:
+            raw_interval *= float(params.get("easy_bonus", 1.3))
+        elif grade == 2:
+            raw_interval *= float(params.get("hard_factor", 0.8))
+        interval_days = max(1, min(max_days, round(raw_interval)))
         interval_seconds = int(interval_days * 86400)
     new_reps = curr_reps + 1
 

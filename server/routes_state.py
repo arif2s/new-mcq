@@ -62,6 +62,8 @@ _KNOWN_APP_PERSISTENCE_FIELDS = {
     "processingQueueHardLimit",
     "sidebarCollapsed",
     "inspectorOpen",
+    "auto_remove_completed_sets",
+    "autoRemoveCompletedSets",
 }
 
 

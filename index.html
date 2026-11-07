@@ -1200,6 +1200,92 @@
                 </div>
               </div>
 
+              <!-- Spaced Repetition (FSRS) Fine-Tuning -->
+              <div class="glass-card p-5 rounded-2xl space-y-4">
+                <div class="flex items-center justify-between border-b border-gray-700/50 pb-3">
+                  <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-sm border border-indigo-500/30">
+                      🧠
+                    </div>
+                    <div>
+                      <h3 class="font-semibold text-sm text-neutral-100">Spaced Repetition &amp; FSRS Tuning</h3>
+                      <p class="text-xs text-neutral-400">Fine-tune retention target, maximum review intervals, and recall spacing</p>
+                    </div>
+                  </div>
+                  <button type="button" id="btn-save-sr-config" class="text-xs px-3 py-1.5 rounded-lg secondary-btn font-semibold transition-colors flex items-center gap-1.5 cursor-pointer">
+                    💾 Save FSRS
+                  </button>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div class="form-group">
+                    <div class="flex justify-between items-center mb-1">
+                      <label for="setting-sr-retention" class="text-xs text-neutral-300 mb-0">Target Retention Rate:</label>
+                      <span id="setting-sr-retention-val" class="text-xs font-mono font-bold text-brand-400">90%</span>
+                    </div>
+                    <input type="range" id="setting-sr-retention" min="0.75" max="0.97" step="0.01" value="0.90" class="w-full accent-brand-500" />
+                    <span class="text-[10px] text-muted block mt-0.5">Higher retention gives shorter intervals and more frequent reviews.</span>
+                  </div>
+
+                  <div class="form-group">
+                    <div class="flex justify-between items-center mb-1">
+                      <label for="setting-sr-max-interval" class="text-xs text-neutral-300 mb-0">Maximum Interval (Days):</label>
+                      <span id="setting-sr-max-interval-val" class="text-xs font-mono font-bold text-brand-400">365d</span>
+                    </div>
+                    <input type="number" id="setting-sr-max-interval" min="7" max="1825" value="365" class="glass-input text-xs w-full py-1.5 px-3 rounded-lg" />
+                    <span class="text-[10px] text-muted block mt-0.5">Cap on maximum days before a mastered question is reviewed.</span>
+                  </div>
+                </div>
+
+                <div class="pt-2 border-t border-gray-700/40">
+                  <label class="flex items-center gap-2 cursor-pointer text-xs text-neutral-300">
+                    <input type="checkbox" id="setting-auto-remove-completed" class="w-4 h-4 rounded glass-input text-brand-500 accent-brand-500">
+                    <span>Automatically remove question sets from Knowledge Hub once fully revised/completed</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Knowledge Sync & Batch Updates for Verified Topics -->
+              <div class="glass-card p-5 rounded-2xl space-y-4">
+                <div class="flex items-center justify-between border-b border-gray-700/50 pb-3">
+                  <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-sm border border-emerald-500/30">
+                      📚
+                    </div>
+                    <div>
+                      <h3 class="font-semibold text-sm text-neutral-100">Knowledge Sync &amp; Verified Topic Updates</h3>
+                      <p class="text-xs text-neutral-400">Update reference links and LM Studio summaries when new books, PDFs, or Obsidian notes are added</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div class="p-3.5 rounded-xl glass-panel border border-gray-700/50 flex flex-col justify-between space-y-3">
+                    <div>
+                      <h4 class="text-xs font-bold text-neutral-200 mb-1 flex items-center gap-1.5">
+                        <span>🔗</span> Update References for Verified Topics
+                      </h4>
+                      <p class="text-[11px] text-neutral-400">Re-scans newly added Obsidian notes and PDF vault books to link relevant sections and chapters for all verified MCQ topics.</p>
+                    </div>
+                    <button type="button" id="btn-update-all-refs" class="w-full text-xs px-3.5 py-2 rounded-lg font-semibold bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/30 transition-colors flex items-center justify-center gap-1.5 cursor-pointer">
+                      <span>🔄</span> Update Reference List
+                    </button>
+                  </div>
+
+                  <div class="p-3.5 rounded-xl glass-panel border border-gray-700/50 flex flex-col justify-between space-y-3">
+                    <div>
+                      <h4 class="text-xs font-bold text-neutral-200 mb-1 flex items-center gap-1.5">
+                        <span>🤖</span> Generate / Update LM Studio Summaries
+                      </h4>
+                      <p class="text-[11px] text-neutral-400">Enqueues local LLM synthesis tasks to create comprehensive high-yield summaries for all verified MCQ topics lacking notes.</p>
+                    </div>
+                    <button type="button" id="btn-update-all-summaries" class="w-full text-xs px-3.5 py-2 rounded-lg font-semibold bg-brand-600/30 hover:bg-brand-600/50 text-brand-300 border border-brand-500/30 transition-colors flex items-center justify-center gap-1.5 cursor-pointer">
+                      <span>⚡</span> Update LM Studio Summaries
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <!-- Appearance, Glassmorphic Opacities & Wallpaper Rotation -->
               <div class="glass-card p-5 rounded-2xl space-y-4">
                 <h3 class="font-semibold text-sm text-neutral-100 flex items-center gap-2 border-b border-gray-700/50 pb-3">

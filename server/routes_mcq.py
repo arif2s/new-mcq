@@ -720,3 +720,133 @@ def batch_generate_explanations(payload: BatchTopicRequest) -> Dict[str, Any]:
         "skipped": skipped,
         "count": len(queued),
     }
+
+
+class SpacedRepetitionConfigRequest(BaseModel):
+    requested_retention: Optional[float] = 0.90
+    max_interval_days: Optional[int] = 365
+    easy_bonus: Optional[float] = 1.3
+    hard_factor: Optional[float] = 0.8
+
+
+@router.get("/spaced_repetition_config")
+def get_spaced_repetition_config() -> Dict[str, Any]:
+    from core.scheduler import get_fsrs_parameters
+    return {"status": "success", "config": get_fsrs_parameters()}
+
+
+@router.post("/spaced_repetition_config")
+def set_spaced_repetition_config(req: SpacedRepetitionConfigRequest) -> Dict[str, Any]:
+    import json
+    retention = max(0.70, min(0.99, float(req.requested_retention or 0.90)))
+    max_interval = max(1, min(3650, int(req.max_interval_days or 365)))
+    easy_b = max(1.0, min(3.0, float(req.easy_bonus or 1.3)))
+    hard_f = max(0.2, min(1.0, float(req.hard_factor or 0.8)))
+
+    cfg_dict = {
+        "requested_retention": retention,
+        "max_interval_days": max_interval,
+        "easy_bonus": easy_b,
+        "hard_factor": hard_f,
+    }
+
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO user_state (key, value, updated_at)
+            VALUES ('spaced_repetition_config', ?, unixepoch('now'))
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            """,
+            (json.dumps(cfg_dict),),
+        )
+        conn.commit()
+
+    return {"status": "success", "config": cfg_dict}
+
+
+@router.post("/batch_update_all_references")
+def batch_update_all_verified_references() -> Dict[str, Any]:
+    """
+    Finds all distinct verified topics across question_metadata, extracted_topics,
+    and session_questions, and updates reference links for new/updated books or notes.
+    """
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        all_topics: Set[str] = set()
+
+        # 1. From extracted_topics
+        cursor.execute("SELECT DISTINCT topic_name FROM extracted_topics WHERE verified = 1 OR selected = 1")
+        for r in cursor.fetchall():
+            t = (r["topic_name"] or "").strip()
+            if t and t != "General Medical Concept":
+                all_topics.add(t)
+
+        # 2. From question_metadata
+        cursor.execute("SELECT verified_topics_json FROM question_metadata WHERE verified_topics_json IS NOT NULL")
+        for r in cursor.fetchall():
+            try:
+                top_list = json.loads(r["verified_topics_json"])
+                for item in top_list:
+                    name = item.get("name") if isinstance(item, dict) else str(item)
+                    name = (name or "").strip()
+                    if name and name != "General Medical Concept":
+                        all_topics.add(name)
+            except Exception:
+                pass
+
+        # 3. From session_questions
+        cursor.execute("SELECT DISTINCT topic FROM session_questions WHERE topic IS NOT NULL AND topic != '' AND topic != 'General' AND topic != 'General Medical Concept'")
+        for r in cursor.fetchall():
+            all_topics.add(r["topic"].strip())
+
+    topics_list = list(all_topics)
+    if not topics_list:
+        return {"status": "success", "message": "No verified topics found to update", "count": 0, "processed": []}
+
+    req = BatchTopicRequest(topics=topics_list, mode="all")
+    res = batch_generate_references(req)
+    return {"status": "success", "count": res.get("count", 0), "processed": res.get("processed", [])}
+
+
+@router.post("/batch_update_all_summaries")
+def batch_update_all_verified_summaries() -> Dict[str, Any]:
+    """
+    Finds all distinct verified topics across question_metadata, extracted_topics,
+    and session_questions, and enqueues LM Studio synthesis tasks to generate/update summaries.
+    """
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        all_topics: Set[str] = set()
+
+        cursor.execute("SELECT DISTINCT topic_name FROM extracted_topics WHERE verified = 1 OR selected = 1")
+        for r in cursor.fetchall():
+            t = (r["topic_name"] or "").strip()
+            if t and t != "General Medical Concept":
+                all_topics.add(t)
+
+        cursor.execute("SELECT verified_topics_json FROM question_metadata WHERE verified_topics_json IS NOT NULL")
+        for r in cursor.fetchall():
+            try:
+                top_list = json.loads(r["verified_topics_json"])
+                for item in top_list:
+                    name = item.get("name") if isinstance(item, dict) else str(item)
+                    name = (name or "").strip()
+                    if name and name != "General Medical Concept":
+                        all_topics.add(name)
+            except Exception:
+                pass
+
+        cursor.execute("SELECT DISTINCT topic FROM session_questions WHERE topic IS NOT NULL AND topic != '' AND topic != 'General' AND topic != 'General Medical Concept'")
+        for r in cursor.fetchall():
+            all_topics.add(r["topic"].strip())
+
+    topics_list = list(all_topics)
+    if not topics_list:
+        return {"status": "success", "message": "No verified topics found to synthesize", "count": 0, "queued": []}
+
+    req = BatchTopicRequest(topics=topics_list, mode="missing")
+    res = batch_generate_explanations(req)
+    return {"status": "success", "count": res.get("count", 0), "queued": res.get("queued", [])}

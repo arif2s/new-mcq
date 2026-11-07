@@ -117,11 +117,52 @@
       wpTimerSelect.value = String(val);
       syncWpButtons(val);
     }
+
+    const autoRemoveCb = $("setting-auto-remove-completed");
+    if (autoRemoveCb) {
+      autoRemoveCb.checked = Boolean(state.auto_remove_completed_sets || state.autoRemoveCompletedSets);
+    }
+
+    // Load Spaced Repetition FSRS Config from server
+    fetch('/api/mcq/spaced_repetition_config')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && data.config) {
+          const cfg = data.config;
+          const retSlider = $("setting-sr-retention");
+          const retVal = $("setting-sr-retention-val");
+          if (retSlider && cfg.requested_retention !== undefined) {
+            retSlider.value = cfg.requested_retention;
+            if (retVal) retVal.textContent = Math.round(cfg.requested_retention * 100) + "%";
+          }
+          const maxIntInput = $("setting-sr-max-interval");
+          const maxIntVal = $("setting-sr-max-interval-val");
+          if (maxIntInput && cfg.max_interval_days !== undefined) {
+            maxIntInput.value = cfg.max_interval_days;
+            if (maxIntVal) maxIntVal.textContent = cfg.max_interval_days + "d";
+          }
+        }
+      })
+      .catch((e) => console.error("Error loading FSRS config:", e));
   }
 
   function bindGeneralSettingsEvents() {
     if (_eventsBound) return;
     _eventsBound = true;
+
+    // Auto-remove completed sets toggle
+    const autoRemoveCb = $("setting-auto-remove-completed");
+    if (autoRemoveCb) {
+      autoRemoveCb.addEventListener("change", (e) => {
+        const val = Boolean(e.target.checked);
+        if (window.AppState && window.AppState.update) {
+          window.AppState.update({
+            auto_remove_completed_sets: val,
+            autoRemoveCompletedSets: val,
+          });
+        }
+      });
+    }
 
     // LLM Synthesis Toggle
     const llmToggle = $("setting-llm-enabled");
@@ -296,6 +337,100 @@
       btnRotateWp.addEventListener("click", () => {
         if (window.changeWallpaperNow) {
           window.changeWallpaperNow();
+        }
+      });
+    }
+
+    // Spaced Repetition FSRS Controls
+    const retSlider = $("setting-sr-retention");
+    const retVal = $("setting-sr-retention-val");
+    if (retSlider) {
+      retSlider.addEventListener("input", (e) => {
+        const val = parseFloat(e.target.value);
+        if (retVal) retVal.textContent = Math.round(val * 100) + "%";
+      });
+    }
+    const maxIntInput = $("setting-sr-max-interval");
+    const maxIntVal = $("setting-sr-max-interval-val");
+    if (maxIntInput) {
+      maxIntInput.addEventListener("input", (e) => {
+        if (maxIntVal) maxIntVal.textContent = e.target.value + "d";
+      });
+    }
+
+    const btnSaveSr = $("btn-save-sr-config");
+    if (btnSaveSr) {
+      btnSaveSr.addEventListener("click", async () => {
+        const retention = parseFloat(retSlider?.value || 0.90);
+        const maxInterval = parseInt(maxIntInput?.value || 365, 10);
+        btnSaveSr.disabled = true;
+        btnSaveSr.textContent = "Saving...";
+        try {
+          const res = await fetch('/api/mcq/spaced_repetition_config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              requested_retention: retention,
+              max_interval_days: maxInterval,
+            }),
+          });
+          if (res.ok) {
+            if (window.showToast) window.showToast("Spaced repetition FSRS settings saved!");
+          }
+        } catch (e) {
+          console.error("Failed to save FSRS config:", e);
+        } finally {
+          btnSaveSr.disabled = false;
+          btnSaveSr.textContent = "💾 Save FSRS";
+        }
+      });
+    }
+
+    // Individual Batch Update Buttons for References and LM Studio Summaries
+    const btnUpdateRefs = $("btn-update-all-refs");
+    if (btnUpdateRefs) {
+      btnUpdateRefs.addEventListener("click", async () => {
+        btnUpdateRefs.disabled = true;
+        const originalHtml = btnUpdateRefs.innerHTML;
+        btnUpdateRefs.innerHTML = `<span>⏳</span> Updating References...`;
+        if (window.showToast) window.showToast("Updating reference links for all verified topics...");
+        try {
+          const res = await fetch('/api/mcq/batch_update_all_references', { method: 'POST' });
+          if (res.ok) {
+            const data = await res.json();
+            if (window.showToast) window.showToast(`Updated references for ${data.count || 0} topic(s)!`);
+          } else {
+            if (window.showToast) window.showToast("Failed to update references.");
+          }
+        } catch (e) {
+          console.error("Error updating references:", e);
+        } finally {
+          btnUpdateRefs.disabled = false;
+          btnUpdateRefs.innerHTML = originalHtml;
+        }
+      });
+    }
+
+    const btnUpdateSummaries = $("btn-update-all-summaries");
+    if (btnUpdateSummaries) {
+      btnUpdateSummaries.addEventListener("click", async () => {
+        btnUpdateSummaries.disabled = true;
+        const originalHtml = btnUpdateSummaries.innerHTML;
+        btnUpdateSummaries.innerHTML = `<span>⏳</span> Queuing Summaries...`;
+        if (window.showToast) window.showToast("Queuing LM Studio synthesis for verified topics...");
+        try {
+          const res = await fetch('/api/mcq/batch_update_all_summaries', { method: 'POST' });
+          if (res.ok) {
+            const data = await res.json();
+            if (window.showToast) window.showToast(`Enqueued ${data.count || 0} LM Studio summary task(s)!`);
+          } else {
+            if (window.showToast) window.showToast("Failed to queue LM Studio summaries.");
+          }
+        } catch (e) {
+          console.error("Error queueing summaries:", e);
+        } finally {
+          btnUpdateSummaries.disabled = false;
+          btnUpdateSummaries.innerHTML = originalHtml;
         }
       });
     }

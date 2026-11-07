@@ -663,50 +663,111 @@ def save_session(session: SessionCreate) -> Dict[str, Any]:
                 question_params,
             )
 
-        # Ensure any wrong/correct answers recorded in session_questions also reflect in csv_questions
-        # if not already scored via /api/mcq/score, and immediately sync the consolidated Hub review set.
-        if session.answers and sid != CONSOLIDATED_REVIEWS_SESSION_ID:
-            now_epoch = time.time()
+        # Record attempts and outcomes in question_metadata, and update spaced repetition states
+        from core.database import record_question_attempt, update_question_verified_topics
+        from core.scheduler import calculate_fsrs_next_interval
+        now_epoch = time.time()
+
+        if session.answers:
             for ans in session.answers:
                 qid = _extract_answer_id(ans)
                 sel = _extract_answer_selected(ans)
                 if not qid or not sel:
                     continue
                 is_corr = _extract_answer_is_correct(ans)
-                if not is_corr:
+                ans_ts = getattr(ans, "timestamp", None) or now_epoch
+                record_question_attempt(
+                    conn=conn,
+                    question_id=qid,
+                    is_correct=is_corr,
+                    attempt_ts=ans_ts,
+                )
+
+                # Fetch current question card to apply precise FSRS spaced repetition rules
+                cursor.execute(
+                    "SELECT state, difficulty, stability, reps, lapses FROM csv_questions WHERE id = ?",
+                    (str(qid),),
+                )
+                card_row = cursor.fetchone()
+                if card_row:
+                    rating = 3 if is_corr else 1
+                    new_fsrs = calculate_fsrs_next_interval(
+                        rating=rating,
+                        state=int(card_row["state"] or 0),
+                        difficulty=float(card_row["difficulty"] or 0.0),
+                        stability=float(card_row["stability"] or 0.0),
+                        reps=int(card_row["reps"] or 0),
+                        lapses=int(card_row["lapses"] or 0),
+                        now=now_epoch,
+                    )
                     cursor.execute(
                         """
                         UPDATE csv_questions
-                        SET state = CASE WHEN COALESCE(reps, 0) > 0 THEN 3 ELSE 1 END,
-                            lapses = COALESCE(lapses, 0) + 1,
-                            reps = COALESCE(reps, 0) + 1,
-                            last_review = ?,
-                            due_timestamp = ?
-                        WHERE id = ? AND (last_review IS NULL OR last_review < ? - 5)
+                        SET state = ?, difficulty = ?, stability = ?, reps = ?, lapses = ?,
+                            last_review = ?, due_timestamp = ?
+                        WHERE id = ?
                         """,
-                        (now_epoch, now_epoch, qid, now_epoch),
+                        (
+                            int(new_fsrs["state"]),
+                            float(new_fsrs["difficulty"]),
+                            float(new_fsrs["stability"]),
+                            int(new_fsrs["reps"]),
+                            int(new_fsrs["lapses"]),
+                            now_epoch,
+                            float(new_fsrs["due_timestamp"]),
+                            str(qid),
+                        ),
                     )
-        elif session.answers and sid == CONSOLIDATED_REVIEWS_SESSION_ID:
-            # When reviewing inside the consolidated due set, mark correctly answered items as reviewed
-            now_epoch = time.time()
-            for ans in session.answers:
-                qid = _extract_answer_id(ans)
-                sel = _extract_answer_selected(ans)
-                if not qid or not sel:
-                    continue
-                if _extract_answer_is_correct(ans):
+                else:
                     cursor.execute(
-                        """
-                        UPDATE csv_questions
-                        SET state = 2,
-                            reps = COALESCE(reps, 0) + 1,
-                            stability = CASE WHEN COALESCE(stability, 0) < 1.0 THEN 3.0 ELSE stability * 1.5 END,
-                            last_review = ?,
-                            due_timestamp = ?
-                        WHERE id = ? AND (due_timestamp <= ? OR COALESCE(state, 0) IN (1, 3))
-                        """,
-                        (now_epoch, now_epoch + 86400 * 3, qid, now_epoch),
+                        "SELECT state, difficulty, stability, reps, lapses FROM mcq_bank WHERE id = ?",
+                        (str(qid),),
                     )
+                    mcq_row = cursor.fetchone()
+                    if mcq_row:
+                        rating = 3 if is_corr else 1
+                        new_fsrs = calculate_fsrs_next_interval(
+                            rating=rating,
+                            state=int(mcq_row["state"] or 0),
+                            difficulty=float(mcq_row["difficulty"] or 0.0),
+                            stability=float(mcq_row["stability"] or 0.0),
+                            reps=int(mcq_row["reps"] or 0),
+                            lapses=int(mcq_row["lapses"] or 0),
+                            now=now_epoch,
+                        )
+                        cursor.execute(
+                            """
+                            UPDATE mcq_bank
+                            SET state = ?, difficulty = ?, stability = ?, reps = ?, lapses = ?,
+                                last_review = ?, due_timestamp = ?
+                            WHERE id = ?
+                            """,
+                            (
+                                int(new_fsrs["state"]),
+                                float(new_fsrs["difficulty"]),
+                                float(new_fsrs["stability"]),
+                                int(new_fsrs["reps"]),
+                                int(new_fsrs["lapses"]),
+                                now_epoch,
+                                float(new_fsrs["due_timestamp"]),
+                                int(qid) if str(qid).isdigit() else str(qid),
+                            ),
+                        )
+
+        # Update verified topics in question_metadata for each question if available
+        if normalized_topics and session.questions:
+            verified_names = [
+                t["name"] for t in normalized_topics if t.get("verified") and t.get("name")
+            ]
+            if verified_names:
+                for q in session.questions:
+                    qid = str(q.get("id") or q.get("question_id") or "")
+                    if qid:
+                        update_question_verified_topics(
+                            conn=conn,
+                            question_id=qid,
+                            verified_topics=verified_names,
+                        )
 
         if topics_reviewed and (not existing or existing["refs_status"] == "none"):
             _enqueue_session_processing(conn, sid)
@@ -1070,23 +1131,25 @@ WRONG_ANSWER_COOLDOWN_SECONDS = 0
 _DUE_OR_WRONG_CSV_WHERE = """
 (
     (q.due_timestamp > 0 AND q.due_timestamp <= unixepoch('now'))
-    OR (q.last_review IS NOT NULL AND q.due_timestamp <= unixepoch('now'))
-    OR (COALESCE(q.state, 0) IN (1, 3))
-    OR EXISTS (
-        SELECT 1 FROM session_questions sq
-        WHERE sq.question_id = q.id
-          AND sq.session_id != 'sess_spaced_repetition_due'
-          AND sq.selected_option IS NOT NULL
-          AND TRIM(sq.selected_option) != ''
-          AND sq.is_correct = 0
-          AND (q.last_review IS NULL OR COALESCE(q.state, 0) IN (0, 1, 3) OR q.due_timestamp <= unixepoch('now'))
-          AND sq.rowid = (
-              SELECT MAX(sq2.rowid) FROM session_questions sq2
-              WHERE sq2.question_id = q.id
-                AND sq2.session_id != 'sess_spaced_repetition_due'
-                AND sq2.selected_option IS NOT NULL
-                AND TRIM(sq2.selected_option) != ''
-          )
+    OR (q.last_review IS NOT NULL AND (q.due_timestamp IS NULL OR q.due_timestamp <= unixepoch('now')))
+    OR (COALESCE(q.state, 0) IN (1, 3) AND (q.due_timestamp IS NULL OR q.due_timestamp <= unixepoch('now')))
+    OR (
+        COALESCE(q.due_timestamp, 0) <= unixepoch('now')
+        AND EXISTS (
+            SELECT 1 FROM session_questions sq
+            WHERE sq.question_id = q.id
+              AND sq.session_id != 'sess_spaced_repetition_due'
+              AND sq.selected_option IS NOT NULL
+              AND TRIM(sq.selected_option) != ''
+              AND sq.is_correct = 0
+              AND sq.rowid = (
+                  SELECT MAX(sq2.rowid) FROM session_questions sq2
+                  WHERE sq2.question_id = q.id
+                    AND sq2.session_id != 'sess_spaced_repetition_due'
+                    AND sq2.selected_option IS NOT NULL
+                    AND TRIM(sq2.selected_option) != ''
+              )
+        )
     )
 )
 """
@@ -1094,8 +1157,8 @@ _DUE_OR_WRONG_CSV_WHERE = """
 _DUE_OR_WRONG_MCQ_WHERE = """
 (
     (due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
-    OR (last_review IS NOT NULL AND due_timestamp <= unixepoch('now'))
-    OR (COALESCE(state, 0) IN (1, 3))
+    OR (last_review IS NOT NULL AND (due_timestamp IS NULL OR due_timestamp <= unixepoch('now')))
+    OR (COALESCE(state, 0) IN (1, 3) AND (due_timestamp IS NULL OR due_timestamp <= unixepoch('now')))
 )
 """
 
@@ -1682,16 +1745,40 @@ def get_session_history() -> List[Dict[str, Any]]:
             all_sids = [s["id"] for s in sessions]
             queue_info_map = _batch_compute_session_queue_info(conn, all_sids)
 
+            # Check if user enabled auto-removal of fully completed sets
+            auto_remove_completed = False
+            try:
+                cursor.execute("SELECT value FROM user_state WHERE key = 'app_persistence'")
+                row_pers = cursor.fetchone()
+                if row_pers and row_pers["value"]:
+                    pers = json.loads(row_pers["value"]) if isinstance(row_pers["value"], str) else row_pers["value"]
+                    if isinstance(pers, dict):
+                        auto_remove_completed = bool(pers.get("auto_remove_completed_sets", False))
+            except Exception:
+                pass
+
+            completed_sids_to_clean: List[str] = []
+            filtered_sessions: List[Dict[str, Any]] = []
+
             for s in sessions:
                 sid = s["id"]
                 c_info = counts_by_sid.get(sid)
-                s["completed_questions"] = (
+                answered_count = (
                     int(c_info["answered_q"] or 0)
                     if c_info
                     else (s["correct_answers"] + s["wrong_answers"])
                 )
+                s["completed_questions"] = answered_count
                 if not s["total_questions"] and c_info:
                     s["total_questions"] = int(c_info["total_q"] or 0)
+
+                total_q = int(s["total_questions"] or 0)
+                is_comp = bool(s.get("is_completed")) or (total_q > 0 and answered_count >= total_q)
+
+                # If auto_remove_completed is true and full questions in set are revised/completed, clean up
+                if auto_remove_completed and is_comp and sid != CONSOLIDATED_REVIEWS_SESSION_ID:
+                    completed_sids_to_clean.append(sid)
+                    continue
 
                 s["custom_title"] = (
                     s.get("custom_title") or s.get("subject_name") or "Study Set"
@@ -1717,6 +1804,16 @@ def get_session_history() -> List[Dict[str, Any]]:
                     selected_names if selected_names else q_topics_by_sid.get(sid, [])
                 )
                 s["queue_info"] = queue_info_map.get(sid, {})
+                filtered_sessions.append(s)
+
+            if completed_sids_to_clean:
+                placeholders = ",".join("?" for _ in completed_sids_to_clean)
+                cursor.execute(f"DELETE FROM task_queue WHERE session_id IN ({placeholders})", completed_sids_to_clean)
+                cursor.execute(f"DELETE FROM session_questions WHERE session_id IN ({placeholders})", completed_sids_to_clean)
+                cursor.execute(f"DELETE FROM quiz_sessions WHERE id IN ({placeholders})", completed_sids_to_clean)
+                conn.commit()
+
+            return filtered_sessions
 
         return sessions
 
