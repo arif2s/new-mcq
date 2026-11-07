@@ -1,20 +1,48 @@
-node_modules
-dist
-.env
-.DS_Store
-*.log
-*.tmp
-/home/jules/verification
+# Python bytecode & caches
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
 .Python
-env/
-venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
 .venv/
-data/*.db
-data/*.db-shm
-data/*.db-wal
-data/
-storage/
+venv/
+env/
+ENV/
+
+# Runtime logs & OS artifacts
+*.log
+uvicorn*.log
+npm_output.log
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Tantivy & Vector Search Indices / Lockfiles
+data/index/*
+!data/index/.gitkeep
+*.lock
+.tantivy-*
+data/lancedb/
+storage/lancedb/
+
+# Generated HTML Reports & SQLite Databases
+storage/reports/*.html
+!storage/reports/.gitkeep
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# Environment & local secrets
+.env
+.env.local
+*.bak
+*.tmp

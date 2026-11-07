@@ -21,6 +21,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 from jinja2 import BaseLoader, Environment
 
 from config import REPORTS_DIR
+from core.topic_filter import is_valid_topic
 
 logger = logging.getLogger(__name__)
 
@@ -450,12 +451,15 @@ def generate_topic_report(
     topic: str,
     search_results: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
     synthesis_output: Optional[Dict[str, Any]] = None,
-) -> str:
+) -> Optional[str]:
     """
     Compiles a structured HTML dossier for a clinical topic and writes it atomically to disk.
     Conforms strictly to SynthesisOutputDict, ChunkDict, and Invariant 13.
-    Returns the resolved absolute path to the generated HTML dossier.
+    Returns the resolved absolute path to the generated HTML dossier, or None if topic is invalid.
     """
+    if not is_valid_topic(topic):
+        return None
+
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     synth = synthesis_output if isinstance(synthesis_output, dict) else {}
 

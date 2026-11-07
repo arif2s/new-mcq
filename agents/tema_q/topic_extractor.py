@@ -66,6 +66,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Database Connection Isolation (Contract-Guarded)
 # ---------------------------------------------------------------------------
+from core.topic_filter import filter_topics
+
 try:
     from core.database import get_db_connection
 except ImportError:
@@ -1918,12 +1920,19 @@ def extract_topics_local(
     if not main_topic and sorted_clusters:
         main_topic = sorted_clusters[0]["name"]
 
+    raw_all_topics = [item["name"] for item in sorted_clusters]
+    filtered_all_topics = filter_topics(raw_all_topics)
+    filtered_set = {t.strip().lower() for t in filtered_all_topics}
+
+    if main_topic and main_topic.strip().lower() not in filtered_set:
+        main_topic = filtered_all_topics[0] if filtered_all_topics else ""
+
     topic_details: List[Dict[str, Any]] = []
-    all_topics: List[str] = []
 
     for item in sorted_clusters:
         t_name = item["name"]
-        all_topics.append(t_name)
+        if t_name.strip().lower() not in filtered_set:
+            continue
         is_main = 1 if t_name == main_topic else 0
         topic_details.append(
             {
@@ -1941,7 +1950,7 @@ def extract_topics_local(
 
     return {
         "main_topic": main_topic,
-        "all_topics": all_topics,
+        "all_topics": filtered_all_topics,
         "topic_details": topic_details,
     }
 
@@ -1966,7 +1975,7 @@ def extract_topics(
         use_zim_refinement=use_zim_refinement,
         use_tantivy_refinement=use_tantivy_refinement,
     )
-    return res.get("all_topics", [])
+    return filter_topics(res.get("all_topics", []))
 
 
 # ---------------------------------------------------------------------------

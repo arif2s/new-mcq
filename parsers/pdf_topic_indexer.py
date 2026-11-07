@@ -23,6 +23,7 @@ from agents.tema_q.topic_extractor import (
     normalize_topic_key,
 )
 from core.database import get_db_connection
+from core.topic_filter import is_valid_topic
 from parsers.heading_toc_calibrator import build_document_toc_and_hierarchy
 
 logger = logging.getLogger("medisearch.pdf_topic_indexer")
@@ -82,7 +83,7 @@ def compute_toc_page_ranges(
         h_path = str(node.get("heading_path") or "").strip()
         parts = [p.strip() for p in h_path.split(">") if p.strip()]
         title = str(node.get("title") or (parts[-1] if parts else "")).strip()
-        if not title:
+        if not title or not is_valid_topic(title):
             continue
         parent_topic = parts[-2] if len(parts) >= 2 else (parts[0] if parts else title)
 
