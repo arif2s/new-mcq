@@ -231,3 +231,18 @@ def test_dashboard_prompts_due_review_banner_format():
     assert len(due_banners) == 1
     assert "left to review" in due_banners[0]["title"]
     assert due_banners[0]["count"] >= 3
+
+def test_dashboard_prompts_motivation_and_fatigue_banners():
+    """Verifies that contextual motivation banners and notes recommendations are generated."""
+    client = TestClient(app)
+    res = client.get("/api/sessions/dashboard_prompts")
+    assert res.status_code == 200
+    data = res.json()
+    banners = data.get("banners", [])
+
+    types = [b.get("type") for b in banners]
+    assert "motivation" in types or "encouragement" in types or "warning" in types
+
+    # Check sparkle/pulse anim_style presence on motivation/encouragement banners
+    anim_styles = [b.get("anim_style") for b in banners if "anim_style" in b]
+    assert len(anim_styles) > 0

@@ -16,3 +16,65 @@
   background-color: var(--accent-color);
   animation: indeterminate 2s infinite linear;
 }
+
+/* Banner animations & dynamic effects */
+@keyframes bannerSparkle {
+  0%, 100% {
+    transform: scale(1) rotate(0deg);
+    filter: drop-shadow(0 0 2px rgba(250, 204, 21, 0.4));
+  }
+  50% {
+    transform: scale(1.18) rotate(6deg);
+    filter: drop-shadow(0 0 10px rgba(250, 204, 21, 0.9));
+  }
+}
+
+@keyframes bannerPulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(239, 68, 68, 0.55);
+    border-color: rgba(239, 68, 68, 0.85);
+  }
+}
+
+@keyframes bannerMotivationGlow {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.2);
+    border-color: rgba(245, 158, 11, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(245, 158, 11, 0.5);
+    border-color: rgba(245, 158, 11, 0.8);
+  }
+}
+
+@keyframes bannerEncouragementGlow {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.2);
+    border-color: rgba(16, 185, 129, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(16, 185, 129, 0.5);
+    border-color: rgba(16, 185, 129, 0.8);
+  }
+}
+
+.banner-sparkle-icon {
+  display: inline-block;
+  animation: bannerSparkle 2.2s infinite ease-in-out;
+}
+
+.banner-anim-warning {
+  animation: bannerPulseGlow 3s infinite ease-in-out;
+}
+
+.banner-anim-motivation {
+  animation: bannerMotivationGlow 3.5s infinite ease-in-out;
+}
+
+.banner-anim-encouragement {
+  animation: bannerEncouragementGlow 4s infinite ease-in-out;
+}

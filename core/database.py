@@ -473,6 +473,8 @@ def initialize_database() -> None:
             CREATE INDEX IF NOT EXISTS idx_task_session ON task_queue (session_id, status);
             CREATE INDEX IF NOT EXISTS idx_task_dedup ON task_queue (task_type, topic_name, status);
             CREATE INDEX IF NOT EXISTS idx_session_questions_sid ON session_questions (session_id);
+            CREATE INDEX IF NOT EXISTS idx_session_questions_correct ON session_questions (is_correct);
+            CREATE INDEX IF NOT EXISTS idx_quiz_sessions_ts ON quiz_sessions (timestamp);
             CREATE INDEX IF NOT EXISTS idx_extracted_topics_qid ON extracted_topics (question_id);
             CREATE INDEX IF NOT EXISTS idx_annotated_bboxes_page ON user_annotated_bboxes (file_path, page_number);
             CREATE INDEX IF NOT EXISTS idx_pti_topic_norm ON pdf_topic_index(topic_norm);

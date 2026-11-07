@@ -1225,8 +1225,37 @@ async function handleQuitQuiz() {
         const timeUsed = times.start ? Math.floor((Date.now() - times.start) / 1000) : 0;
 
         const isReviewSet = currentQuiz.sessionId === 'sess_spaced_repetition_due';
+        const correctAnswersCount = answersList.filter(a => Boolean(a.isCorrect)).length;
         const wrongAnswersCount = answersList.filter(a => !a.isCorrect && !a.timedOut).length;
         const newQuestionsAdded = !isReviewSet ? wrongAnswersCount : 0;
+
+        // If user answered at least one question before quitting, track partial completion in AppState
+        if (answersList.length > 0 && window.AppState && window.AppState.recordQuizCompletion) {
+            const partialResult = {
+                id: currentQuiz.sessionId || `sess_${Date.now()}`,
+                sessionId: currentQuiz.sessionId || `sess_${Date.now()}`,
+                subjectName: currentQuiz.subjectName,
+                customTitle: currentQuiz.customTitle ? `${currentQuiz.customTitle} (Partial)` : 'Quiz (Partial)',
+                date: _getLocalDateString(new Date()),
+                timestamp: Date.now(),
+                lastAttempted: Date.now(),
+                totalQuestions: answersList.length,
+                correctAnswers: correctAnswersCount,
+                wrongAnswers: wrongAnswersCount,
+                unanswered: (currentQuiz.questions.length - answersList.length),
+                score: correctAnswersCount,
+                maxScore: answersList.length,
+                accuracy: answersList.length > 0 ? (correctAnswersCount / answersList.length) * 100 : 0,
+                timeUsedSeconds: timeUsed,
+                timeLimitSeconds: (quizConfig.timeLimit || 0) * 60,
+                mode: quizConfig.mode || 'learn'
+            };
+            try {
+                window.AppState.recordQuizCompletion(partialResult, answeredQuestions, quizAnswers);
+            } catch (err) {
+                console.error("Error in recordQuizCompletion during partial quit:", err);
+            }
+        }
 
         await persistSessionToBackend({
             sessionId: currentQuiz.sessionId || `sess_${Date.now()}`,

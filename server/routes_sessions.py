@@ -1,6 +1,6 @@
 from collections import defaultdict
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 import os
@@ -1470,9 +1470,165 @@ def get_dashboard_prompts() -> Dict[str, Any]:
                 if switch_count >= 2:
                     break
 
-        # 4. Fill with encouraging and motivational messages
+        # 4. Rich Context-Aware Motivation & Habit Progression
+        # Time-of-day contextual checks
+        current_dt = datetime.fromtimestamp(now_ts)
+        current_hour = current_dt.hour
+        today_date_str = current_dt.strftime("%Y-%m-%d")
+        yesterday_date_str = (current_dt - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        # Query user activity today vs yesterday
+        cursor.execute(
+            """
+            SELECT date,
+                   COUNT(DISTINCT qs.id) as session_count,
+                   COALESCE(SUM(qs.total_questions), 0) as total_qs,
+                   COALESCE(SUM(qs.correct_answers), 0) as correct_qs,
+                   COALESCE(SUM(qs.time_used_seconds), 0) as total_time
+            FROM quiz_sessions qs
+            WHERE date IN (?, ?)
+            GROUP BY date
+            """,
+            (today_date_str, yesterday_date_str)
+        )
+        perf_by_date = {r["date"]: r for r in cursor.fetchall()}
+        today_perf = perf_by_date.get(today_date_str)
+        yest_perf = perf_by_date.get(yesterday_date_str)
+
+        today_qs = int(today_perf["total_qs"] or 0) if today_perf else 0
+        yest_qs = int(yest_perf["total_qs"] or 0) if yest_perf else 0
+        today_time_sec = int(today_perf["total_time"] or 0) if today_perf else 0
+
+        # Hourly pace calculation for today
+        # Check questions answered in the last hour vs prior 2 hours
+        one_hour_ago = now_ts - 3600
+        two_hours_ago = now_ts - 7200
+        cursor.execute(
+            """
+            SELECT
+                SUM(CASE WHEN (CASE WHEN timestamp > 1e11 THEN timestamp/1000.0 ELSE timestamp END) >= ? THEN total_questions ELSE 0 END) as last_1h_qs,
+                SUM(CASE WHEN (CASE WHEN timestamp > 1e11 THEN timestamp/1000.0 ELSE timestamp END) >= ? AND (CASE WHEN timestamp > 1e11 THEN timestamp/1000.0 ELSE timestamp END) < ? THEN total_questions ELSE 0 END) as prev_1h_qs
+            FROM quiz_sessions
+            WHERE (CASE WHEN timestamp > 1e11 THEN timestamp/1000.0 ELSE timestamp END) >= ?
+            """,
+            (one_hour_ago, two_hours_ago, one_hour_ago, two_hours_ago)
+        )
+        hourly_row = cursor.fetchone()
+        last_1h_qs = int(hourly_row["last_1h_qs"] or 0) if hourly_row else 0
+        prev_1h_qs = int(hourly_row["prev_1h_qs"] or 0) if hourly_row else 0
+
+        # 4a. Time of day greeting or sleep banner
+        if 5 <= current_hour <= 11:
+            banners.append({
+                "id": "motivation_morning_greeting",
+                "type": "motivation",
+                "title": "Good Morning, Doctor! 🌅",
+                "message": f"A brand new day of clinical learning begins. You've solved {today_qs} MCQ{'s' if today_qs != 1 else ''} today. Let's build strong diagnostic habits!",
+                "icon": "🌅",
+                "badge": "Morning Fuel",
+                "anim_style": "sparkle"
+            })
+        elif current_hour >= 23 or current_hour <= 4:
+            banners.append({
+                "id": "motivation_sleep_reminder",
+                "type": "warning",
+                "title": "Time for Rest & Sleep 🌙",
+                "message": "It's late in the night. Long-term synaptic memory consolidation happens during deep sleep. Wrap up this question, hydrate, and get some good rest!",
+                "icon": "🌙",
+                "badge": "Sleep & Memory",
+                "anim_style": "pulse"
+            })
+
+        # 4b. Push for more MCQs than yesterday or hourly pace motivation
+        if yest_qs > 0 and today_qs > 0:
+            if today_qs > yest_qs:
+                banners.append({
+                    "id": "motivation_beat_yesterday_record",
+                    "type": "encouragement",
+                    "title": "New Daily Record Pace! 🔥",
+                    "message": f"You've completed {today_qs} MCQs today, surpassing yesterday's {yest_qs} questions! Outstanding dedication to your goal.",
+                    "icon": "🔥",
+                    "badge": "Pace Record",
+                    "anim_style": "sparkle"
+                })
+            else:
+                diff = yest_qs - today_qs
+                banners.append({
+                    "id": "motivation_push_yesterday",
+                    "type": "motivation",
+                    "title": f"Push to Beat Yesterday ({today_qs}/{yest_qs} Qs) 🚀",
+                    "message": f"You completed {yest_qs} MCQs yesterday. Just {diff} more question{'s' if diff != 1 else ''} to beat yesterday's high-yield score!",
+                    "icon": "🚀",
+                    "badge": "Push Pace",
+                    "anim_style": "sparkle"
+                })
+        elif today_qs >= 30:
+            banners.append({
+                "id": "motivation_high_daily_volume",
+                "type": "encouragement",
+                "title": f"Strong Progress: {today_qs} MCQs Completed ⚡",
+                "message": "Keep your study momentum rolling! Steady clinical repetition is the proven path to residency exam mastery.",
+                "icon": "⚡",
+                "badge": "High Momentum",
+                "anim_style": "sparkle"
+            })
+
+        # Hourly pace tracker
+        if prev_1h_qs >= 10 and last_1h_qs < (prev_1h_qs * 0.5):
+            banners.append({
+                "id": "motivation_hourly_pace_slow",
+                "type": "warning",
+                "title": "Keep the Previous Pace Going ⏱️",
+                "message": f"Your speed slowed down from {prev_1h_qs} Qs/hr to {last_1h_qs} Qs/hr. Refocus on one vignette at a time to stay on track for your goal!",
+                "icon": "⏱️",
+                "badge": "Hourly Pace Alert",
+                "anim_style": "pulse"
+            })
+        elif last_1h_qs >= 15:
+            banners.append({
+                "id": "motivation_hourly_pace_fast",
+                "type": "encouragement",
+                "title": f"High Velocity: {last_1h_qs} Qs in the Last Hour 🏎️",
+                "message": "You're in the zone! Maintain this pace to easily exceed your target study goals today.",
+                "icon": "🏎️",
+                "badge": "Velocity",
+                "anim_style": "sparkle"
+            })
+
+        # 4c. Wellness, Eye Rest (20-20-20 rule), and Water Break
+        if today_time_sec >= 2400 or today_qs >= 30:
+            banners.append({
+                "id": "motivation_wellness_break",
+                "type": "warning",
+                "title": "Quick Break: Rest Your Eyes & Hydrate 💧",
+                "message": "You've been studying intensively! Look away at an object 20 feet away for 20 seconds, grab a glass of water, and stretch before your next question block.",
+                "icon": "💧",
+                "badge": "Wellness Check",
+                "anim_style": "pulse"
+            })
+
+        # 4d. Poor MCQ performance notes recommendation
+        if sorted_weak_topics:
+            top_missed_name, top_missed_count = sorted_weak_topics[0]
+            if top_missed_count >= 2:
+                banners.append({
+                    "id": f"motivation_study_notes_{_to_synthesis_key(top_missed_name)}",
+                    "type": "warning",
+                    "title": f"Review Notes: {top_missed_name} 📖",
+                    "message": f"You've struggled with {top_missed_count} questions on {top_missed_name}. Deepen your conceptual foundation by studying clinical synthesis notes before testing again!",
+                    "icon": "📖",
+                    "badge": "Study Notes",
+                    "topic": top_missed_name,
+                    "action": "search_topic_notes",
+                    "action_label": f"Study {top_missed_name} Notes 📖",
+                    "anim_style": "pulse"
+                })
+
+        # 5. Fill with encouraging and motivational messages
         for enc in ENCOURAGING_MESSAGES:
-            banners.append(dict(enc))
+            enc_copy = dict(enc)
+            enc_copy["anim_style"] = "sparkle"
+            banners.append(enc_copy)
 
     # Return full list so frontend can maintain a window of up to 10 active banners
     return {

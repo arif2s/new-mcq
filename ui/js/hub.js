@@ -49,9 +49,14 @@ async function loadSessions(silent = false) {
     const gridEl = document.getElementById('hub-grid');
 
     if (!silent) {
-        if (loadingEl) loadingEl.style.display = 'block';
-        if (emptyEl) emptyEl.style.display = 'none';
-        if (gridEl) gridEl.style.display = 'none';
+        if (!hubSessions || hubSessions.length === 0) {
+            if (loadingEl) loadingEl.style.display = 'block';
+            if (emptyEl) emptyEl.style.display = 'none';
+            if (gridEl) gridEl.style.display = 'none';
+        } else {
+            // Already cached, render immediately without flash
+            renderHub();
+        }
     }
 
     try {

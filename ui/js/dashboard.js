@@ -132,7 +132,7 @@ let _bannerRotationIntervalTimer = null;
 let _newQuestionsAddedCount = 0;
 const MAX_ACTIVE_BANNERS = 10;
 const BANNER_AUTO_CYCLE_MS = 7000;       // Auto advance to next banner every 7s
-const BANNER_REPLACE_CYCLE_MS = 60000;   // Gradually retire/replace 1 older banner every 60s
+const BANNER_REPLACE_CYCLE_MS = 15000;   // Dynamically fetch and pop up / rotate banners every 15s
 
 // Reserved quota configuration (Requirements 1, 2 & 3)
 // 2 for weak topics, 2 for revision sets, 2 for motivation, 2 for habit tracking / daily goals, rest for others
@@ -571,7 +571,29 @@ async function initDashboard() {
         return { name, tests: sr.length, avgAccuracy: avg };
     }).sort((a, b) => b.tests - a.tests || b.avgAccuracy - a.avgAccuracy);
 
-    // Rank Simulations
+    // Rank Simulations: Compute trailing window of up to 200 questions across sorted recent results
+    const sortedAllResults = [...testResults].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    let past200Correct = 0;
+    let past200Wrong = 0;
+    let past200Total = 0;
+    for (const r of sortedAllResults) {
+        const tQ = Number(r.totalQuestions || 0);
+        if (tQ <= 0) continue;
+        const remaining = 200 - past200Total;
+        if (remaining <= 0) break;
+        if (tQ <= remaining) {
+            past200Correct += Number(r.correctAnswers || 0);
+            past200Wrong += Number(r.wrongAnswers || 0);
+            past200Total += tQ;
+        } else {
+            const ratio = remaining / tQ;
+            past200Correct += Math.round(Number(r.correctAnswers || 0) * ratio);
+            past200Wrong += Math.round(Number(r.wrongAnswers || 0) * ratio);
+            past200Total += remaining;
+            break;
+        }
+    }
+
     const processedRankSims = rankSimConfigs.map(config => {
         const testsWithRank = recentResults.filter(r => r.totalQuestions > 0).map(r => ({
             ...r,
@@ -583,7 +605,13 @@ async function initDashboard() {
             (b, t) => t.sim.estimatedRank < b.sim.estimatedRank ? t : b,
             testsWithRank[0]
         );
-        return { config, testsWithRank, latest, best };
+
+        // Average rank calculated from past 200 questions
+        const avg200Sim = past200Total > 0
+            ? simulateRank(config, past200Correct, past200Wrong, past200Total)
+            : latest.sim;
+
+        return { config, testsWithRank, latest, best, avg200Sim, past200Total };
     }).filter(s => s !== null);
 
     // Hourly Data Formatting
@@ -812,8 +840,8 @@ async function initDashboard() {
                                 <p class="text-lg font-bold text-success-500">${simData.best.sim.estimatedRank.toLocaleString()}</p>
                             </div>
                             <div class="glass-panel rounded-lg p-2 text-center">
-                                <p class="text-xs text-muted mb-1">Percentile</p>
-                                <p class="text-lg font-bold text-purple-400">${simData.latest.sim.percentile}%</p>
+                                <p class="text-xs text-muted mb-1">Avg Rank (Past 200 Qs)</p>
+                                <p class="text-lg font-bold text-purple-400">${simData.avg200Sim.estimatedRank.toLocaleString()}</p>
                             </div>
                         </div>
                     </div>
@@ -890,6 +918,9 @@ function renderBannerCarousel() {
     let titleClass = 'text-brand-300';
     let badgeClass = 'bg-brand-500/20 text-brand-300 border border-brand-500/30';
 
+    let animCardClass = '';
+    let iconAnimClass = '';
+
     if (currentBanner.type === 'due_review') {
         borderBgClass = 'border-warning-500/50 bg-warning-500/10 shadow-[0_0_15px_rgba(234,179,8,0.2)]';
         titleClass = 'text-warning-300';
@@ -902,6 +933,12 @@ function renderBannerCarousel() {
         borderBgClass = 'border-danger-500/40 bg-danger-500/10 shadow-[0_0_15px_rgba(239,68,68,0.15)]';
         titleClass = 'text-danger-300';
         badgeClass = 'bg-danger-500/20 text-danger-300 border border-danger-500/30';
+        animCardClass = 'banner-anim-warning';
+    } else if (currentBanner.type === 'warning') {
+        borderBgClass = 'border-red-500/40 bg-red-500/10 shadow-[0_0_15px_rgba(239,68,68,0.2)]';
+        titleClass = 'text-red-300';
+        badgeClass = 'bg-red-500/20 text-red-300 border border-red-500/30';
+        animCardClass = 'banner-anim-warning';
     } else if (currentBanner.type === 'switch_subject') {
         borderBgClass = 'border-cyan-500/40 bg-cyan-500/10 shadow-[0_0_15px_rgba(6,182,212,0.15)]';
         titleClass = 'text-cyan-300';
@@ -910,17 +947,31 @@ function renderBannerCarousel() {
         borderBgClass = 'border-emerald-500/40 bg-emerald-500/10 shadow-[0_0_15px_rgba(16,185,129,0.15)]';
         titleClass = 'text-emerald-300';
         badgeClass = 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+        animCardClass = 'banner-anim-encouragement';
+        iconAnimClass = 'banner-sparkle-icon';
+    } else if (currentBanner.type === 'motivation') {
+        borderBgClass = 'border-amber-500/40 bg-amber-500/10 shadow-[0_0_15px_rgba(245,158,11,0.18)]';
+        titleClass = 'text-amber-300';
+        badgeClass = 'bg-amber-500/20 text-amber-300 border border-amber-500/30';
+        animCardClass = 'banner-anim-motivation';
+        iconAnimClass = 'banner-sparkle-icon';
     } else if (currentBanner.type === 'habit_goal') {
         borderBgClass = 'border-purple-500/40 bg-purple-500/10 shadow-[0_0_15px_rgba(168,85,247,0.15)]';
         titleClass = 'text-purple-300';
         badgeClass = 'bg-purple-500/20 text-purple-300 border border-purple-500/30';
     }
 
+    if (currentBanner.anim_style === 'sparkle') {
+        iconAnimClass = 'banner-sparkle-icon';
+    } else if (currentBanner.anim_style === 'pulse') {
+        animCardClass = 'banner-anim-warning';
+    }
+
     container.innerHTML = `
-        <div id="dash-banner-card" class="glass-card border ${borderBgClass} p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 animate-fade-in transition-all relative overflow-hidden group">
+        <div id="dash-banner-card" class="glass-card border ${borderBgClass} ${animCardClass} p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 animate-fade-in transition-all relative overflow-hidden group">
             <!-- Icon & Content -->
             <div class="flex items-center gap-4 flex-1 w-full">
-                <span class="text-3xl select-none shrink-0">${currentBanner.icon || '💡'}</span>
+                <span class="text-3xl select-none shrink-0 ${iconAnimClass}">${currentBanner.icon || '💡'}</span>
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2 mb-1 flex-wrap">
                         <h3 class="text-base font-bold ${titleClass} truncate max-w-md">
@@ -1126,6 +1177,18 @@ async function handleBannerAction(banner) {
         // Fallback to quiz setup tab
         const quizNav = document.querySelector('.nav-btn[data-target="quiz-view"]');
         if (quizNav) quizNav.click();
+    } else if (banner.action === 'search_topic_notes' && banner.topic) {
+        // Study notes recommendation: perform global search or open reader on this topic
+        if (typeof window.performGlobalSearch === 'function') {
+            window.performGlobalSearch(banner.topic);
+            return;
+        }
+        const searchInput = document.getElementById('global-search-input');
+        if (searchInput) {
+            searchInput.value = banner.topic;
+            searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+            searchInput.focus();
+        }
     } else if (banner.action === 'view_habits') {
         const habitNav = document.querySelector('.nav-btn[data-target="habit-tracker-view"]');
         if (habitNav) habitNav.click();
