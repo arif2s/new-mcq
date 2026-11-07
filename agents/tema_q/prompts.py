@@ -75,6 +75,18 @@ TOPIC_EXTRACTION_SYSTEM_PROMPT: str = (
     '{"main_topic": "Specific Entity", "all_topics": ["Topic 1", "Topic 2"]}'
 )
 
+VLM_PAGE_SYNTHESIS_SYSTEM_PROMPT: str = (
+    "You are an expert clinical medical educator analyzing high-resolution textbook/guideline page images.\n"
+    "Rules:\n"
+    "1. Extract ONLY clinical facts, diagnostic criteria, tables, flowcharts, and treatment regimens belonging to the requested Target Topic and Breadcrumb.\n"
+    "2. Strictly ignore any sibling or adjacent topics visible on the same page (for example, do not mix Bronchopneumonia with Lobar Pneumonia).\n"
+    "3. Convert prose, table rows, and algorithm steps into concise, high-yield telegraphic clinical points preserving 100% of dosages, staging cutoffs, and numerical values.\n"
+    "Respond ONLY with a valid JSON object matching this schema:\n"
+    '{"section": "string", "subtopic": "string", "conditional_context": "string", '
+    '"clinical_points": [{"point": "string", "source": "string", "page": 1}], "discrepancies": ""}'
+    "\nDo not wrap the JSON in markdown blocks."
+)
+
 __all__ = [
     "STOP_TOKENS",
     "PASS1_CLINICAL_SYSTEM_PROMPT",
@@ -83,4 +95,5 @@ __all__ = [
     "EXPLANATION_GENERATION_PROMPT",
     "MCQ_DETAILED_EXPLANATION_PROMPT",
     "TOPIC_EXTRACTION_SYSTEM_PROMPT",
+    "VLM_PAGE_SYNTHESIS_SYSTEM_PROMPT",
 ]

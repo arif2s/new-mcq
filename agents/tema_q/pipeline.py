@@ -37,7 +37,9 @@ from agents.tema_q.prompts import (
     PASS2_AUDIT_SYSTEM_PROMPT,
     STOP_TOKENS,
     TOPIC_EXTRACTION_SYSTEM_PROMPT,
+    VLM_PAGE_SYNTHESIS_SYSTEM_PROMPT,
 )
+from parsers.pdf_topic_indexer import lookup_pdf_topic_pages, render_topic_pages_to_base64
 from agents.tema_q.subtopic_router import route_and_prune_subtopics
 from config import DEFAULT_MODEL, LM_STUDIO_TIMEOUT, LM_STUDIO_URL, MAX_CONTEXT_TOKENS
 from core.database import get_db_connection
@@ -220,6 +222,65 @@ async def call_llm_async(
     return _strip_reasoning_tags(raw_content)
 
 
+async def call_vlm_page_images_async(
+    system_prompt: str,
+    topic: str,
+    subtopic: str,
+    heading_path: str,
+    page_images: List[Tuple[int, str]],
+    source_label: str,
+    fallback_text: str = "",
+    max_tokens: int = 650,
+) -> str:
+    """
+    Sends 1..3 cropped/rendered PDF page images directly to LM Studio's Vision model.
+    If the loaded model in LM Studio is text-only (returns HTTP 400/422 on image_url),
+    seamlessly falls back to standard text completion using `fallback_text`.
+    """
+    if not page_images:
+        return await call_llm_async(system_prompt, fallback_text, max_tokens=max_tokens)
+
+    pages_str = ", ".join(str(p) for p, _ in page_images)
+    instruction_text = (
+        f"Source Document: {source_label} (Pages: {pages_str})\n"
+        f"Target Hierarchical Breadcrumb: {heading_path}\n"
+        f"Target Clinical Topic: {topic}\n"
+        f"Target Subtopic: {subtopic}\n\n"
+        f"Extract all high-yield clinical points, tables, flowcharts, and dosing criteria "
+        f"strictly for '{topic}' ({heading_path}). Do not mix with sibling topics."
+    )
+    user_content: List[Dict[str, Any]] = [{"type": "text", "text": instruction_text}]
+    for _, b64_url in page_images:
+        user_content.append({"type": "image_url", "image_url": {"url": b64_url}})
+
+    url = f"{LM_STUDIO_URL}/chat/completions"
+    payload = {
+        "model": DEFAULT_MODEL,
+        "messages": [
+            {"role": "system", "content": str(system_prompt or "").strip()},
+            {"role": "user", "content": user_content},
+        ],
+        "temperature": 0.1,
+        "max_tokens": max(64, min(int(max_tokens or 650), 1500)),
+        "stop": STOP_TOKENS,
+        "stream": False,
+    }
+    try:
+        client = get_http_client()
+        response = await client.post(url, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        raw_content = data["choices"][0]["message"]["content"]
+        return _strip_reasoning_tags(raw_content)
+    except Exception as exc:
+        logger.info("VLM image_url call unsupported by active model (%s); using text fallback.", exc)
+        return await call_llm_async(
+            system_prompt,
+            f"{instruction_text}\n\nExtracted Reference Text:\n{fallback_text}",
+            max_tokens=max_tokens,
+        )
+
+
 def _get_pdf_parser_setting() -> str:
     global _cached_pdf_parser
     if _cached_pdf_parser is not None:
@@ -242,23 +303,24 @@ def _get_pdf_parser_setting() -> str:
 
 def _extract_pdf_sync(file_path: str, page: int) -> str:
     parser = _get_pdf_parser_setting()
-    if parser == "indra":
+    if parser in ("docling_v1_heading_opt", "docling_v1"):
         try:
-            from parsers.indra_parser import extract_page_with_indra
-            res = extract_page_with_indra(file_path, page_number=page)
-            lines = res.get("lines") or []
-            if lines:
-                prose_lines = [
-                    f"{'#' * int(ln.get('heading_level') or 2)} {ln['text']}"
-                    if ln.get("role") == "heading"
-                    else str(ln.get("text") or "")
-                    for ln in lines
-                    if ln.get("role") not in ("furniture", "figure_caption")
-                ]
-                if prose_lines:
-                    return "\n".join(prose_lines)
+            from parsers.docling_v1_heading_opt import extract_structured_layout_v1_heading_opt
+            res = extract_structured_layout_v1_heading_opt(file_path, page)
+            if res:
+                return res
         except Exception as exc:
-            logger.warning("Indra extraction fallback: %s", exc)
+            logger.warning("docling_v1_heading_opt failed, falling back: %s", exc)
+    elif parser in ("indra_base_heading_opt", "indra"):
+        try:
+            from parsers.indra_base_heading_opt import extract_page_with_indra_base_heading_opt
+            res_dict = extract_page_with_indra_base_heading_opt(
+                file_path, page_number=page, render_page_image=False
+            )
+            if res_dict and res_dict.get("markdown"):
+                return str(res_dict["markdown"])
+        except Exception as exc:
+            logger.warning("indra_base_heading_opt failed, falling back: %s", exc)
     elif parser == "docling_v2":
         try:
             from parsers.docling_v2_parser import extract_structured_layout as extract_v2
@@ -403,7 +465,11 @@ def _group_search_results_polymorphic(search_results: Any) -> Dict[str, List[Dic
     return grouped
 
 
-async def resolve_documents(search_results: dict) -> List[Dict[str, Any]]:
+async def resolve_documents(
+    search_results: dict,
+    topic: Optional[str] = None,
+    subtopic: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """Resolves reference documents (max 1 ZIM, max 2 PDF, max 2 Obsidian in distinct folders)."""
     documents: List[Dict[str, Any]] = []
     grouped = _group_search_results_polymorphic(search_results)
@@ -431,8 +497,67 @@ async def resolve_documents(search_results: dict) -> List[Dict[str, Any]]:
             })
 
     # 2. PDF Document Resolution (max 2)
+    # Check SQLite pdf_topic_index first if topic is provided
+    indexed_pdf_hits: List[Dict[str, Any]] = []
+    if topic:
+        try:
+            indexed_pdf_hits = await asyncio.to_thread(lookup_pdf_topic_pages, topic, subtopic=subtopic)
+        except Exception as exc:
+            logger.debug("Failed querying pdf_topic_index: %s", exc)
+
+    seen_pdf_pages: Set[Tuple[str, int]] = set()
+
+    for idx_hit in indexed_pdf_hits:
+        if sum(1 for d in documents if d["source_type"] == "pdf") >= 2:
+            break
+        pdf_path = str(idx_hit.get("pdf_path") or "")
+        start_page = int(idx_hit.get("start_page") or 1)
+        end_page = int(idx_hit.get("end_page") or start_page)
+        start_y0 = float(idx_hit.get("start_y0") or 0.0)
+        end_y1 = float(idx_hit.get("end_y1") or 1.0)
+        heading_path = str(idx_hit.get("heading_path") or "")
+        title = str(idx_hit.get("pdf_title") or Path(pdf_path).name)
+
+        dedup_key = (pdf_path.lower(), start_page)
+        if dedup_key in seen_pdf_pages:
+            continue
+        seen_pdf_pages.add(dedup_key)
+
+        content = (
+            await asyncio.to_thread(_extract_pdf_sync, pdf_path, start_page)
+            if pdf_path
+            else ""
+        )
+
+        page_images: List[Tuple[int, str]] = []
+        if pdf_path:
+            try:
+                page_images = await asyncio.to_thread(
+                    render_topic_pages_to_base64,
+                    pdf_path,
+                    start_page,
+                    end_page,
+                    start_y0=start_y0,
+                    end_y1=end_y1,
+                    crop_to_subtopic_bounds=True,
+                )
+            except Exception as exc:
+                logger.debug("render_topic_pages_to_base64 error: %s", exc)
+
+        if content or page_images:
+            doc_entry: Dict[str, Any] = {
+                "source_type": "pdf",
+                "source_label": title,
+                "page": start_page,
+                "heading_path": heading_path,
+                "header": f"Source (PDF - {title} - Page {start_page}):\n{content}",
+                "raw_text": content,
+            }
+            if page_images:
+                doc_entry["page_images"] = page_images
+            documents.append(doc_entry)
+
     if grouped["pdf"]:
-        seen_pdf_pages: Set[Tuple[str, int]] = set()
         for top_pdf in grouped["pdf"]:
             if sum(1 for d in documents if d["source_type"] == "pdf") >= 2:
                 break
@@ -585,7 +710,7 @@ async def run_tema_q_synthesis(
             "reference_links": search_results,
         }
 
-    documents = await resolve_documents(search_results)
+    documents = await resolve_documents(search_results, topic=topic)
     if not documents:
         empty_article = {
             "section": "General",
@@ -629,9 +754,30 @@ async def run_tema_q_synthesis(
             base_note_json: Dict[str, Any] = {}
             if lm_available:
                 try:
-                    base_note_str = await call_llm_async(
-                        PASS1_CLINICAL_SYSTEM_PROMPT, pass1_user_msg, max_tokens=600
+                    matched_doc = next(
+                        (
+                            d for d in documents
+                            if d.get("source_type") == "pdf"
+                            and d.get("page_images")
+                            and (d.get("source_label") == bucket.primary_source_label or d.get("page") == bucket.primary_page)
+                        ),
+                        None,
                     )
+                    if matched_doc and matched_doc.get("page_images"):
+                        base_note_str = await call_vlm_page_images_async(
+                            system_prompt=VLM_PAGE_SYNTHESIS_SYSTEM_PROMPT,
+                            topic=topic,
+                            subtopic=sub_title,
+                            heading_path=str(matched_doc.get("heading_path") or f"{topic} > {sub_title}"),
+                            page_images=matched_doc["page_images"],
+                            source_label=bucket.primary_source_label,
+                            fallback_text=bucket.primary_text,
+                            max_tokens=600,
+                        )
+                    else:
+                        base_note_str = await call_llm_async(
+                            PASS1_CLINICAL_SYSTEM_PROMPT, pass1_user_msg, max_tokens=600
+                        )
                     parsed_base = parse_llm_json(base_note_str)
                     if isinstance(parsed_base, list):
                         base_note_json = {

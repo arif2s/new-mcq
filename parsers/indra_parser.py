@@ -27,6 +27,7 @@ import numpy as np
 
 import config
 from parsers.embedding_engine import get_embedding_engine
+from parsers.indra_base_heading_opt import extract_page_with_indra_base_heading_opt
 from parsers.lancedb_engine import LanceDBEngine
 from parsers.pdf_extractor import clean_pdf_text
 
@@ -197,6 +198,10 @@ def extract_page_with_indra(
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Extracts a single PDF page with layout-aware heading hierarchy and visual SVG overlays."""
+    if mode == "base_heading_opt" or profile_id == "base_heading_opt":
+        return extract_page_with_indra_base_heading_opt(
+            file_path, page_number=page_number, dpi=dpi, threads=threads, **kwargs
+        )
     path = Path(file_path).resolve()
     root_title = default_title or path.stem
     tracker = heading_tracker or get_or_create_document_tracker(path, default_title=root_title)
