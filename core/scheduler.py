@@ -244,3 +244,96 @@ def calculate_fsrs_next_interval(
         "interval_seconds": interval_seconds,
         "due_timestamp": due_ts,
     }
+
+
+# --- Phase 5 FSRS-4.5 / FSRS-5 Spaced Repetition & Response-Time Modulation ---
+import math as _math
+from typing import Any as _Any
+
+
+def compute_fsrs_retrievability(elapsed_days: float, stability: float) -> float:
+    """Compute FSRS power-law forgetting curve retrievability R(t, S) in [0.0, 1.0]."""
+    if stability <= 0.0:
+        return 0.0
+    if elapsed_days <= 0.0:
+        return 1.0
+    # FSRS-4.5 / FSRS-5 power forgetting curve: R(t, S) = (1 + (19/81) * t / S) ** (-0.5)
+    factor = 19.0 / 81.0
+    decay = -0.5
+    return float(max(0.0, min(1.0, (1.0 + factor * (elapsed_days / stability)) ** decay)))
+
+
+def update_fsrs_card_state(
+    card_state: dict[str, _Any] | None,
+    rating: int,
+    elapsed_days: float = 0.0,
+    response_time_ms: int | None = None,
+    slow_guess_threshold_ms: int = 45000,
+    desired_retention: float = 0.9,
+) -> dict[str, _Any]:
+    """
+    Update FSRS memory state (stability, difficulty, retrievability, interval_days, reps, lapses).
+    rating: 1=Again, 2=Hard, 3=Good, 4=Easy.
+    If rating >= 3 but response_time_ms exceeds slow_guess_threshold_ms, downgrade effective rating by 1
+    to penalize slow lucky guesses.
+    """
+    state = dict(card_state or {})
+    rating = max(1, min(4, int(rating)))
+
+    # Modulate rating by response latency for slow answers
+    effective_rating = rating
+    if response_time_ms is not None and response_time_ms > slow_guess_threshold_ms and effective_rating > 2:
+        effective_rating -= 1
+
+    reps = int(state.get("reps", 0) or 0)
+    lapses = int(state.get("lapses", 0) or 0)
+    prev_s = float(state.get("stability", 0.0) or 0.0)
+    prev_d = float(state.get("difficulty", 5.0) or 5.0)
+
+    if reps == 0 or prev_s <= 0.0:
+        # Initial FSRS stability & difficulty seeds per rating (1..4)
+        init_s_map = {1: 0.4, 2: 1.2, 3: 3.1, 4: 7.5}
+        init_d_map = {1: 7.2, 2: 6.1, 3: 4.9, 4: 3.5}
+        new_s = init_s_map[effective_rating]
+        new_d = init_d_map[effective_rating]
+        reps = 1
+        if effective_rating == 1:
+            lapses += 1
+    else:
+        r = compute_fsrs_retrievability(max(0.0, elapsed_days), prev_s)
+        # Update Difficulty D in [1.0, 10.0] with mean reversion toward 5.0
+        delta_d = -0.8 * (effective_rating - 3)
+        new_d = prev_d + delta_d
+        new_d = 0.9 * new_d + 0.1 * 5.0
+        new_d = max(1.0, min(10.0, new_d))
+
+        if effective_rating == 1:
+            lapses += 1
+            # Post-lapse stability contraction
+            new_s = max(0.2, prev_s * 0.28 * ((new_d / 10.0) ** -0.2))
+        else:
+            reps += 1
+            hard_penalty = 0.75 if effective_rating == 2 else 1.0
+            easy_bonus = 1.35 if effective_rating == 4 else 1.0
+            growth = 1.0 + _math.exp(1.1) * (11.0 - new_d) * (prev_s ** -0.15) * (_math.exp(0.8 * (1.0 - r)) - 1.0)
+            new_s = max(prev_s + 0.1, prev_s * (1.0 + (growth - 1.0) * hard_penalty * easy_bonus))
+
+    # Calculate next interval in days for target desired_retention
+    # Inverse of R(t, S): I(r, S) = (81/19) * S * (r ** (-2) - 1)
+    target_r = max(0.7, min(0.97, desired_retention))
+    raw_interval = (81.0 / 19.0) * new_s * ((target_r ** -2.0) - 1.0)
+    interval_days = max(1, int(round(raw_interval))) if effective_rating > 1 else 1
+
+    state.update(
+        {
+            "stability": round(new_s, 4),
+            "difficulty": round(new_d, 4),
+            "retrievability": round(compute_fsrs_retrievability(0.0, new_s), 4),
+            "interval_days": interval_days,
+            "reps": reps,
+            "lapses": lapses,
+            "last_rating": rating,
+            "effective_rating": effective_rating,
+        }
+    )
+    return state

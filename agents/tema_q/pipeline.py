@@ -985,3 +985,39 @@ async def run_tema_q_synthesis(
         "top_references": flat_refs or search_results,
         "reference_links": search_results,
     }
+
+
+# --- Phase 5 Audited Self-Correction Loop Helper ---
+from typing import Any as _Any, Callable as _Callable
+from agents.tema_q.auditor import deterministic_mcq_sanity_check as _sanity_check, evaluate_audit_verdict as _eval_verdict
+
+
+def run_audited_generation_with_retry(
+    generate_fn: _Callable[[str | None], dict[str, _Any]],
+    audit_fn: _Callable[[dict[str, _Any]], str],
+    max_retries: int = 1,
+) -> dict[str, _Any]:
+    """
+    Execute MCQ generation followed by deterministic + rubric auditing.
+    If the initial item fails, pass the critique back to generate_fn for up to max_retries self-correction passes.
+    """
+    critique: str | None = None
+    best_candidate: dict[str, _Any] = {}
+    for attempt in range(max_retries + 1):
+        candidate = generate_fn(critique)
+        best_candidate = candidate
+        ok, reason = _sanity_check(candidate)
+        if not ok:
+            critique = reason
+            candidate["audit_passed"] = False
+            candidate["audit_critique"] = critique
+            continue
+        raw_audit = audit_fn(candidate)
+        verdict = _eval_verdict(raw_audit)
+        candidate["audit_passed"] = verdict.overall_pass
+        candidate["audit_critique"] = verdict.critique
+        candidate["audit_scores"] = verdict.model_dump()
+        if verdict.overall_pass:
+            return candidate
+        critique = verdict.critique
+    return best_candidate

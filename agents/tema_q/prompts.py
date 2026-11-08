@@ -97,3 +97,24 @@ __all__ = [
     "TOPIC_EXTRACTION_SYSTEM_PROMPT",
     "VLM_PAGE_SYNTHESIS_SYSTEM_PROMPT",
 ]
+
+
+# --- Phase 5 Consensus vs. Contradiction Multi-Article Synthesis Prompt ---
+
+MULTI_ARTICLE_SYNTHESIS_PROMPT_TEMPLATE = """You are the Tema-Q Clinical & Technical Knowledge Synthesizer.
+Synthesize the provided source articles on the topic "{topic}" within a strict total limit of 1000 words.
+
+ Classify cross-article findings into three explicit sections:
+1. **Consensus Facts**: Core principles and mechanisms agreed upon across sources.
+2. **Unique Source Details**: High-yield clinical/technical pearls unique to a single source (cite with exact provenance tags such as [PDF], [ZIM], or [OBSIDIAN]).
+3. **Cross-Source Contradictions**: Any discrepancies in diagnostic criteria, dosages, classifications, or thresholds between sources.
+
+Return valid JSON matching this schema:
+{{
+  "topic": "{topic}",
+  "consensus_facts": ["..."],
+  "unique_source_details": ["... [PDF: Title]"],
+  "contradictions": ["..."],
+  "markdown_summary": "### Consensus\n...\n### Unique Pearls\n...\n### Contradictions\n..."
+}}
+"""

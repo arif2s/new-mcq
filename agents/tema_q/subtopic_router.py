@@ -663,3 +663,37 @@ __all__ = [
     "prune_solar_sentences",
     "route_and_prune_subtopics",
 ]
+
+
+# --- Phase 5 Lexical & Singular/Plural Subtopic Clustering ---
+import re as _re
+from core.topic_filter import filter_topics as _filter_topics
+
+_SUBTOPIC_NORM_RE = _re.compile(r"[^a-z0-9\s]+")
+
+
+def normalize_subtopic_stem(subtopic: str) -> str:
+    cleaned = _SUBTOPIC_NORM_RE.sub(" ", (subtopic or "").lower()).strip()
+    tokens = []
+    for tok in cleaned.split():
+        if len(tok) > 4 and tok.endswith("oses"):
+            tok = tok[:-4] + "osis"
+        elif len(tok) > 4 and tok.endswith("ies"):
+            tok = tok[:-3] + "y"
+        elif len(tok) > 3 and tok.endswith("es") and not tok.endswith(("ses", "xes", "zes")):
+            tok = tok[:-1]
+        elif len(tok) > 3 and tok.endswith("s") and not tok.endswith(("ss", "us", "is")):
+            tok = tok[:-1]
+        tokens.append(tok)
+    return " ".join(tokens)
+
+
+def deduplicate_subtopics(subtopics: list[str]) -> list[str]:
+    """Group near-duplicate singular/plural and punctuation variants into canonical subtopics."""
+    valid = _filter_topics(subtopics)
+    seen_stems: dict[str, str] = {}
+    for item in valid:
+        stem = normalize_subtopic_stem(item)
+        if stem and stem not in seen_stems:
+            seen_stems[stem] = item.strip()
+    return list(seen_stems.values())

@@ -431,3 +431,45 @@ __all__ = [
     "merge_json_nodes",
     "filter_novel_secondary_sentences",
 ]
+
+
+# --- Phase 5 Rubric-Based MCQ Auditor Validation ---
+from typing import Any as _Any
+from agents.tema_q.json_utils import AuditVerdictPayload as _AuditVerdictPayload, parse_llm_pydantic as _parse_llm_pydantic
+
+
+def evaluate_audit_verdict(raw_llm_output: str, min_score_threshold: float = 0.75) -> _AuditVerdictPayload:
+    """Parse LLM audit response into a structured rubric verdict and enforce threshold pass logic."""
+    verdict = _parse_llm_pydantic(
+        raw_llm_output,
+        _AuditVerdictPayload,
+        default_fallback=_AuditVerdictPayload(overall_pass=False, critique="Malformed audit JSON output"),
+    )
+    min_metric = min(
+        verdict.stem_clarity,
+        verdict.single_correct_answer,
+        verdict.distractor_plausibility,
+        verdict.source_grounding,
+    )
+    if min_metric < min_score_threshold:
+        verdict.overall_pass = False
+        if not verdict.critique:
+            verdict.critique = f"Audit score {min_metric:.2f} below minimum threshold {min_score_threshold:.2f}."
+    return verdict
+
+
+def deterministic_mcq_sanity_check(mcq: dict[str, _Any]) -> tuple[bool, str]:
+    """Fast zero-LLM pre-check ensuring stem, options, and single correct answer are well-formed."""
+    question = str(mcq.get("question") or mcq.get("stem") or "").strip()
+    options = mcq.get("options") or []
+    answer = str(mcq.get("correct_answer") or mcq.get("answer") or "").strip()
+    if len(question) < 10:
+        return False, "Question stem is too short (<10 chars)."
+    if not isinstance(options, list) or len(options) < 2:
+        return False, "MCQ must provide at least 2 options."
+    norm_opts = [str(o).strip() for o in options if str(o).strip()]
+    if len(set(o.lower() for o in norm_opts)) != len(norm_opts):
+        return False, "MCQ contains duplicate distractor options."
+    if not answer:
+        return False, "MCQ is missing a designated correct_answer."
+    return True, "OK"

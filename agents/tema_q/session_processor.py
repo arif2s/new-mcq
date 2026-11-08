@@ -544,3 +544,81 @@ async def process_session_llm_tasks(
 
 
 __all__ = ["process_session_questions", "process_session_llm_tasks"]
+
+
+# --- Phase 5 3-Article Word Budget Enforcement & Cross-Article Deduplication ---
+import re as _re
+from typing import Any as _Any
+
+_WORD_SPLIT_RE = _re.compile(r"\S+")
+_PARA_NORM_RE = _re.compile(r"[^a-z0-9]+")
+
+
+def truncate_to_word_budget(text: str, max_words: int = 500) -> str:
+    """Truncate text cleanly to max_words while preserving sentence/paragraph boundaries where possible."""
+    if not text or max_words <= 0:
+        return ""
+    words = _WORD_SPLIT_RE.findall(text)
+    if len(words) <= max_words:
+        return text.strip()
+    truncated = " ".join(words[:max_words])
+    last_period = truncated.rfind(". ")
+    if last_period > int(len(truncated) * 0.7):
+        return truncated[: last_period + 1].strip()
+    return truncated.strip()
+
+
+def prepare_multi_article_context(
+    articles: list[dict[str, _Any]],
+    max_words_per_article: int = 500,
+    max_total_words: int = 1000,
+) -> list[dict[str, _Any]]:
+    """
+    Deduplicate overlapping paragraphs across up to 3 articles (PDF, Obsidian, ZIM)
+    and enforce strict per-article (500w) and total (1000w) word budgets for 4B/7B local models.
+    """
+    if not articles:
+        return []
+    seen_Para_hashes: set[str] = set()
+    processed: list[dict[str, _Any]] = []
+    remaining_total = max(1, max_total_words)
+    target_articles = articles[:3]
+
+    for idx, art in enumerate(target_articles, start=1):
+        if remaining_total <= 0:
+            break
+        raw_content = str(art.get("content") or art.get("text") or "").strip()
+        if not raw_content:
+            continue
+        source_type = str(art.get("source_type") or art.get("type") or f"Source-{idx}").upper()
+        title = str(art.get("title") or f"Article {idx}").strip()
+
+        unique_paras: list[str] = []
+        for para in raw_content.split("\n\n"):
+            p_clean = para.strip()
+            if not p_clean:
+                continue
+            norm_key = _PARA_NORM_RE.sub("", p_clean.lower())[:160]
+            if len(norm_key) >= 20 and norm_key in seen_Para_hashes:
+                continue
+            if len(norm_key) >= 20:
+                seen_Para_hashes.add(norm_key)
+            unique_paras.append(p_clean)
+
+        joined = "\n\n".join(unique_paras)
+        remaining_count = len(target_articles) - idx + 1
+        budget = min(max_words_per_article, remaining_total // remaining_count if remaining_count > 1 else remaining_total)
+        budgeted_text = truncate_to_word_budget(joined, max_words=budget)
+        word_count = len(_WORD_SPLIT_RE.findall(budgeted_text))
+        remaining_total -= word_count
+
+        processed.append(
+            {
+                "source_type": source_type,
+                "title": title,
+                "provenance_tag": f"[{source_type}: {title}]",
+                "content": budgeted_text,
+                "word_count": word_count,
+            }
+        )
+    return processed

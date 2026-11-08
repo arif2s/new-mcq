@@ -2189,3 +2189,18 @@ __all__ = [
     "get_frequent_note_topics_set",
     "classify_medical_domain",
 ]
+
+
+# --- Phase 5 Structured Topic Extraction & Stopword Filtering ---
+from core.topic_filter import filter_topics as _filter_topics
+from agents.tema_q.json_utils import ExtractedTopicsPayload as _ExtractedTopicsPayload, parse_llm_pydantic as _parse_llm_pydantic
+
+
+def parse_and_filter_llm_topics(raw_llm_output: str) -> list[str]:
+    """Parse LLM JSON topic output resiliently and filter stopwords via Ignore_list.txt."""
+    payload = _parse_llm_pydantic(
+        raw_llm_output,
+        _ExtractedTopicsPayload,
+        default_fallback=_ExtractedTopicsPayload(topics=[]),
+    )
+    return _filter_topics(payload.topics)
