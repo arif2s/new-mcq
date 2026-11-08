@@ -213,3 +213,33 @@ async def serve_frontend():
 
 if UI_DIR.exists():
     app.mount("/", StaticFiles(directory=str(UI_DIR), html=True), name="static")
+
+# --- Phase 6 FastAPI Lifespan Maintenance & GZip Compression ---
+from contextlib import asynccontextmanager as _asynccontextmanager
+from fastapi.middleware.gzip import GZipMiddleware as _GZipMiddleware
+from config import ensure_runtime_directories as _ensure_runtime_directories
+from parsers.tantivy_engine import cleanup_stale_tantivy_lock as _cleanup_stale_tantivy_lock
+
+
+def run_startup_maintenance() -> dict[str, bool]:
+    """Execute idempotent startup checks: create dirs and remove stale 0-byte Tantivy lockfiles."""
+    _ensure_runtime_directories()
+    lock_cleared = _cleanup_stale_tantivy_lock("data/index")
+    return {"directories_ready": True, "stale_lock_cleared": lock_cleared}
+
+
+@_asynccontextmanager
+async def app_lifespan(_app):
+    run_startup_maintenance()
+    yield
+
+
+try:
+    if "app" in globals():
+        # Attach GZipMiddleware if not already present
+        existing_mw = [getattr(m.cls, "__name__", "") for m in getattr(app, "user_middleware", [])]
+        if "GZipMiddleware" not in existing_mw:
+            app.add_middleware(_GZipMiddleware, minimum_size=1000)
+        run_startup_maintenance()
+except Exception:
+    pass

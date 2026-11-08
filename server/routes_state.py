@@ -505,3 +505,28 @@ def delete_state_key(key: str) -> Dict[str, str]:
         conn.execute("DELETE FROM user_state WHERE key = ?", (key,))
         conn.commit()
     return {"status": "success"}
+
+# --- Phase 6 RFC 7396 JSON Merge Patch for Concurrent State Updates ---
+from typing import Any as _Any
+
+
+def merge_state_patch(current_state: dict[str, _Any], patch: dict[str, _Any]) -> dict[str, _Any]:
+    """
+    Recursively merge `patch` into `current_state` (RFC 7396 semantics) so concurrent
+    UI controllers (quiz, habits, settings) never clobber unrelated state keys.
+    Keys with value `None` in `patch` remove the key from `current_state`.
+    """
+    if not isinstance(current_state, dict):
+        current_state = {}
+    if not isinstance(patch, dict):
+        return dict(current_state)
+
+    merged = dict(current_state)
+    for key, val in patch.items():
+        if val is None:
+            merged.pop(key, None)
+        elif isinstance(val, dict) and isinstance(merged.get(key), dict):
+            merged[key] = merge_state_patch(merged[key], val)
+        else:
+            merged[key] = val
+    return merged

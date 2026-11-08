@@ -232,3 +232,29 @@ def ensure_offline_vendor_assets() -> None:
                         filename,
                         exc,
                     )
+
+
+# --- Phase 6 Validated Runtime Directories & Local LLM / Hardware Settings ---
+import os as _os
+from pathlib import Path as _Path
+
+PROJECT_ROOT = _Path(__file__).resolve().parent
+DATA_DIR = PROJECT_ROOT / "data"
+INDEX_DIR = DATA_DIR / "index"
+CSV_DIR = DATA_DIR / "csv"
+STORAGE_DIR = PROJECT_ROOT / "storage"
+REPORTS_DIR = STORAGE_DIR / "reports"
+CACHE_DIR = STORAGE_DIR / "cache"
+
+LM_STUDIO_BASE_URL = _os.environ.get("LM_STUDIO_BASE_URL", "http://127.0.0.1:1234/v1")
+LLM_KEEP_ALIVE = _os.environ.get("LLM_KEEP_ALIVE", "-1")
+LLM_PING_TIMEOUT_SEC = float(_os.environ.get("LLM_PING_TIMEOUT_SEC", "3.0"))
+UPLOAD_CHUNK_SIZE_BYTES = int(_os.environ.get("UPLOAD_CHUNK_SIZE_BYTES", str(1024 * 1024)))  # 1 MB
+MAX_SYNTHESIS_TOTAL_WORDS = int(_os.environ.get("MAX_SYNTHESIS_TOTAL_WORDS", "1000"))
+MAX_SYNTHESIS_ARTICLE_WORDS = int(_os.environ.get("MAX_SYNTHESIS_ARTICLE_WORDS", "500"))
+
+
+def ensure_runtime_directories() -> None:
+    """Create all required runtime directories safely on server startup."""
+    for folder in (DATA_DIR, INDEX_DIR, CSV_DIR, STORAGE_DIR, REPORTS_DIR, CACHE_DIR):
+        folder.mkdir(parents=True, exist_ok=True)

@@ -534,3 +534,17 @@ def zim_asset(
         media_type=str(media_type),
         headers={"Cache-Control": "public, max-age=86400"},
     )
+
+# --- Phase 6 Asynchronous Note Index Synchronization Hook ---
+from typing import Any as _Any, Callable as _Callable
+
+
+def build_note_index_document(note_id: str, title: str, markdown_body: str, tags: list[str] | None = None) -> dict[str, _Any]:
+    """Construct a normalized index document whenever a synthesized study note is saved."""
+    return {
+        "id": f"note:{note_id}",
+        "source_type": "note",
+        "title": (title or "Untitled Note").strip(),
+        "content": (markdown_body or "").strip(),
+        "tags": list(tags or []),
+    }

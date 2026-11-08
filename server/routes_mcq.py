@@ -850,3 +850,35 @@ def batch_update_all_verified_summaries() -> Dict[str, Any]:
     req = BatchTopicRequest(topics=topics_list, mode="missing")
     res = batch_generate_explanations(req)
     return {"status": "success", "count": res.get("count", 0), "queued": res.get("queued", [])}
+
+# --- Phase 6 Atomic Quiz Grading & FSRS State Persistence ---
+import sqlite3 as _sqlite3
+from typing import Any as _Any
+from core.database import atomic_transaction as _atomic_transaction
+from core.scheduler import update_fsrs_card_state as _update_fsrs_card_state
+
+
+def grade_mcq_and_compute_fsrs(
+    selected_option: str,
+    correct_option: str,
+    current_card_state: dict[str, _Any] | None = None,
+    explicit_rating: int | None = None,
+    elapsed_days: float = 0.0,
+    response_time_ms: int | None = None,
+) -> dict[str, _Any]:
+    """Compute quiz correctness and updated FSRS scheduling metadata in one deterministic step."""
+    is_correct = str(selected_option).strip().lower() == str(correct_option).strip().lower()
+    if explicit_rating is not None:
+        rating = int(explicit_rating)
+    else:
+        rating = 3 if is_correct else 1
+    next_state = _update_fsrs_card_state(
+        current_card_state,
+        rating=rating,
+        elapsed_days=elapsed_days,
+        response_time_ms=response_time_ms,
+    )
+    return {
+        "is_correct": is_correct,
+        "fsrs_state": next_state,
+    }

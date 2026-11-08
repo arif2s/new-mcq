@@ -1087,3 +1087,13 @@ async def finalize_analysis(req: FinalizeAnalysisRequest):
         "markdown_chars": len(compiled_markdown),
         "ingested_chunks": ingested_count,
     }
+
+
+# --- Phase 6 Non-Blocking Thread Offload for Synchronous PDF Analysis ---
+import asyncio as _asyncio
+from typing import Any as _Any, Callable as _Callable
+
+
+async def run_cpu_bound_analysis(func: _Callable[..., _Any], *args: _Any, **kwargs: _Any) -> _Any:
+    """Offload synchronous Docling/Indra layout analysis from the FastAPI event loop."""
+    return await _asyncio.to_thread(func, *args, **kwargs)

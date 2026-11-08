@@ -436,3 +436,48 @@ manager = ConnectionManager()
 ws_manager = manager
 
 __all__ = ["ConnectionManager", "manager", "ws_manager"]
+
+# --- Phase 6 Non-Blocking Concurrent WebSocket Broadcast & Dead-Socket Pruning ---
+import asyncio as _asyncio
+from typing import Any as _Any, Iterable as _Iterable
+
+
+async def _send_with_timeout(ws: _Any, payload: _Any, timeout_sec: float = 2.0) -> bool:
+    try:
+        if hasattr(ws, "send_json") and not isinstance(payload, str):
+            await _asyncio.wait_for(ws.send_json(payload), timeout=timeout_sec)
+        elif hasattr(ws, "send_text"):
+            text_data = payload if isinstance(payload, str) else str(payload)
+            await _asyncio.wait_for(ws.send_text(text_data), timeout=timeout_sec)
+        return True
+    except Exception:
+        return False
+
+
+async def broadcast_concurrently(
+    connections: set[_Any] | list[_Any],
+    payload: _Any,
+    timeout_sec: float = 2.0,
+) -> list[_Any]:
+    """
+    Broadcast payload concurrently to all active WebSockets with a strict per-socket timeout.
+    Automatically removes and returns any disconnected or timed-out client sockets.
+    """
+    snapshot = list(connections)
+    if not snapshot:
+        return []
+
+    results = await _asyncio.gather(
+        *(_send_with_timeout(ws, payload, timeout_sec=timeout_sec) for ws in snapshot),
+        return_exceptions=True,
+    )
+
+    dead_sockets: list[_Any] = []
+    for ws, ok in zip(snapshot, results):
+        if ok is not True:
+            dead_sockets.append(ws)
+            if isinstance(connections, set):
+                connections.discard(ws)
+            elif isinstance(connections, list) and ws in connections:
+                connections.remove(ws)
+    return dead_sockets

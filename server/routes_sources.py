@@ -1498,3 +1498,58 @@ async def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
             "message": f"Extraction failed: {str(exc)}",
             "available_pdfs": available_pdfs,
         }
+
+# --- Phase 6 Chunked Upload Streaming, SHA-256 Digest & Path-Traversal Guard ---
+import hashlib as _hashlib
+from pathlib import Path as _Path
+from typing import Any as _Any
+
+_DEFAULT_CHUNK_SIZE = 1024 * 1024  # 1 MB
+
+
+def validate_safe_source_path(candidate_path: str | _Path, allowed_roots: list[str | _Path] | None = None) -> _Path:
+    """
+    Resolve a local file or directory path and reject null bytes or relative traversal
+    outside allowed roots when allowed_roots is specified.
+    """
+    raw = str(candidate_path or "").strip()
+    if not raw or "\x00" in raw:
+        raise ValueError("Invalid or empty source path")
+    resolved = _Path(raw).resolve()
+    if allowed_roots:
+        valid_roots = [_Path(r).resolve() for r in allowed_roots]
+        if not any(resolved == root or root in resolved.parents for root in valid_roots):
+            raise ValueError(f"Path {resolved} is outside allowed directories")
+    return resolved
+
+
+async def stream_upload_to_disk(
+    upload_file: _Any,
+    destination: str | _Path,
+    chunk_size: int = _DEFAULT_CHUNK_SIZE,
+) -> dict[str, _Any]:
+    """
+    Stream an uploaded file (PDF, ZIM, CSV) to disk in fixed 1 MB chunks while computing
+    its SHA-256 digest, avoiding loading multi-hundred-MB files into RAM.
+    """
+    dest_path = _Path(destination).resolve()
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    hasher = _hashlib.sha256()
+    total_bytes = 0
+
+    with dest_path.open("wb") as out_f:
+        while True:
+            chunk = await upload_file.read(chunk_size)
+            if not chunk:
+                break
+            if isinstance(chunk, str):
+                chunk = chunk.encode("utf-8")
+            out_f.write(chunk)
+            hasher.update(chunk)
+            total_bytes += len(chunk)
+
+    return {
+        "path": str(dest_path),
+        "size_bytes": total_bytes,
+        "sha256": hasher.hexdigest(),
+    }

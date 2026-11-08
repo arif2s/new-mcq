@@ -616,3 +616,32 @@ def check_tantivy() -> Dict[str, Any]:
         "has_sources": has_sources,
         "path": str(INDEX_PATH),
     }
+
+# --- Phase 6 Concurrent Tri-Modal Hybrid Search & RRF Fusion ---
+import asyncio as _asyncio
+from typing import Any as _Any, Awaitable as _Awaitable, Callable as _Callable
+from parsers.reranker import reciprocal_rank_fusion as _reciprocal_rank_fusion
+
+
+async def execute_parallel_hybrid_search(
+    query: str,
+    search_coroutines: list[_Awaitable[list[dict[str, _Any]]]],
+    top_n: int = 20,
+    timeout_sec: float = 5.0,
+) -> list[dict[str, _Any]]:
+    """
+    Execute Tantivy BM25, LanceDB vector, and SciSpaCy alias searches concurrently,
+    tolerating individual engine timeouts, and fuse ranked results via RRF.
+    """
+    if not query or not query.strip() or not search_coroutines:
+        return []
+
+    async def _safe_run(coro: _Awaitable[list[dict[str, _Any]]]) -> list[dict[str, _Any]]:
+        try:
+            res = await _asyncio.wait_for(coro, timeout=timeout_sec)
+            return res if isinstance(res, list) else []
+        except Exception:
+            return []
+
+    ranked_lists = await _asyncio.gather(*(_safe_run(c) for c in search_coroutines))
+    return _reciprocal_rank_fusion(list(ranked_lists), k=60, top_n=top_n)

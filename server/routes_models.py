@@ -1488,3 +1488,41 @@ async def test_rerank_model(payload: TestRerankPayload) -> Dict[str, Any]:
     except Exception as exc:
         logger.error("test_rerank_model failed: %s", exc)
         return {"status": "error", "message": str(exc)}
+
+# --- Phase 6 API Secret Masking & Fast Local LLM Health Probe ---
+from typing import Any as _Any
+import urllib.request as _urllib_request
+
+
+def mask_api_key(secret: str | None) -> str:
+    """Mask sensitive API keys before returning configuration payloads to the UI."""
+    if not secret or not isinstance(secret, str):
+        return ""
+    cleaned = secret.strip()
+    if len(cleaned) <= 8:
+        return "*" * len(cleaned)
+    return f"{cleaned[:4]}...{cleaned[-4:]}"
+
+
+def sanitize_model_config_dict(config_data: dict[str, _Any]) -> dict[str, _Any]:
+    """Return a copy of model configuration with any *key* or *token* fields masked."""
+    sanitized: dict[str, _Any] = {}
+    for k, v in (config_data or {}).items():
+        if isinstance(v, dict):
+            sanitized[k] = sanitize_model_config_dict(v)
+        elif any(term in k.lower() for term in ("api_key", "apikey", "secret", "token", "password")):
+            sanitized[k] = mask_api_key(str(v)) if v else ""
+        else:
+            sanitized[k] = v
+    return sanitized
+
+
+def probe_local_llm_endpoint(base_url: str = "http://127.0.0.1:1234/v1", timeout_sec: float = 3.0) -> dict[str, _Any]:
+    """Fast timeout-bounded probe for LM Studio / Ollama / OpenAI-compatible local servers."""
+    models_url = f"{base_url.rstrip('/')}/models"
+    req = _urllib_request.Request(models_url, method="GET")
+    try:
+        with _urllib_request.urlopen(req, timeout=timeout_sec) as resp:
+            return {"online": 200 <= resp.status < 300, "status_code": resp.status, "url": models_url}
+    except Exception as exc:
+        return {"online": False, "status_code": 0, "url": models_url, "error": str(exc)}
