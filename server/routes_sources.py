@@ -1039,23 +1039,37 @@ def open_pdf(payload: OpenPdfPayload) -> Dict[str, str]:
 
 
 @router.get("/asset")
-def get_asset(path: str) -> FileResponse:
+def get_asset(
+    path: Optional[str] = None,
+    asset: Optional[str] = None,
+    book: Optional[str] = None,
+) -> FileResponse:
     """
     Serves embedded images and attachments referenced inside Obsidian notes.
     Guarantees path traversal safety (is_relative_to) and resolves within attachments subfolders.
+    Supports ?path=... as well as ?book=...&asset=... queries.
     """
-    if not path or not path.strip():
+    raw_query = path or asset
+    if not raw_query or not raw_query.strip():
         raise HTTPException(status_code=400, detail="Asset path is required")
 
-    clean_path = urllib.parse.unquote(path).strip().replace("\\", "/").lstrip("/")
+    clean_path = urllib.parse.unquote(raw_query).strip().replace("\\", "/").lstrip("/")
     target_name = Path(clean_path).name
 
     with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT path FROM knowledge_sources WHERE LOWER(type) = 'obsidian' AND enabled = 1"
+            "SELECT name, path FROM knowledge_sources WHERE LOWER(type) = 'obsidian' AND enabled = 1"
         )
         sources = cursor.fetchall()
+
+    if book:
+        book_low = book.strip().lower()
+        # Prioritize matching vault book name
+        sources = sorted(
+            sources,
+            key=lambda s: 0 if (s["name"] or "").strip().lower() == book_low or Path(s["path"]).name.lower() == book_low else 1,
+        )
 
     for source in sources:
         vault_path = Path(source["path"]).resolve()

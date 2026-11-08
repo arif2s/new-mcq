@@ -156,6 +156,16 @@ routers = [
 for r in routers:
     app.include_router(r)
 
+# Alias /api/obsidian/asset -> /api/sources/asset for frontend and HTML-ready rendering
+@app.get("/api/obsidian/asset")
+def get_obsidian_asset_alias(
+    path: Optional[str] = None,
+    asset: Optional[str] = None,
+    book: Optional[str] = None,
+):
+    from server.routes_sources import get_asset
+    return get_asset(path=path, asset=asset, book=book)
+
 
 # Live WebSocket Endpoints (Unified via ws_manager ConnectionManager)
 async def _handle_websocket(websocket: WebSocket, channel: str = "all") -> None:

@@ -403,6 +403,29 @@ def initialize_database() -> None:
                 cached_llm_summary TEXT DEFAULT '',
                 updated_at REAL DEFAULT (unixepoch('now'))
             );
+
+            -- 17. Obsidian Notes Graph & Subheading Cache
+            CREATE TABLE IF NOT EXISTS obsidian_notes (
+                note_id TEXT PRIMARY KEY,
+                book_name TEXT NOT NULL,
+                category TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                raw_title TEXT NOT NULL,
+                clean_title TEXT NOT NULL,
+                rel_path TEXT NOT NULL,
+                abs_path TEXT NOT NULL,
+                is_hub_index INTEGER DEFAULT 0,
+                headings_json TEXT DEFAULT '[]',
+                child_links_json TEXT DEFAULT '[]',
+                assets_json TEXT DEFAULT '[]',
+                parent_note_ids_json TEXT DEFAULT '[]',
+                parent_titles_json TEXT DEFAULT '[]',
+                breadcrumb_path TEXT DEFAULT '',
+                contextual_search_text TEXT DEFAULT '',
+                content_markdown TEXT DEFAULT '',
+                created_at REAL DEFAULT (unixepoch('now')),
+                updated_at REAL DEFAULT (unixepoch('now'))
+            );
         """)
 
         # STAGE 2: Idempotent Column Additions & Schema Migrations (BEFORE Index Creation)
@@ -510,6 +533,8 @@ def initialize_database() -> None:
             CREATE INDEX IF NOT EXISTS idx_qm_attempt ON question_metadata(attempt_count);
             CREATE INDEX IF NOT EXISTS idx_qm_wrong ON question_metadata(wrong_count);
             CREATE INDEX IF NOT EXISTS idx_qm_last_attempt ON question_metadata(last_attempt_ts);
+            CREATE INDEX IF NOT EXISTS idx_obs_clean_title ON obsidian_notes(clean_title);
+            CREATE INDEX IF NOT EXISTS idx_obs_book ON obsidian_notes(book_name);
         """)
 
         # STAGE 4: Rebuild FTS5 index if csv_questions has data but FTS5 docsize shadow table is empty

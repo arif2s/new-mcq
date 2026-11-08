@@ -206,10 +206,46 @@
 
 // --- Phase 7 Safe Reader Markdown Hydration & Selection Lookup Hook ---
 (function () {
-    window.renderReaderContentSafely = function (markdownText, containerEl) {
+    window.renderReaderContentSafely = function (markdownText, containerEl, anchorId = null) {
+        let renderedHtml = "";
         if (typeof window.renderSafeMarkdown === "function") {
-            return window.renderSafeMarkdown(markdownText, containerEl);
+            renderedHtml = window.renderSafeMarkdown(markdownText, containerEl);
+        } else if (containerEl) {
+            containerEl.textContent = markdownText || "";
         }
-        return "";
+
+        if (anchorId) {
+            setTimeout(() => {
+                const cleanId = String(anchorId).trim().replace(/^#/, "");
+                const targetHeading = document.getElementById(cleanId);
+                if (targetHeading && typeof targetHeading.scrollIntoView === "function") {
+                    targetHeading.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
+            }, 60);
+        }
+        return renderedHtml;
     };
+
+    // Global listener for interactive Obsidian wikilinks inside in-browser document reader
+    document.addEventListener("click", (e) => {
+        const link = e.target?.closest?.("a.obsidian-wikilink");
+        if (!link) return;
+        const targetNote = link.dataset.noteTarget;
+        const book = link.dataset.book || "";
+        const anchor = link.dataset.anchor || link.getAttribute("href")?.replace(/^#/, "") || "";
+
+        if (anchor && (!targetNote || targetNote === "#")) {
+            e.preventDefault();
+            const targetHeading = document.getElementById(anchor);
+            if (targetHeading && typeof targetHeading.scrollIntoView === "function") {
+                targetHeading.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+            return;
+        }
+
+        if (targetNote && typeof window.openLocalResource === "function") {
+            e.preventDefault();
+            window.openLocalResource("obsidian", targetNote, targetNote, { book, anchor });
+        }
+    });
 })();

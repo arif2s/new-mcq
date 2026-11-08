@@ -21,10 +21,11 @@ const _PURIFY_ALLOWED_TAGS = [
 ];
 
 const _PURIFY_ALLOWED_ATTRS = [
-    'target', 'class', 'style', 'src', 'href', 'xlink:href', 'alt', 'title', 'width', 'height', 'align', 'valign',
+    'id', 'target', 'class', 'style', 'src', 'href', 'xlink:href', 'alt', 'title', 'width', 'height', 'align', 'valign', 'loading',
     'colspan', 'rowspan', 'cellpadding', 'cellspacing', 'border', 'role', 'aria-label', 'aria-hidden',
     'data-file', 'data-file-path', 'data-filepath', 'data-vault',
     'data-page', 'data-article-id', 'data-title', 'data-source-type', 'data-anchor',
+    'data-note-target', 'data-book', 'data-callout',
     'viewBox', 'viewbox', 'preserveAspectRatio', 'xmlns', 'xmlns:xlink', 'version',
     'd', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'stroke-miterlimit',
     'stroke-dasharray', 'stroke-dashoffset', 'stroke-opacity', 'fill-opacity', 'opacity',
@@ -489,10 +490,19 @@ window.openDocumentReader = function({ title, sourceType, htmlContent, markdownC
     // Scroll to heading anchor if specified
     if (anchor) {
         setTimeout(() => {
-            const normAnchor = String(anchor).trim().toLowerCase();
+            const cleanAnchor = String(anchor).trim().replace(/^#/, '');
+            const targetHeading = document.getElementById(cleanAnchor);
+            if (targetHeading && typeof targetHeading.scrollIntoView === "function") {
+                targetHeading.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                return;
+            }
+            const normAnchor = cleanAnchor.toLowerCase();
             const headings = wrapper.querySelectorAll('h1, h2, h3, h4, h5, h6');
             for (const h of headings) {
-                if ((h.textContent || '').trim().toLowerCase().includes(normAnchor)) {
+                if (
+                    (h.id && h.id.toLowerCase() === normAnchor) ||
+                    (h.textContent || '').trim().toLowerCase().includes(normAnchor)
+                ) {
                     h.scrollIntoView({ behavior: 'smooth', block: 'start' });
                     break;
                 }
@@ -1115,8 +1125,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 // --- Phase 7 Unified Safe Markdown + KaTeX Renderer, WS Backoff & rAF Drag Throttling ---
 (function () {
     const SAFE_PURIFY_CONFIG = {
-        ADD_TAGS: ["math", "semantics", "mrow", "mi", "mo", "mn", "msup", "msub", "mfrac", "msqrt", "mtext", "annotation", "svg", "path", "line", "rect"],
-        ADD_ATTR: ["xmlns", "display", "encoding", "viewBox", "d", "preserveAspectRatio", "stroke", "fill", "data-page", "data-source"],
+        ADD_TAGS: ["math", "semantics", "mrow", "mi", "mo", "mn", "msup", "msub", "mfrac", "msqrt", "mtext", "annotation", "svg", "path", "line", "rect", "mark"],
+        ADD_ATTR: ["id", "class", "style", "src", "href", "alt", "width", "loading", "xmlns", "display", "encoding", "viewBox", "d", "preserveAspectRatio", "stroke", "fill", "data-page", "data-source", "data-note-target", "data-book", "data-anchor", "data-callout"],
         FORBID_TAGS: ["script", "iframe", "object", "embed", "form"],
         FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus"]
     };
