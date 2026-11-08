@@ -43,7 +43,7 @@ from parsers.pdf_topic_indexer import lookup_pdf_topic_pages, render_topic_pages
 from agents.tema_q.subtopic_router import route_and_prune_subtopics
 from config import DEFAULT_MODEL, LM_STUDIO_TIMEOUT, LM_STUDIO_URL, MAX_CONTEXT_TOKENS
 from core.database import get_db_connection
-from parsers.docling_parser import extract_structured_layout
+from parsers.docling import extract_structured_layout
 from parsers.obsidian_reader import read_markdown_body
 from parsers.pdf_extractor import extract_page_slice
 from parsers.zim_reader import get_zim_article
@@ -305,7 +305,7 @@ def _extract_pdf_sync(file_path: str, page: int) -> str:
     parser = _get_pdf_parser_setting()
     if parser in ("docling_v1_heading_opt", "docling_v1"):
         try:
-            from parsers.docling_v1_heading_opt import extract_structured_layout_v1_heading_opt
+            from parsers.docling import extract_structured_layout_v1_heading_opt
             res = extract_structured_layout_v1_heading_opt(file_path, page)
             if res:
                 return res
@@ -313,7 +313,7 @@ def _extract_pdf_sync(file_path: str, page: int) -> str:
             logger.warning("docling_v1_heading_opt failed, falling back: %s", exc)
     elif parser in ("indra_base_heading_opt", "indra"):
         try:
-            from parsers.indra_base_heading_opt import extract_page_with_indra_base_heading_opt
+            from parsers.indra import extract_page_with_indra_base_heading_opt
             res_dict = extract_page_with_indra_base_heading_opt(
                 file_path, page_number=page, render_page_image=False
             )
@@ -323,7 +323,7 @@ def _extract_pdf_sync(file_path: str, page: int) -> str:
             logger.warning("indra_base_heading_opt failed, falling back: %s", exc)
     elif parser == "docling_v2":
         try:
-            from parsers.docling_v2_parser import extract_structured_layout as extract_v2
+            from parsers.docling import extract_structured_layout as extract_v2
             res = extract_v2(file_path, page)
             if res:
                 return res

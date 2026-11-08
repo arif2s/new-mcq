@@ -201,3 +201,41 @@ def clean_pdf_text(text: str) -> str:
 # Backwards compatibility re-exports
 _is_ocr_garbled_text = is_ocr_garbled_text
 _repair_ocr_token_heuristics = repair_ocr_token_heuristics
+
+
+# --- Phase 3 Pre-Compiled Regex & Biomedical Hyphen Preservation ---
+import re as _re
+
+_CONTROL_CHARS_RE = _re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_MULTI_SPACE_RE = _re.compile(r"[ \t\f\v]+")
+_MULTI_NEWLINE_RE = _re.compile(r"\n{3,}")
+_PROTECTED_PREFIXES = (
+    r"(?:alpha|beta|gamma|delta|epsilon|anti|non|post|pre|pro|co|re|sub|super|"
+    r"inter|intra|extra|ultra|micro|macro|multi|peri|para|trans|cis|levo|dextro|"
+    r"hyper|hypo|auto|neo|pseudo|semi|uni|bi|tri|quadri|poly|mono|endo|exo|"
+    r"[A-Za-z]*\d+|[A-Z]{1,4})"
+)
+_PROTECTED_SET = {
+    "alpha", "beta", "gamma", "delta", "epsilon", "anti", "non", "post", "pre", "pro", "co", "re", "sub", "super",
+    "inter", "intra", "extra", "ultra", "micro", "macro", "multi", "peri", "para", "trans", "cis", "levo", "dextro",
+    "hyper", "hypo", "auto", "neo", "pseudo", "semi", "uni", "bi", "tri", "quadri", "poly", "mono", "endo", "exo"
+}
+_HYPHEN_BREAK_RE = _re.compile(r"\b([a-zA-Z0-9]+)-\s*\n\s*([a-zA-Z0-9]+)\b")
+
+
+def clean_ocr_text(text: str) -> str:
+    if not text:
+        return ""
+    text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\u00ad", "-")
+    text = _CONTROL_CHARS_RE.sub("", text)
+
+    def _replace_hyphen(m: _re.Match) -> str:
+        prefix = m.group(1)
+        suffix = m.group(2)
+        if prefix.lower() in _PROTECTED_SET or len(prefix) <= 1 or prefix.isupper():
+            return f"{prefix}-\n{suffix}"
+        return f"{prefix}{suffix}"
+
+    text = _HYPHEN_BREAK_RE.sub(_replace_hyphen, text)
+    text = _MULTI_SPACE_RE.sub(" ", text)
+    return _MULTI_NEWLINE_RE.sub("\n\n", text).strip()

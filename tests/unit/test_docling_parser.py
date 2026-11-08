@@ -3,7 +3,7 @@ import tempfile
 import pytest
 import pymupdf as fitz
 
-from parsers.docling_parser import (
+from parsers.docling import (
     get_converter,
     extract_structured_layout,
     extract_pdf_structure,

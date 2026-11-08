@@ -15,7 +15,7 @@ from parsers.indra import (
     reconstruct_2d_table_grid,
     deskew_bbox_norm,
 )
-import parsers.indra_parser as ip
+import parsers.indra as ip
 
 
 @pytest.fixture(scope="session")

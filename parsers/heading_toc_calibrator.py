@@ -841,3 +841,64 @@ def build_document_toc_and_hierarchy(
     store_key = full_key if payload["is_full_scan"] else req_key
     _TOC_MEM_CACHE[store_key] = payload
     return payload
+
+# --- Phase 3 Fast Fuzzy TOC Matching & SHA-256 VLM Cache ---
+from difflib import SequenceMatcher as _SequenceMatcher
+from functools import lru_cache as _lru_cache
+import hashlib as _hashlib
+import json as _json
+from pathlib import Path as _Path
+import re as _re
+
+try:
+    from rapidfuzz import fuzz as _rapidfuzz
+except ImportError:
+    _rapidfuzz = None
+
+_NORM_HEADING_RE = _re.compile(r"[^a-z0-9\s]+")
+_TOC_CACHE_DIR = _Path("storage/cache/toc_vlm")
+
+
+@_lru_cache(maxsize=4096)
+def normalize_heading_key(text: str) -> str:
+    if not text:
+        return ""
+    return " ".join(_NORM_HEADING_RE.sub(" ", text.lower()).strip().split())
+
+
+def fast_heading_similarity(toc_title: str, body_heading: str) -> float:
+    a, b = normalize_heading_key(toc_title), normalize_heading_key(body_heading)
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    if min(len(a), len(b)) / max(len(a), len(b)) < 0.25 and a not in b and b not in a:
+        return 0.0
+    if _rapidfuzz is not None:
+        return float(_rapidfuzz.token_set_ratio(a, b)) / 100.0
+    return _SequenceMatcher(None, a, b).ratio()
+
+
+def get_cached_vlm_toc(pdf_path: str | _Path, page_numbers: list[int] | None = None) -> list[dict] | None:
+    p = _Path(pdf_path)
+    if not p.exists():
+        return None
+    st = p.stat()
+    digest = _hashlib.sha256(f"{p.resolve()}:{st.st_size}:{st.st_mtime_ns}:{page_numbers or []}".encode()).hexdigest()
+    cf = _TOC_CACHE_DIR / f"{digest}.json"
+    if cf.exists():
+        try:
+            return _json.loads(cf.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+    return None
+
+
+def save_cached_vlm_toc(pdf_path: str | _Path, toc_entries: list[dict], page_numbers: list[int] | None = None) -> None:
+    p = _Path(pdf_path)
+    if not p.exists():
+        return
+    _TOC_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    st = p.stat()
+    digest = _hashlib.sha256(f"{p.resolve()}:{st.st_size}:{st.st_mtime_ns}:{page_numbers or []}".encode()).hexdigest()
+    (_TOC_CACHE_DIR / f"{digest}.json").write_text(_json.dumps(toc_entries, ensure_ascii=False), encoding="utf-8")

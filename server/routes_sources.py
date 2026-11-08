@@ -50,7 +50,7 @@ from parsers.pdf_extractor import (
     fitz,
     get_pdf_page_count,
 )
-from parsers.pdf_parser import extract_page_with_adaptive_layout
+from parsers.pdf_extractor import extract_page_with_adaptive_layout
 from parsers.tantivy_engine import get_index
 from parsers.zim_reader import get_archive, get_enabled_zim_paths
 from server.ws_manager import ws_manager
@@ -603,7 +603,7 @@ async def run_indexing() -> None:
                             try:
                                 sections = []
                                 if pdf_engine in ("indra", "indra_math", "indra_ocr", "indra_base_heading_opt"):
-                                    import parsers.indra_parser as indra_p
+                                    import parsers.indra as indra_p
                                     i_mode = "ocr" if pdf_engine == "indra_ocr" else ("base_heading_opt" if pdf_engine == "indra_base_heading_opt" else "auto")
                                     i_math = (pdf_engine == "indra_math")
                                     try:
@@ -628,7 +628,7 @@ async def run_indexing() -> None:
                                         raise indra_err
                                 elif pdf_engine == "docling_v1_heading_opt":
                                     try:
-                                        from parsers.docling_v1_heading_opt import (
+                                        from parsers.docling import (
                                             extract_page_with_docling_v1_heading_opt,
                                         )
                                         import pypdfium2 as pdfium_mod
@@ -663,7 +663,7 @@ async def run_indexing() -> None:
                                         )
                                 elif pdf_engine == "docling_v3":
                                     try:
-                                        from parsers.docling_v3_parser import (
+                                        from parsers.docling import (
                                             extract_pdf_structure as extract_pdf_v3,
                                         )
 
@@ -678,7 +678,7 @@ async def run_indexing() -> None:
                                         )
                                 elif pdf_engine == "docling_v2":
                                     try:
-                                        from parsers.docling_v2_parser import (
+                                        from parsers.docling import (
                                             extract_pdf_structure as extract_pdf_v2,
                                         )
 
@@ -693,7 +693,7 @@ async def run_indexing() -> None:
                                         )
                                 elif pdf_engine == "docling":
                                     try:
-                                        from parsers.docling_parser import (
+                                        from parsers.docling import (
                                             extract_pdf_structure,
                                         )
 
@@ -1165,8 +1165,8 @@ async def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
     page-by-page for side-by-side verification and manual optimization.
     Returns JSON strictly conforming to the frontend API contract.
     """
-    from parsers.docling_v2_parser import extract_page_with_adaptive_layout
-    import parsers.docling_parser as docling_ext
+    from parsers.docling import extract_page_with_adaptive_layout
+    import parsers.docling as docling_ext
     import parsers.pdf_extractor as pdf_ext
 
     available_pdfs: List[Dict[str, str]] = []
@@ -1226,7 +1226,7 @@ async def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
 
         if engine_choice in ("indra", "indra_ocr", "indra_math", "indra_base_heading_opt"):
             if engine_choice == "indra_base_heading_opt":
-                from parsers.indra_base_heading_opt import extract_page_with_indra_base_heading_opt
+                from parsers.indra import extract_page_with_indra_base_heading_opt
                 result = await asyncio.to_thread(
                     extract_page_with_indra_base_heading_opt,
                     str(target_path),
@@ -1255,7 +1255,7 @@ async def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
                     "page_height": result.get("page_height", 792.0),
                 }
 
-            import parsers.indra_parser as indra_p
+            import parsers.indra as indra_p
             i_mode = "ocr" if engine_choice == "indra_ocr" else (getattr(payload, "indra_mode", "auto") or "auto")
             i_math = True if engine_choice == "indra_math" else bool(getattr(payload, "indra_math", False))
             i_furniture = bool(getattr(payload, "indra_furniture", False))
@@ -1293,7 +1293,7 @@ async def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
             }
 
         elif engine_choice in ("docling_v1_heading_opt", "v1_heading_opt"):
-            from parsers.docling_v1_heading_opt import extract_page_with_docling_v1_heading_opt
+            from parsers.docling import extract_page_with_docling_v1_heading_opt
             result = await asyncio.to_thread(
                 extract_page_with_docling_v1_heading_opt,
                 str(target_path),
@@ -1327,7 +1327,7 @@ async def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
             }
 
         elif engine_choice in ("docling_v3", "v3"):
-            from parsers.docling_v3_parser import extract_page_with_docling_v3
+            from parsers.docling import extract_page_with_docling_v3
             result = await asyncio.to_thread(
                 extract_page_with_docling_v3,
                 str(target_path),
@@ -1348,7 +1348,7 @@ async def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
             }
 
         elif engine_choice in ("docling_v2", "v2"):
-            from parsers.docling_v2_parser import extract_page_with_docling_v2
+            from parsers.docling import extract_page_with_docling_v2
             result = await asyncio.to_thread(
                 extract_page_with_docling_v2,
                 str(target_path),

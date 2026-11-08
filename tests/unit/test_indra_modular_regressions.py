@@ -1,6 +1,6 @@
 import os
 import pytest
-from parsers.indra_parser import (
+from parsers.indra import (
     IndraHybridLayoutRefiner,
     IndraModularEngine,
     LayoutStrategyRegistry,

@@ -281,7 +281,7 @@ class VisualPageInspector:
         crop = self.arr[py0:py1, px0:px1, :]
 
         if self.ocr_engine in ("indra", "indra_math"):
-            import parsers.indra_parser as indra_p
+            import parsers.indra as indra_p
             res = indra_p.ocr_image_region(crop, math=(self.ocr_engine == "indra_math"))
             txt = res.get("text") or res.get("markdown") or ""
             return txt.strip() if txt.strip() else None

@@ -3,7 +3,7 @@ import tempfile
 import pytest
 import pymupdf as fitz
 
-from parsers.pdf_parser import AdaptivePdfLayoutEngine, extract_page_with_adaptive_layout
+from parsers.pdf_extractor import AdaptivePdfLayoutEngine, extract_page_with_adaptive_layout
 
 
 @pytest.fixture

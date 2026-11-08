@@ -397,3 +397,43 @@ def read_obsidian_for_browser(file_path: Union[str, Path]) -> Dict[str, Any]:
         "headings": headings,
         "length": len(body),
     }
+
+
+# --- Phase 3 Obsidian YAML Frontmatter & Wikilink Extractor ---
+import re as _re
+from typing import Any as _Any
+
+_FRONTMATTER_RE = _re.compile(r"\A---\s*\n(.*?)\n---\s*\n", _re.DOTALL)
+_WIKILINK_RE = _re.compile(r"!?\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]")
+
+
+def extract_obsidian_metadata_and_clean_body(markdown_text: str) -> tuple[dict[_Any, _Any], str]:
+    metadata: dict[str, list[str]] = {"aliases": [], "tags": [], "wikilinks": []}
+    if not markdown_text:
+        return metadata, ""
+    body = markdown_text
+    fm_match = _FRONTMATTER_RE.match(markdown_text)
+    if fm_match:
+        fm_raw = fm_match.group(1)
+        body = markdown_text[fm_match.end():]
+        for key in ("aliases", "tags"):
+            inline = _re.search(rf"^{key}:\s*\[(.*?)\]", fm_raw, _re.MULTILINE)
+            if inline:
+                metadata[key].extend([x.strip().strip("'\"") for x in inline.group(1).split(",") if x.strip()])
+            else:
+                block = _re.search(rf"^{key}:\s*\n((?:\s*-\s*.*\n?)+)", fm_raw, _re.MULTILINE)
+                if block:
+                    metadata[key].extend([
+                        _re.sub(r"^\s*-\s*", "", line).strip().strip("'\"")
+                        for line in block.group(1).splitlines()
+                        if line.strip()
+                    ])
+
+    def _replace_wl(m: _re.Match) -> str:
+        target = m.group(1).strip()
+        label = (m.group(2) or target).strip()
+        if target and target not in metadata["wikilinks"]:
+            metadata["wikilinks"].append(target)
+        return label
+
+    return metadata, _WIKILINK_RE.sub(_replace_wl, body).strip()

@@ -176,3 +176,13 @@ class HeadingPrototype:
     rotation: float = 0.0
     indra_role: str = ""
     thickness: float = 1.0
+
+
+from parsers.schema import (  # noqa: E402,F401
+    BoundingBox,
+    DocumentSection,
+    HeadingNode,
+    ParsedBlock,
+    ParsedDocument,
+    clamp_heading_levels,
+)

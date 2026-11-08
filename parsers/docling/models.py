@@ -100,3 +100,13 @@ def download_docling_models() -> Dict[str, Any]:
             "message": str(exc),
             "downloaded": False,
         }
+
+
+from parsers.schema import (  # noqa: E402,F401
+    BoundingBox,
+    DocumentSection,
+    HeadingNode,
+    ParsedBlock,
+    ParsedDocument,
+    clamp_heading_levels,
+)

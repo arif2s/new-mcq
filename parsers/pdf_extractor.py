@@ -25,7 +25,7 @@ except ImportError:
     except ImportError:
         fitz = None
 
-from parsers.pdf_parser import (
+from parsers.docling import (
     AdaptivePdfLayoutEngine,
     clean_pdf_text,
     extract_page_with_adaptive_layout,

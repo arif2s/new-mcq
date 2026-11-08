@@ -1063,3 +1063,586 @@ class IndraModularEngine:
         strat.score_and_classify_elements(ir)
 
         return ir
+
+
+# --- Auto-migrated from indra_parser.py ---
+import base64
+import hashlib
+import html
+import io
+import json
+import shutil
+import time
+from functools import lru_cache
+from parsers.embedding_engine import get_embedding_engine
+from parsers.lancedb_engine import LanceDBEngine
+from parsers.pdf_extractor import clean_pdf_text
+from parsers.indra.document import DocumentHeadingTracker, get_or_create_document_tracker
+from parsers.indra.profiles import (
+    CoordinateZone,
+    FurnitureSuppressionPolicy,
+    HeadingWeightPolicy,
+    LAYOUT_PROFILES,
+    LayoutProfile,
+    PageGeometryPolicy,
+)
+from parsers.indra.refiner import IndraHybridLayoutRefiner, build_layout_svg_overlay
+from parsers.indra.rules import (
+    RegexCatalog,
+    deskew_bbox_norm,
+    enrich_lines,
+    overlap_ratio,
+    rgb_distance,
+    rgb_saturation,
+    rgb_to_hsv,
+    union_bbox,
+)
+from parsers.indra.strategies import (
+    AcademicArticleStrategy,
+    IllustratedBookletStrategy,
+    LayoutStrategy,
+    LayoutStrategyRegistry,
+    NativeDigitalStrategy,
+    ScannedTwoColumnTextbookStrategy,
+)
+from parsers.indra.types import (
+    BBox,
+    ElementRole,
+    HeadingPrototype,
+    PageElement,
+    PageElements,
+    RGB,
+    TableGrid,
+    ThreadSafeLRUCache,
+)
+
+def _render_single_pdf_page_to_png_and_gray(
+    file_path: Path, page_number: int, dpi: int = 200
+) -> tuple[Path, np.ndarray, int, int]:
+    """Renders a single 1-based PDF page to a temporary 1-page PDF and grayscale uint8 array."""
+    import pypdfium2 as pdfium
+
+    if page_number < 1:
+        raise ValueError(f"page_number must be >= 1 (got {page_number})")
+
+    src_doc = pdfium.PdfDocument(str(file_path))
+    try:
+        total_pages = len(src_doc)
+        if page_number > total_pages:
+            raise ValueError(
+                f"Page {page_number} out of range for '{file_path.name}' ({total_pages} pages)."
+            )
+
+        page_obj = src_doc[page_number - 1]
+        scale = float(dpi) / 72.0
+        bitmap = page_obj.render(scale=scale)
+        pil_img = bitmap.to_pil()
+        width, height = pil_img.size
+        gray_arr = np.asarray(pil_img.convert("L"), dtype=np.uint8)
+
+        single_pdf = pdfium.PdfDocument.new()
+        single_pdf.import_pages(src_doc, pages=[page_number - 1])
+        tmp_fd, tmp_pdf_str = tempfile.mkstemp(suffix=".pdf", prefix="indra_p_")
+        os.close(tmp_fd)
+        tmp_pdf_path = Path(tmp_pdf_str)
+        single_pdf.save(str(tmp_pdf_path))
+        single_pdf.close()
+        page_obj.close()
+        bitmap.close()
+        pil_img.close()
+        return tmp_pdf_path, gray_arr, width, height
+    finally:
+        src_doc.close()
+
+def _map_indra_label_to_box_type(label: str) -> str:
+    m = {
+        "Section-Header": "header",
+        "Title": "header",
+        "Page-Header": "header",
+        "Page-Footer": "footer",
+        "Table": "table",
+        "List-Group": "list",
+        "Caption": "caption",
+        "Footnote": "footnote",
+        "Picture": "figure",
+        "Figure": "figure",
+        "Image": "figure",
+        "Text": "paragraph",
+    }
+    return m.get(label, "paragraph")
+
+def _build_layout_svg_overlay(
+    blocks: list[dict[str, Any]],
+    lines: list[dict[str, Any]],
+    width: int,
+    height: int,
+) -> str:
+    return build_layout_svg_overlay(blocks, lines, width, height)
+
+def ocr_image_region(
+    gray_or_bgr_image: np.ndarray,
+    math: bool = False,
+    threads: int = DEFAULT_WIN_THREADS,
+    **kwargs: Any,
+) -> str:
+    """Performs localized line crop OCR via Indra OCR with fallback."""
+    if gray_or_bgr_image is None or gray_or_bgr_image.size == 0:
+        return ""
+    try:
+        conv = get_indra_converter(mode="ocr", math=math, threads=threads, image_ocr=True)
+        img_arr = np.asarray(gray_or_bgr_image)
+        if img_arr.ndim == 3 and img_arr.shape[2] == 3:
+            img_arr = np.ascontiguousarray(
+                (
+                    (77 * img_arr[:, :, 0].astype(np.uint16)
+                    + 150 * img_arr[:, :, 1].astype(np.uint16)
+                    + 29 * img_arr[:, :, 2].astype(np.uint16))
+                    >> 8
+                ).astype(np.uint8)
+            )
+        ocr_res = conv.ocr(img_arr)
+        if hasattr(ocr_res, "text") and ocr_res.text:
+            return str(ocr_res.text).strip()
+        if hasattr(ocr_res, "lines"):
+            return " ".join(str(getattr(ln, "text", "")).strip() for ln in ocr_res.lines if getattr(ln, "text", "")).strip()
+        return ""
+    except Exception as e:
+        logger.debug("Localized OCR fallback triggered: %s", e)
+        return ""
+
+def extract_page_with_indra(
+    file_path: Union[str, Path],
+    page_number: int = 1,
+    mode: str = "auto",
+    math: bool = False,
+    furniture: bool = False,
+    dpi: int = 200,
+    threads: int = DEFAULT_WIN_THREADS,
+    default_title: str = "",
+    initial_heading_stack: Optional[dict[int, str]] = None,
+    heading_tracker: Optional[DocumentHeadingTracker] = None,
+    profile_id: Optional[str] = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Extracts a single PDF page with layout-aware heading hierarchy and visual SVG overlays."""
+    if mode == "base_heading_opt" or profile_id == "base_heading_opt":
+        return extract_page_with_indra_base_heading_opt(
+            file_path, page_number=page_number, dpi=dpi, threads=threads, **kwargs
+        )
+    path = Path(file_path).resolve()
+    root_title = default_title or path.stem
+    tracker = heading_tracker or get_or_create_document_tracker(path, default_title=root_title)
+
+    engine = IndraModularEngine(
+        profile_id=profile_id,
+        mode=mode,
+        math=math,
+        furniture=furniture,
+        dpi=dpi,
+        threads=threads,
+    )
+    if initial_heading_stack:
+        engine.active_titles.update({int(k): str(v) for k, v in initial_heading_stack.items()})
+        tracker.active_stack.update({int(k): str(v) for k, v in initial_heading_stack.items()})
+
+    ir = engine.extract_page_ir(path, page_number=page_number)
+    refiner = IndraHybridLayoutRefiner(
+        page_number=page_number,
+        dpi=dpi,
+        default_title=root_title,
+        heading_tracker=tracker,
+        engine=engine,
+        pdf_path=path,
+    )
+    return refiner.refine_page(ir)
+
+def extract_structured_layout(
+    file_path: Union[str, Path],
+    page_number: int,
+    mode: str = "auto",
+    math: bool = False,
+    **kwargs: Any,
+) -> str:
+    """Mtime-aware cached wrapper returning pure Markdown for a target page."""
+    path = Path(file_path).resolve()
+    mtime_ns = path.stat().st_mtime_ns if path.is_file() else 0
+    cache_key = (str(path), mtime_ns, int(page_number), str(mode), bool(math))
+    cached_md = _LAYOUT_MD_CACHE.get(cache_key)
+    if cached_md is not None:
+        return cached_md
+
+    res = extract_page_with_indra(
+        file_path=path,
+        page_number=page_number,
+        mode=mode,
+        math=math,
+        **kwargs,
+    )
+    md = str(res.get("markdown") or res.get("text") or "")
+    _LAYOUT_MD_CACHE.put(cache_key, md)
+    return md
+
+def extract_pdf_structure(
+    file_path: Union[str, Path],
+    default_title: str = "",
+    mode: str = "auto",
+    math: bool = False,
+    furniture: bool = False,
+    dpi: int = 150,
+    threads: int = DEFAULT_WIN_THREADS,
+    **kwargs: Any,
+) -> list[dict[str, Any]]:
+    """Extracts all pages of a PDF document sequentially, propagating heading stacks across pages."""
+    import pypdfium2 as pdfium
+
+    path = Path(file_path).resolve()
+    root_title = default_title or path.stem
+    doc = pdfium.PdfDocument(str(path))
+    total_pages = len(doc)
+    doc.close()
+
+    tracker = get_or_create_document_tracker(path, default_title=root_title, reset=True)
+    engine = IndraModularEngine(
+        mode=mode,
+        math=math,
+        furniture=furniture,
+        dpi=dpi,
+        threads=threads,
+    )
+
+    all_sections: list[dict[str, Any]] = []
+    active_stack: dict[int, str] = {}
+
+    for page_num in range(1, total_pages + 1):
+        res = extract_page_with_indra(
+            file_path=path,
+            page_number=page_num,
+            mode=mode,
+            math=math,
+            furniture=furniture,
+            dpi=dpi,
+            threads=threads,
+            default_title=root_title,
+            initial_heading_stack=active_stack,
+            heading_tracker=tracker,
+            **kwargs,
+        )
+        for h_path, subhead, blocks in res.get("sections_for_chunks", []):
+            content = "\n\n".join(b for b in blocks if b.strip()).strip()
+            if content:
+                all_sections.append({
+                    "heading_path": h_path,
+                    "subheading": subhead,
+                    "text": content,
+                    "content": content,
+                    "page_number": page_num,
+                })
+        if res.get("active_heading_stack"):
+            active_stack = dict(res["active_heading_stack"])
+
+    return all_sections
+
+def ingest_to_lancedb(
+    file_path: Union[str, Path],
+    source_article: str = "",
+    main_topic: str = "",
+    mode: str = "auto",
+    math: bool = False,
+    batch_size: int = 64,
+    **kwargs: Any,
+) -> int:
+    """Extracts structured sections from a PDF and indexes them into LanceDB."""
+    path = Path(file_path).resolve()
+    sections = extract_pdf_structure(
+        file_path=path,
+        default_title=source_article or path.stem,
+        mode=mode,
+        math=math,
+        **kwargs,
+    )
+    if not sections:
+        return 0
+
+    embedder = get_embedding_engine()
+    lance = LanceDBEngine()
+    records: list[dict[str, Any]] = []
+
+    for idx, sec in enumerate(sections):
+        content = sec["text"]
+        digest = hashlib.sha256(f"{path.stem}_{sec['page_number']}_{idx}".encode()).hexdigest()[:16]
+        records.append({
+            "id": f"pdf_indra_{digest}",
+            "file_path": str(path),
+            "source_article": source_article or path.stem,
+            "main_topic": main_topic or sec.get("subheading", path.stem),
+            "heading_path": sec.get("heading_path", path.stem),
+            "subheading": sec.get("subheading", path.stem),
+            "page_number": sec["page_number"],
+            "text": content,
+            "vector": embedder.embed(content),
+            "chunk_type": "section",
+            "metadata": json.dumps({"source_engine": "indra", "page": sec["page_number"]}),
+        })
+
+    if records:
+        lance.upsert_documents(records)
+    return len(records)
+
+def parse_document_text_to_ast(
+    raw_text: str, default_title: str = "Document", escape_html_angles: bool = True
+) -> dict[str, Any]:
+    """Lightweight AST parser for text converted to structured sections."""
+    lines = raw_text.splitlines()
+    sections = []
+    current_h = default_title
+    cur_buf = []
+
+    for ln in lines:
+        if ln.startswith("#"):
+            if cur_buf:
+                sections.append({"heading": current_h, "content": "\n".join(cur_buf).strip()})
+                cur_buf.clear()
+            current_h = ln.lstrip("#").strip()
+        else:
+            cur_buf.append(ln)
+
+    if cur_buf:
+        sections.append({"heading": current_h, "content": "\n".join(cur_buf).strip()})
+
+    return {"title": default_title, "sections": sections}
+
+
+# --- Auto-migrated from indra_base_heading_opt.py ---
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from parsers.indra.refiner import build_layout_svg_overlay
+from parsers.indra.rules import RegexCatalog, overlap_ratio
+from parsers.indra.types import BBox, PageElement, RGB
+
+def _normalize_key(text: str) -> str:
+    cleaned = re.sub(r"^[•*\-–—\s#]+", "", (text or "").strip()).replace("**", "")
+    return re.sub(r"[^a-z0-9]+", " ", cleaned.lower()).strip()
+
+def extract_page_with_indra_base_heading_opt(
+    file_path: Union[str, Path],
+    page_number: int = 1,
+    mode: str = "auto",
+    math: bool = False,
+    furniture: bool = False,
+    dpi: int = 200,
+    threads: int = DEFAULT_WIN_THREADS,
+    default_title: str = "",
+    full_toc_scan: bool = False,
+    render_page_image: bool = True,
+) -> Dict[str, Any]:
+    from parsers.heading_toc_calibrator import (
+        build_document_toc_and_hierarchy,
+        classify_outline_prefix,
+        score_and_resolve_heading_candidate,
+    )
+    """
+    Extracts a PDF page using Pure Base Indra OCR reading order and blocks,
+    then non-destructively overlays calibrated H1-H6 heading levels and breadcrumbs
+    from the Multi-Pass TOC Calibrator.
+    """
+    import pypdfium2 as pdfium
+
+    t0 = time.perf_counter()
+    path = Path(file_path).resolve()
+    root_title = default_title.strip() or path.stem
+
+    # 1. Run Multi-Pass TOC Calibrator (Lazy Window for single page, or Full Scan if cached/requested)
+    toc_payload = build_document_toc_and_hierarchy(
+        path, default_title=root_title, target_page=page_number, full_scan=full_toc_scan
+    )
+    preassigned_page_toc: List[Dict[str, Any]] = list(
+        (toc_payload.get("page_toc_map") or {}).get(str(page_number), [])
+    )
+    init_stack: Dict[int, str] = {
+        int(k): str(v)
+        for k, v in ((toc_payload.get("page_initial_stacks") or {}).get(str(page_number), {})).items()
+    }
+
+    # 2. Render page via pypdfium2 & invoke Base Indra OCR natively
+    doc = pdfium.PdfDocument(str(path))
+    try:
+        page_idx = max(0, min(len(doc) - 1, page_number - 1))
+        page_obj = doc[page_idx]
+        w_pt, h_pt = float(page_obj.get_width()), float(page_obj.get_height())
+        scale = float(dpi) / 72.0
+        bitmap = page_obj.render(scale=scale)
+        pil_img = bitmap.to_pil()
+        w_px, h_px = pil_img.size
+
+        page_image_b64 = ""
+        if render_page_image:
+            buf = io.BytesIO()
+            pil_img.save(buf, format="PNG")
+            page_image_b64 = f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode('ascii')}"
+        pil_img.close()
+        bitmap.close()
+
+        indra_page = None
+        try:
+            if not is_indra_models_downloaded(include_math=math):
+                download_indra_models(include_math=math)
+            conv = get_indra_converter(
+                mode=mode, math=math, furniture=furniture, dpi=dpi, threads=threads
+            )
+            indra_page = conv.pdf_page(str(path), doc, page_idx)
+        except Exception as exc:
+            logger.warning("Base Indra OCR fallback to native pypdfium2 textpage: %s", exc)
+    finally:
+        doc.close()
+
+    # 3. Extract Base Indra Blocks in their EXACT native order.onnx sequence
+    native_blocks: List[Dict[str, Any]] = []
+    native_lines: List[Dict[str, Any]] = []
+
+    if indra_page is not None:
+        for blk in getattr(indra_page, "blocks", []):
+            lbl = blk.get("label", "Text") if isinstance(blk, dict) else getattr(blk, "label", "Text")
+            bx = list(blk.get("bbox", []) if isinstance(blk, dict) else getattr(blk, "bbox", []))
+            txt = str(blk.get("text", "") if isinstance(blk, dict) else getattr(blk, "text", "")).strip()
+            if txt:
+                native_blocks.append({"label": lbl, "bbox": bx, "text": txt})
+
+        for ln in getattr(indra_page, "lines", []):
+            bx = list(getattr(ln, "bbox", getattr(ln, "box", [0, 0, 0, 0])))
+            txt = str(getattr(ln, "text", "")).strip()
+            if txt and len(bx) == 4:
+                native_lines.append({"text": txt, "box": bx})
+
+    # If native_blocks is empty (e.g. only lines returned or fallback), build sequential blocks from lines
+    if not native_blocks and native_lines:
+        for ln in native_lines:
+            native_blocks.append({"label": "Text", "bbox": ln["box"], "text": ln["text"]})
+
+    # 4. Non-Destructive Heading Level Alignment (Matches Base Blocks to Preassigned Multi-Pass TOC)
+    md_blocks: List[str] = []
+    hierarchy_tree: List[Dict[str, Any]] = []
+    headings: List[str] = []
+    sections_for_chunks: List[Tuple[str, str, List[str]]] = []
+    active_titles: Dict[int, str] = dict(init_stack)
+    cur_sec_path = " > ".join([root_title] + [active_titles[k] for k in sorted(active_titles)]) if active_titles else root_title
+    cur_sec_sub = active_titles[max(active_titles)] if active_titles else root_title
+    cur_sec_blocks: List[str] = []
+
+    used_toc_indices: Set[int] = set()
+
+    for blk in native_blocks:
+        lbl = str(blk.get("label", "Text"))
+        if not furniture and lbl in ("Page-Header", "Page-Footer"):
+            continue
+        raw_txt = RegexCatalog.clean_text(blk.get("text", ""))
+        if not raw_txt:
+            continue
+
+        bx = blk.get("bbox") or [0, 0, w_px, h_px]
+        bb_norm: BBox = (
+            float(bx[0]) / max(1.0, w_px),
+            float(bx[1]) / max(1.0, h_px),
+            float(bx[2]) / max(1.0, w_px),
+            float(bx[3]) / max(1.0, h_px),
+        ) if max(bx, default=0.0) > 1.05 else tuple(float(v) for v in bx)  # type: ignore
+
+        bk_norm = _normalize_key(raw_txt)
+        matched_toc: Optional[Dict[str, Any]] = None
+
+        for t_idx, te in enumerate(preassigned_page_toc):
+            if t_idx in used_toc_indices:
+                continue
+            tk = _normalize_key(te.get("title", ""))
+            te_y0 = float(te.get("y0", -1.0))
+            if tk and (
+                bk_norm == tk
+                or (len(tk) >= 6 and (bk_norm.startswith(tk) or tk.startswith(bk_norm)) and abs(bb_norm[1] - te_y0) <= 0.08)
+            ):
+                matched_toc = te
+                used_toc_indices.add(t_idx)
+                break
+
+        is_heading = matched_toc is not None or lbl in ("Section-Header", "Title", "Header")
+        if is_heading:
+            lvl = int(matched_toc["level"]) if matched_toc else (1 if lbl == "Title" else 2)
+            clean_title = str(matched_toc["title"]) if matched_toc else raw_txt.lstrip("#").strip()
+            blk["label"] = "Section-Header"
+
+            active_titles[lvl] = clean_title
+            for deeper in [k for k in list(active_titles) if k > lvl]:
+                active_titles.pop(deeper, None)
+
+            h_path = (
+                str(matched_toc.get("heading_path"))
+                if (matched_toc and matched_toc.get("heading_path"))
+                else " > ".join([root_title] + [active_titles[k] for k in sorted(active_titles)])
+            )
+            headings.append(clean_title)
+            node = {
+                "page": page_number,
+                "level": lvl,
+                "tag": f"H{lvl}",
+                "title": clean_title,
+                "heading_path": h_path,
+                "order": len(hierarchy_tree) + 1,
+                "x0": round(bb_norm[0], 4),
+                "y0": round(bb_norm[1], 4),
+                "x1": round(bb_norm[2], 4),
+                "y1": round(bb_norm[3], 4),
+            }
+            hierarchy_tree.append(node)
+
+            if cur_sec_blocks:
+                sections_for_chunks.append((cur_sec_path, cur_sec_sub, list(cur_sec_blocks)))
+                cur_sec_blocks.clear()
+            cur_sec_path = h_path
+            cur_sec_sub = clean_title
+            md_h = f"{'#' * lvl} {clean_title}"
+            md_blocks.append(md_h)
+            cur_sec_blocks.append(md_h)
+
+            # If raw_txt was a run-in heading containing trailing body text after clean_title, preserve the body text!
+            if len(bk_norm) > len(_normalize_key(clean_title)) + 6:
+                rem_body = raw_txt[len(clean_title) :].lstrip(" :.—–-")
+                if len(rem_body.split()) >= 3:
+                    md_blocks.append(rem_body)
+                    cur_sec_blocks.append(rem_body)
+        elif lbl == "List-Group":
+            md_li = raw_txt if raw_txt.startswith(("-", "*", "•")) else f"- {raw_txt}"
+            md_blocks.append(md_li)
+            cur_sec_blocks.append(md_li)
+        elif lbl == "Caption":
+            md_cap = f"> *{raw_txt}*"
+            md_blocks.append(md_cap)
+            cur_sec_blocks.append(md_cap)
+        else:
+            md_blocks.append(raw_txt)
+            cur_sec_blocks.append(raw_txt)
+
+    if cur_sec_blocks:
+        sections_for_chunks.append((cur_sec_path, cur_sec_sub, list(cur_sec_blocks)))
+
+    md_out = "\n\n".join(md_blocks)
+    svg_overlay = build_layout_svg_overlay(native_blocks, native_lines, w_px, h_px)
+    elapsed = round((time.perf_counter() - t0) * 1000.0, 2)
+
+    return {
+        "status": "success",
+        "engine": "indra_base_heading_opt",
+        "page": page_number,
+        "page_number": page_number,
+        "markdown": md_out,
+        "text": md_out,
+        "headings": headings,
+        "hierarchy_tree": hierarchy_tree,
+        "active_heading_stack": active_titles,
+        "document_toc": toc_payload.get("document_toc", []),
+        "page_toc": hierarchy_tree,
+        "blocks": native_blocks,
+        "lines": native_lines,
+        "svg_overlay": svg_overlay,
+        "page_image_b64": page_image_b64,
+        "page_width": w_pt,
+        "page_height": h_pt,
+        "sections_for_chunks": sections_for_chunks,
+        "elapsed_ms": elapsed,
+    }

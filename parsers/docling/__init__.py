@@ -61,3 +61,6 @@ __all__ = [
     "point_in_rect",
     "rgb_distance",
 ]
+
+# Consolidated compatibility exports
+from parsers.docling.engine import *  # noqa: F401,F403

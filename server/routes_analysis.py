@@ -44,10 +44,10 @@ from core.database import (
     upsert_layout_analysis_progress,
     upsert_user_annotated_bbox,
 )
-import parsers.layout_profiles as layout_profiles
+import parsers.indra.profiles as layout_profiles
 import parsers.pdf_extractor as pdf_extractor
-import parsers.indra_parser as indra_parser
-import parsers.docling_parser as docling_parser
+import parsers.indra as indra_parser
+import parsers.docling as docling_parser
 from parsers.indra.document import DocumentHeadingTracker, get_or_create_document_tracker
 
 logger = logging.getLogger("medisearch.routes_analysis")
@@ -61,7 +61,7 @@ router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
 class InitializeAnalysisRequest(BaseModel):
     file_path: str = Field(..., description="Absolute or relative path to the PDF file")
-    profile_id: Optional[str] = Field("native_digital", description="Profile ID from parsers.layout_profiles")
+    profile_id: Optional[str] = Field("native_digital", description="Profile ID from parsers.indra.profiles")
 
 
 class BBoxItem(BaseModel):
@@ -359,7 +359,7 @@ async def get_page_data(
 ):
     """Takes file_path and page_number. Returns visual page dimensions and an ordered array
     of layout elements. If entries exist in user_annotated_bboxes, return those overrides.
-    Otherwise, invoke parsers.indra_parser.extract_page_with_indra() dynamically to get
+    Otherwise, invoke parsers.indra.extract_page_with_indra() dynamically to get
     layout regions, caching text and visual boxes.
     """
     clean_path = file_path.strip()

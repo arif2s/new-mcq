@@ -988,3 +988,26 @@ __all__ = [
     "search_zim_articles",
     "expand_query_via_zim",
 ]
+
+
+# --- Phase 3 Fast Pre-Compiled HTML Stripper ---
+import html as _html
+import re as _re
+
+_SCRIPT_STYLE_RE = _re.compile(r"<(script|style|nav|footer|aside)\b[^>]*>.*?</\1>", _re.IGNORECASE | _re.DOTALL)
+_BLOCK_TAG_RE = _re.compile(r"</?(?:p|div|br|li|tr|h[1-6]|blockquote|section|article)\b[^>]*>", _re.IGNORECASE)
+_ANY_TAG_RE = _re.compile(r"<[^>]+>")
+_WS_COLLAPSE_RE = _re.compile(r"[ \t]+")
+_NL_COLLAPSE_RE = _re.compile(r"\n{3,}")
+
+
+def fast_strip_zim_html(raw_html: str) -> str:
+    if not raw_html:
+        return ""
+    cleaned = _SCRIPT_STYLE_RE.sub(" ", raw_html)
+    cleaned = _BLOCK_TAG_RE.sub("\n", cleaned)
+    cleaned = _ANY_TAG_RE.sub(" ", cleaned)
+    cleaned = _html.unescape(cleaned)
+    cleaned = _WS_COLLAPSE_RE.sub(" ", cleaned)
+    cleaned = "\n".join(line.strip() for line in cleaned.splitlines() if line.strip())
+    return _NL_COLLAPSE_RE.sub("\n\n", cleaned).strip()

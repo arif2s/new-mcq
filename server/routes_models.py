@@ -246,9 +246,9 @@ def _download_all_defaults_worker() -> None:
                 "message": "Downloading Docling layout & table models...",
             })
         try:
-            from parsers.docling_v3_parser import download_docling_models
+            from parsers.docling import download_docling_models
         except Exception:
-            from parsers.docling_v2_parser import download_docling_models
+            from parsers.docling import download_docling_models
         download_docling_models()
 
         # Step 5: Indra OCR ONNX Models
@@ -257,7 +257,7 @@ def _download_all_defaults_worker() -> None:
                 "progress": 85.0,
                 "message": "Downloading Indra OCR ONNX models...",
             })
-        from parsers.indra_parser import download_indra_models
+        from parsers.indra import download_indra_models
         download_indra_models(include_math=True)
 
         # Step 6: UI Vendor Assets
@@ -923,7 +923,7 @@ async def get_flashrank_models() -> Dict[str, Any]:
 @router.get("/indra_status")
 async def get_indra_status() -> Dict[str, Any]:
     """Returns the download status and configuration of Indra OCR ONNX weights (~76 MB core + ~20 MB math)."""
-    from parsers.indra_parser import INDRA_MODELS_DIR, is_indra_models_downloaded
+    from parsers.indra import INDRA_MODELS_DIR, is_indra_models_downloaded
     return {
         "downloaded": is_indra_models_downloaded(include_math=False),
         "math_downloaded": is_indra_models_downloaded(include_math=True),
@@ -1094,7 +1094,7 @@ async def download_model(
 
     elif m_type in ("indra", "indra_ocr") or m_name in ("indra", "indra_ocr", "datalab-to/indra-ocr"):
         try:
-            from parsers.indra_parser import download_indra_models
+            from parsers.indra import download_indra_models
             res = await asyncio.to_thread(download_indra_models, include_math=True)
             return {
                 "status": "success",
@@ -1110,9 +1110,9 @@ async def download_model(
     elif m_type in ("docling", "docling_v2", "docling_v3"):
         try:
             try:
-                from parsers.docling_v3_parser import download_docling_models
+                from parsers.docling import download_docling_models
             except Exception:
-                from parsers.docling_v2_parser import download_docling_models
+                from parsers.docling import download_docling_models
             res = await asyncio.to_thread(download_docling_models)
             return {
                 "status": "success",
@@ -1410,7 +1410,7 @@ async def diagnostic_all() -> Dict[str, Any]:
         lm_task, db_task, sumatra_task, tantivy_task, linkers_task
     )
 
-    from parsers.indra_parser import INDRA_MODELS_DIR, is_indra_models_downloaded
+    from parsers.indra import INDRA_MODELS_DIR, is_indra_models_downloaded
     indra_status = {
         "downloaded": is_indra_models_downloaded(include_math=False),
         "math_downloaded": is_indra_models_downloaded(include_math=True),

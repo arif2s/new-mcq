@@ -105,3 +105,7 @@ __all__ = [
     "IndraHybridLayoutRefiner",
     "build_layout_svg_overlay",
 ]
+
+# Consolidated compatibility exports
+from parsers.indra.engine import *  # noqa: F401,F403
+from parsers.indra.profiles import *  # noqa: F401,F403
