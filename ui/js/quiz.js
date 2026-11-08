@@ -1826,50 +1826,49 @@ function renderReferenceBadgesHTML(rawRefs) {
 async function updateInspectorForQuestion(questionObj) {
     if (!questionObj) return;
 
+    // Requirement 1: While doing MCQ the reference list should only show verified topics
     const topicsSet = new Set();
+    const qid = String(questionObj.id || questionObj.question_id || '').trim();
 
+    // 1. Collect verified topics directly attached to questionObj
     if (Array.isArray(questionObj.topic_details) && questionObj.topic_details.length > 0) {
         questionObj.topic_details.forEach(td => {
             const name = td?.name || td?.topic_name;
-            if (name && name !== 'General Medical Concept') {
-                topicsSet.add(name);
-            }
-        });
-    } else if (Array.isArray(questionObj.topics) && questionObj.topics.length > 0) {
-        questionObj.topics.forEach(t => {
-            const name = typeof t === 'string' ? t : (t?.name || t?.topic_name);
-            if (name && name !== 'General Medical Concept') {
+            if (name && name !== 'General Medical Concept' && (td.verified === true || td.verified === 1)) {
                 topicsSet.add(name);
             }
         });
     }
 
-    if (topicsSet.size <= 1) {
-        try {
-            const extRes = await fetch('/api/queue/extract_topics', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    questions: [{
-                        id: String(questionObj.id || ''),
-                        question: questionObj.question || questionObj.question_text || '',
-                        topic_name: questionObj.csv_topic_name || questionObj.topic_name || questionObj.topic || 'General',
-                        option_a: questionObj.option_a || questionObj.opt_a || '',
-                        option_b: questionObj.option_b || questionObj.opt_b || '',
-                        option_c: questionObj.option_c || questionObj.opt_c || '',
-                        option_d: questionObj.option_d || questionObj.opt_d || '',
-                        correct_answer: questionObj.correct_answer || 'A',
-                        explanation: questionObj.explanation || ''
-                    }]
-                })
+    // 2. Cross-reference with verified/confirmed topics from active quiz session if available
+    const sessionTopicList = currentQuiz?.topicList || [];
+    if (Array.isArray(sessionTopicList) && sessionTopicList.length > 0) {
+        const verifiedSessionTopics = new Set(
+            sessionTopicList
+                .filter(t => (typeof t === 'object' ? (t.verified || t.selected) : true))
+                .map(t => (typeof t === 'string' ? t.toLowerCase().trim() : String(t.name || t.topic_name || '').toLowerCase().trim()))
+        );
+
+        if (Array.isArray(questionObj.topics) && questionObj.topics.length > 0) {
+            questionObj.topics.forEach(t => {
+                const name = typeof t === 'string' ? t : (t?.name || t?.topic_name);
+                if (name && name !== 'General Medical Concept') {
+                    if (verifiedSessionTopics.has(name.toLowerCase().trim())) {
+                        topicsSet.add(name);
+                    }
+                }
             });
-            if (extRes.ok) {
-                const extData = await extRes.json();
-                if (Array.isArray(extData.questions) && extData.questions[0]) {
-                    const qRes = extData.questions[0];
-                    questionObj.topics = qRes.topics || [];
-                    questionObj.topic_details = qRes.topic_details || [];
-                    (qRes.topics || []).forEach(t => {
+        }
+    }
+
+    // 3. Query backend verified topics for this question if none found yet or if question has an ID
+    if (topicsSet.size === 0 && qid) {
+        try {
+            const verRes = await fetch(`/api/mcq/question/${encodeURIComponent(qid)}/verified_topics`);
+            if (verRes.ok) {
+                const verData = await verRes.json();
+                if (Array.isArray(verData.verified_topics)) {
+                    verData.verified_topics.forEach(t => {
                         if (t && t !== 'General Medical Concept') topicsSet.add(t);
                     });
                 }
@@ -1877,14 +1876,18 @@ async function updateInspectorForQuestion(questionObj) {
         } catch (_) {}
     }
 
-    const mainTopic = questionObj?.csv_topic_name || questionObj?.topic_name || questionObj?.topic;
-    if (topicsSet.size === 0 && mainTopic && mainTopic !== 'General Medical Concept' && mainTopic.toLowerCase() !== 'general') {
-        topicsSet.add(mainTopic);
-    }
-
-    if (topicsSet.size === 0) {
-        const fallback = currentQuiz?.customTitle || 'General';
-        topicsSet.add(fallback);
+    // 4. If still no verified topics and session was verified/confirmed, check question's main topic against session verified topics
+    if (topicsSet.size === 0 && Array.isArray(sessionTopicList) && sessionTopicList.length > 0) {
+        const verifiedSessionMap = new Map();
+        sessionTopicList.forEach(t => {
+            if (typeof t === 'object' && (t.verified || t.selected) && t.name) {
+                verifiedSessionMap.set(t.name.toLowerCase().trim(), t.name);
+            }
+        });
+        const mainTopic = questionObj?.csv_topic_name || questionObj?.topic_name || questionObj?.topic;
+        if (mainTopic && verifiedSessionMap.has(mainTopic.toLowerCase().trim())) {
+            topicsSet.add(verifiedSessionMap.get(mainTopic.toLowerCase().trim()));
+        }
     }
 
     const topicsArray = Array.from(topicsSet);
@@ -1912,36 +1915,42 @@ async function updateInspectorForQuestion(questionObj) {
 
     let html = `<div class="flex flex-col text-xs space-y-4 pb-6">`;
     html += `<div class="glass-panel p-3 rounded-xl border border-gray-700/50 mb-1">
-                <span class="text-[10px] text-muted uppercase tracking-wider font-bold">MCQ ${currentIndex + 1} Topic List</span>
-                <p class="text-[11px] text-muted mt-1">Click any topic below to view clinical notes in center view &amp; references here.</p>
+                <span class="text-[10px] text-muted uppercase tracking-wider font-bold">MCQ ${currentIndex + 1} Verified Topics</span>
+                <p class="text-[11px] text-muted mt-1">Verified topics for this question. Click any topic below to view clinical notes &amp; references.</p>
              </div>`;
 
-    html += `<div class="space-y-2" id="inspector-topic-list">`;
-    topicsArray.forEach((topic, idx) => {
-        const st = statuses[topic] || { has_refs: false, has_note: false };
-        const isPrimary = idx === 0;
+    if (topicsArray.length === 0) {
+        html += `<div class="glass-panel p-4 rounded-xl border border-gray-700/50 text-center text-muted italic text-[11px]">
+                    No verified topics confirmed for this question yet. Verify topics in Knowledge Hub to view references.
+                 </div>`;
+    } else {
+        html += `<div class="space-y-2" id="inspector-topic-list">`;
+        topicsArray.forEach((topic, idx) => {
+            const st = statuses[topic] || { has_refs: false, has_note: false };
+            const isPrimary = idx === 0;
 
-        html += `
-            <div class="quiz-topic-item glass-panel p-3 rounded-xl border ${isPrimary ? 'border-brand-500/60 bg-brand-500/10' : 'border-gray-700/50'} hover:border-brand-500 cursor-pointer transition-all flex items-center justify-between gap-2"
-                 data-topic="${window.escapeHTML(topic)}">
-                <div class="min-w-0 flex-1">
-                    <p class="font-bold text-xs truncate text-neutral-100 flex items-center gap-1.5">
-                        <span>${idx + 1}. ${window.escapeHTML(topic)}</span>
-                        ${isPrimary ? '<span class="text-[9px] px-1.5 py-0.2 bg-brand-500/30 text-brand-300 rounded uppercase">Main</span>' : ''}
-                    </p>
+            html += `
+                <div class="quiz-topic-item glass-panel p-3 rounded-xl border ${isPrimary ? 'border-brand-500/60 bg-brand-500/10' : 'border-gray-700/50'} hover:border-brand-500 cursor-pointer transition-all flex items-center justify-between gap-2"
+                     data-topic="${window.escapeHTML(topic)}">
+                    <div class="min-w-0 flex-1">
+                        <p class="font-bold text-xs truncate text-neutral-100 flex items-center gap-1.5">
+                            <span>${idx + 1}. ${window.escapeHTML(topic)}</span>
+                            ${isPrimary ? '<span class="text-[9px] px-1.5 py-0.2 bg-brand-500/30 text-brand-300 rounded uppercase">Main</span>' : ''}
+                        </p>
+                    </div>
+                    <div class="flex items-center gap-1 shrink-0">
+                        <span class="px-1.5 py-0.5 rounded text-[9px] font-mono ${st.has_refs ? 'bg-brand-600/20 text-brand-300 border border-brand-500/30' : 'opacity-40 glass-panel'}" title="${st.has_refs ? 'Reference links available' : 'No references'}">
+                            🔗 ${st.has_refs ? 'Refs' : 'No Refs'}
+                        </span>
+                        <span class="px-1.5 py-0.5 rounded text-[9px] font-mono ${st.has_note ? 'bg-success-500/20 text-success-300 border border-success-500/30' : 'opacity-40 glass-panel'}" title="${st.has_note ? 'LLM note available' : 'No note'}">
+                            🤖 ${st.has_note ? 'Note' : 'No Note'}
+                        </span>
+                    </div>
                 </div>
-                <div class="flex items-center gap-1 shrink-0">
-                    <span class="px-1.5 py-0.5 rounded text-[9px] font-mono ${st.has_refs ? 'bg-brand-600/20 text-brand-300 border border-brand-500/30' : 'opacity-40 glass-panel'}" title="${st.has_refs ? 'Reference links available' : 'No references'}">
-                        🔗 ${st.has_refs ? 'Refs' : 'No Refs'}
-                    </span>
-                    <span class="px-1.5 py-0.5 rounded text-[9px] font-mono ${st.has_note ? 'bg-success-500/20 text-success-300 border border-success-500/30' : 'opacity-40 glass-panel'}" title="${st.has_note ? 'LLM note available' : 'No note'}">
-                        🤖 ${st.has_note ? 'Note' : 'No Note'}
-                    </span>
-                </div>
-            </div>
-        `;
-    });
-    html += `</div>`;
+            `;
+        });
+        html += `</div>`;
+    }
 
     html += `<div id="inspector-topic-details" class="pt-3 border-t border-gray-700/50 space-y-3"></div>`;
     html += `</div>`;

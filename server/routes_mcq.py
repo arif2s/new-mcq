@@ -550,6 +550,54 @@ def get_topics_status(payload: TopicStatusRequest) -> Dict[str, Any]:
     }
 
 
+@router.get("/question/{question_id}/verified_topics")
+def get_question_verified_topics(question_id: str) -> Dict[str, Any]:
+    """
+    Returns only verified topics for a specific question (Requirement 1 & Invariant 13).
+    Queries question_metadata (verified_topics_json) and extracted_topics (verified = 1).
+    """
+    qid = str(question_id or "").strip()
+    if not qid:
+        return {"status": "success", "question_id": qid, "verified_topics": []}
+
+    verified_set = set()
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT verified_topics_json FROM question_metadata WHERE question_id = ?",
+            (qid,),
+        )
+        row = cursor.fetchone()
+        if row and row["verified_topics_json"]:
+            try:
+                parsed = json.loads(row["verified_topics_json"])
+                if isinstance(parsed, list):
+                    for item in parsed:
+                        t_name = item.get("name") if isinstance(item, dict) else str(item)
+                        if t_name and t_name != "General Medical Concept":
+                            verified_set.add(t_name.strip())
+            except Exception:
+                pass
+
+        cursor.execute(
+            """
+            SELECT topic_name FROM extracted_topics
+            WHERE question_id = ? AND (verified = 1 OR selected = 1)
+            """,
+            (qid,),
+        )
+        for r in cursor.fetchall():
+            t_name = str(r["topic_name"] or "").strip()
+            if t_name and t_name != "General Medical Concept":
+                verified_set.add(t_name)
+
+    return {
+        "status": "success",
+        "question_id": qid,
+        "verified_topics": sorted(list(verified_set)),
+    }
+
+
 @router.post("/batch_generate_references")
 @router.post("/topics/generate_references")
 def batch_generate_references(payload: BatchTopicRequest) -> Dict[str, Any]:

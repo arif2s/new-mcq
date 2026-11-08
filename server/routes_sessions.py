@@ -1212,11 +1212,87 @@ def sync_consolidated_due_session(conn) -> None:
         conn.commit()
         return
 
-    # Extract distinct topics
-    topics_list = list(dict.fromkeys(
-        q["topic_name"] for q in all_due if q.get("topic_name") and q["topic_name"] != "General Medical Concept"
+    # Requirement 2: The topic list inside due/review set is updated with verified topics
+    # from the questions added to it. As well as removing questions from set removes associated topics.
+    all_due_qids = [str(q["id"]) for q in all_due]
+    qid_to_verified_topics: Dict[str, List[str]] = {qid: [] for qid in all_due_qids}
+
+    # Query verified topics from question_metadata and extracted_topics in chunks
+    chunk_size = 150
+    for i in range(0, len(all_due_qids), chunk_size):
+        chunk = all_due_qids[i : i + chunk_size]
+        placeholders = ",".join("?" for _ in chunk)
+
+        # 1. Check question_metadata.verified_topics_json
+        cursor.execute(
+            f"SELECT question_id, verified_topics_json FROM question_metadata WHERE question_id IN ({placeholders})",
+            chunk,
+        )
+        for r in cursor.fetchall():
+            q_id_str = str(r["question_id"])
+            if r["verified_topics_json"]:
+                try:
+                    vt_list = json.loads(r["verified_topics_json"])
+                    if isinstance(vt_list, list):
+                        for item in vt_list:
+                            t_name = item.get("name") if isinstance(item, dict) else str(item)
+                            if t_name and t_name != "General Medical Concept" and t_name not in qid_to_verified_topics[q_id_str]:
+                                qid_to_verified_topics[q_id_str].append(t_name)
+                except Exception:
+                    pass
+
+        # 2. Check extracted_topics where verified = 1 OR selected = 1
+        cursor.execute(
+            f"""
+            SELECT question_id, topic_name FROM extracted_topics
+            WHERE question_id IN ({placeholders}) AND (verified = 1 OR selected = 1)
+            """,
+            chunk,
+        )
+        for r in cursor.fetchall():
+            q_id_str = str(r["question_id"])
+            t_name = str(r["topic_name"] or "").strip()
+            if t_name and t_name != "General Medical Concept" and t_name not in qid_to_verified_topics[q_id_str]:
+                qid_to_verified_topics[q_id_str].append(t_name)
+
+        # 3. Check existing session_questions.question_topics_json across prior sessions
+        cursor.execute(
+            f"""
+            SELECT question_id, question_topics_json FROM session_questions
+            WHERE question_id IN ({placeholders}) AND session_id != ? AND question_topics_json IS NOT NULL
+            """,
+            chunk + [CONSOLIDATED_REVIEWS_SESSION_ID],
+        )
+        for r in cursor.fetchall():
+            q_id_str = str(r["question_id"])
+            if r["question_topics_json"]:
+                try:
+                    sq_topics = json.loads(r["question_topics_json"])
+                    if isinstance(sq_topics, list):
+                        for item in sq_topics:
+                            t_name = item.get("name") if isinstance(item, dict) else str(item)
+                            if t_name and t_name != "General Medical Concept" and t_name not in qid_to_verified_topics[q_id_str]:
+                                qid_to_verified_topics[q_id_str].append(t_name)
+                except Exception:
+                    pass
+
+    # For any question that still doesn't have an explicit verified topic in metadata,
+    # fall back to question's primary topic_name so it's not orphaned
+    for q in all_due:
+        q_id_str = str(q["id"])
+        if not qid_to_verified_topics[q_id_str]:
+            raw_top = q.get("topic_name")
+            if raw_top and raw_top != "General Medical Concept":
+                qid_to_verified_topics[q_id_str].append(raw_top)
+
+    # Aggregate distinct verified topics strictly from the questions currently in all_due
+    consolidated_topics_list = list(dict.fromkeys(
+        t
+        for qid in all_due_qids
+        for t in qid_to_verified_topics[qid]
+        if t and t != "General Medical Concept"
     ))
-    topic_items = [{"name": t, "topic_name": t, "verified": True, "selected": True} for t in topics_list]
+    topic_items = [{"name": t, "topic_name": t, "verified": True, "selected": True} for t in consolidated_topics_list]
 
     now_ts = float(time.time() * 1000)
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -1279,6 +1355,8 @@ def sync_consolidated_due_session(conn) -> None:
     q_params = []
     for q in all_due:
         q_id = str(q["id"])
+        q_verified = qid_to_verified_topics.get(q_id) or []
+        primary_topic = q_verified[0] if q_verified else (q.get("topic_name") or "General")
         q_params.append((
             CONSOLIDATED_REVIEWS_SESSION_ID,
             q_id,
@@ -1295,8 +1373,8 @@ def sync_consolidated_due_session(conn) -> None:
             (q.get("correct_answer") or "A").strip().upper(),
             q.get("explanation") or "",
             q.get("llm_explanation") or "",
-            q.get("topic_name") or "General",
-            json.dumps([q.get("topic_name")] if q.get("topic_name") else []),
+            primary_topic,
+            json.dumps(q_verified if q_verified else ([q.get("topic_name")] if q.get("topic_name") else [])),
         ))
 
     cursor.executemany(

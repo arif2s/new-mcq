@@ -22,6 +22,7 @@ import asyncio
 from contextlib import asynccontextmanager, closing
 import json
 import logging
+from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse

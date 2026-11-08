@@ -746,34 +746,50 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     window.switchTab = switchTab;
 
+    function triggerViewActivation(targetId) {
+        if (targetId === 'settings-view' && typeof window.refreshDiagnostics === 'function') {
+            window.refreshDiagnostics();
+        }
+        if (targetId === 'knowledge-hub-view' && typeof window.loadSessions === 'function') {
+            window.loadSessions();
+        }
+        if (targetId === 'dashboard-view') {
+            if (typeof window.initDashboard === 'function') {
+                window.initDashboard();
+            } else if (typeof window.updateQuestionsLeftToReview === 'function') {
+                window.updateQuestionsLeftToReview();
+            }
+        }
+        if (targetId === 'habit-tracker-view' && typeof window.initHabits === 'function') {
+            window.initHabits();
+        }
+        if (targetId === 'expertise-view' && typeof window.initExpertiseMap === 'function') {
+            window.initExpertiseMap();
+        }
+        if (targetId === 'home-view') {
+            if (typeof window.initTestFeatures === 'function') {
+                window.initTestFeatures();
+            }
+        }
+        if (targetId === 'layout-analysis-screen' && typeof window.initAnalysisWorkspace === 'function') {
+            window.initAnalysisWorkspace();
+        }
+        if (targetId === 'layout-toc-screen' && typeof window.initTocWorkspace === 'function') {
+            window.initTocWorkspace();
+        }
+    }
+
+    // Wrap switchTab to always invoke triggerViewActivation
+    const originalSwitchTab = window.switchTab;
+    window.switchTab = function(targetId) {
+        originalSwitchTab(targetId);
+        triggerViewActivation(targetId);
+    };
+
     navButtons.forEach(btn => {
         btn.addEventListener('click', (e) => {
             const targetId = e.currentTarget.dataset.target;
-            switchTab(targetId);
-            if (targetId === 'settings-view' && typeof window.refreshDiagnostics === 'function') {
-                window.refreshDiagnostics();
-            }
-            if (targetId === 'knowledge-hub-view' && typeof window.loadSessions === 'function') {
-                window.loadSessions();
-            }
-            if (targetId === 'dashboard-view') {
-                if (typeof window.initDashboard === 'function') {
-                    window.initDashboard();
-                } else if (typeof window.updateQuestionsLeftToReview === 'function') {
-                    window.updateQuestionsLeftToReview();
-                }
-            }
-            if (targetId === 'home-view') {
-                if (typeof window.initTestFeatures === 'function') {
-                    window.initTestFeatures();
-                }
-            }
-            if (targetId === 'layout-analysis-screen' && typeof window.initAnalysisWorkspace === 'function') {
-                window.initAnalysisWorkspace();
-            }
-            if (targetId === 'layout-toc-screen' && typeof window.initTocWorkspace === 'function') {
-                window.initTocWorkspace();
-            }
+            window.switchTab(targetId);
         });
     });
 
