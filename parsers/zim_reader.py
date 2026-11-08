@@ -290,7 +290,7 @@ def _find_entry_in_archive(archive: Any, query_title: str) -> Any:
 
     # Generate variant candidates safely without circular dependencies
     try:
-        from agents.topic_extractor import generate_candidate_variants
+        from agents.tema_q.topic_extractor import generate_candidate_variants
 
         raw_candidates = generate_candidate_variants(clean)
     except Exception:
@@ -801,7 +801,7 @@ def search_zim_articles(query: str, limit: int = 3) -> List[Dict[str, Any]]:
     seen_titles = set()
 
     try:
-        from agents.topic_extractor import get_topic_aliases
+        from agents.tema_q.topic_extractor import get_topic_aliases
 
         query_aliases = get_topic_aliases(query, max_aliases=6)
     except Exception:

@@ -187,7 +187,7 @@ class PriorityQueueWorker:
                     task_type_upper == "BATCH_PRECOMPUTE"
                     and payload.get("action") == "load_csvs"
                 ):
-                    from server.routes_csv_loader import load_csvs_background
+                    from server.routes_csv import load_csvs_background
 
                     load_csvs_background()
 

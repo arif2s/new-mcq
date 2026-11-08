@@ -26,7 +26,7 @@
 
   /* Light Theme */
   --bg-color: #f0f2f5;
-  --bg-image: url('../img/bg-light.jpg');
+  --bg-image: url('../img/light/bg1.jpg');
   --panel-bg: rgba(255, 255, 255, var(--panel-alpha, 0.82));
   --panel-border: rgba(0, 0, 0, 0.12);
   --glass-subpanel-bg: rgba(255, 255, 255, 0.65);
@@ -108,7 +108,7 @@ body.dark-theme {
 
   /* Dark Theme */
   --bg-color: #0f172a;
-  --bg-image: url('../img/bg-dark.jpg');
+  --bg-image: url('../img/dark/bg1.jpg');
   --panel-bg: rgba(15, 23, 42, var(--panel-alpha, 0.82));
   --panel-border: rgba(255, 255, 255, 0.125);
   --glass-subpanel-bg: rgba(255, 255, 255, 0.05);

@@ -1,4 +1,4 @@
-from agents.topic_extractor import extract_topics
+from agents.tema_q.topic_extractor import extract_topics
 
 text = "The patient has dyspnea but no asthma. They were prescribed amoxicillin."
 print("No refinement:", extract_topics(text, False, False))

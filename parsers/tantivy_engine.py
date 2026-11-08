@@ -235,7 +235,7 @@ def search_index(query_str: str, limit_per_source: int = 3) -> Dict[str, List[Di
     limit_per_source = max(1, int(limit_per_source or 3))
 
     try:
-        from agents.topic_extractor import get_topic_aliases
+        from agents.tema_q.topic_extractor import get_topic_aliases
 
         topic_aliases = get_topic_aliases(query_str)
     except Exception:
@@ -359,7 +359,7 @@ def search_index(query_str: str, limit_per_source: int = 3) -> Dict[str, List[Di
 
             # Optional sibling topic filter before cross-encoder reranking
             try:
-                from agents.topic_extractor import filter_sibling_topics
+                from agents.tema_q.topic_extractor import filter_sibling_topics
 
                 filtered = filter_sibling_topics(primary_query, candidates)
                 if filtered:

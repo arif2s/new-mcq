@@ -49,11 +49,6 @@ from server.routes_sessions import router as sessions_router
 from server.routes_sources import router as sources_router
 from server.routes_state import router as state_router
 
-try:
-    from server.routes_csv_loader import router as csv_loader_router
-except (ImportError, AttributeError):
-    csv_loader_router = None
-
 # Resilient import of WebSocket ConnectionManager singleton
 try:
     from server.ws_manager import manager as ws_manager
@@ -157,8 +152,6 @@ routers = [
     search_router,
     models_router,
 ]
-if csv_loader_router is not None:
-    routers.append(csv_loader_router)
 
 for r in routers:
     app.include_router(r)

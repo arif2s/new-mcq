@@ -1,5 +1,5 @@
 import pytest
-from agents.topic_extractor import get_topic_aliases, generate_candidate_variants
+from agents.tema_q.topic_extractor import get_topic_aliases, generate_candidate_variants
 from parsers.scispacy_linker_engine import normalize_alias, get_concept_aliases
 from parsers.zim_reader import resolve_zim_topic, search_zim_articles
 from parsers.tantivy_engine import search_index

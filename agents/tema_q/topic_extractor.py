@@ -303,7 +303,7 @@ def normalize_topic_key(text: str) -> str:
 
 
 IGNORE_LIST_FILE: Path = Path(getattr(config, "BASE_DIR", Path(__file__).resolve().parent.parent.parent)) / "Ignore_list.txt"
-TOPIC_LIST_FILE: Path = Path(getattr(config, "BASE_DIR", Path(__file__).resolve().parent.parent.parent)) / "topic.txt"
+TOPIC_LIST_FILE: Path = Path(getattr(config, "BASE_DIR", Path(__file__).resolve().parent.parent.parent)) / "tests/fixtures/topic.txt"
 
 def _sync_ignore_list_file_from_db(conn: sqlite3.Connection) -> None:
     """Writes all ignored topics from the SQLite table to Ignore_list.txt in the project root."""
