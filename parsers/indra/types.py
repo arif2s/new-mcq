@@ -122,6 +122,9 @@ class PageElement:
     fg_hue: float = -1.0
     bg_hue: float = -1.0
     thickness: float = 1.0
+    raw_block_label: str = "Text"
+    block_id: Optional[str] = None
+    block_bbox: Optional[BBox] = None
 
     @property
     def center_y(self) -> float:

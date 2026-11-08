@@ -5,6 +5,10 @@ import re
 from typing import Any, Optional, Sequence
 
 from parsers.indra.profiles import LayoutProfile
+from parsers.indra.heading_calibrator import (
+    HARD_EXCLUDED_LABELS,
+    calibrate_page_blocks,
+)
 from parsers.indra.rules import (
     RegexCatalog,
     _colors_visually_match,
@@ -256,106 +260,58 @@ class LayoutStrategy:
         return merged
 
     def score_and_classify_elements(self, ir: PageElements, active_stack: Optional[dict[int, str]] = None) -> None:
-        weights = self.profile.heading_weights
-        act_stack = active_stack or {}
+        # Build block representations for calibrate_page_blocks
+        blk_items: list[dict[str, Any]] = []
+        valid_indices: list[int] = []
 
-        for el in ir.elements:
+        for idx, el in enumerate(ir.elements):
             if el.is_suppressed_furniture or el.in_table:
                 continue
-
             text = el.text.strip()
             if not text:
                 continue
 
-            # Subtask 3.3.1: Reject visual icon bullets, contributor rows, and TOC dot-leaders
-            if RegexCatalog.ICON_BULLET_MARKER.match(text):
-                el.role = "list_item"
-                continue
-            if RegexCatalog.TOC_DOT_LEADER.search(text) or RegexCatalog.CONTRIBUTOR_ROW.match(text):
-                el.role = "paragraph"
-                continue
+            raw_label = getattr(el, "raw_block_label", "") or ("Section-Header" if el.role == "heading" else ("List-Group" if el.role == "list_item" else "Text"))
+            blk_items.append({
+                "text": text,
+                "raw_label": raw_label,
+                "font_size": el.size_pt,
+                "is_bold": el.is_bold,
+                "has_bg_fill": el.in_banner,
+                "text_color": el.fg_rgb,
+                "bg_color": el.bg_rgb if el.in_banner else None,
+                "bbox": [
+                    el.bbox_norm[0] * ir.width_pt,
+                    el.bbox_norm[1] * ir.height_pt,
+                    el.bbox_norm[2] * ir.width_pt,
+                    el.bbox_norm[3] * ir.height_pt,
+                ],
+            })
+            valid_indices.append(idx)
 
-            # Subtask 3.3.2: Exempt *Situation 1 & 2 from asterisk and verb disqualifiers
-            is_situation_hd = bool(RegexCatalog.SITUATION_HEADER.match(text))
-            if is_situation_hd and (el.is_bold or el.is_accent_color or el.rel_size >= 1.0):
+        calibrated = calibrate_page_blocks(blk_items, page_height=ir.height_pt)
+
+        for el_idx, cal in zip(valid_indices, calibrated):
+            el = ir.elements[el_idx]
+            cal_label = cal.get("label", "Text")
+            el.heading_confidence = cal.get("heading_score", 0.0)
+
+            if cal.get("is_heading"):
                 el.role = "heading"
-                el.heading_confidence = 0.92
-                el.heading_level = 3 if 2 in act_stack else 2
-                continue
-
-            if not is_situation_hd and text.lstrip().startswith(("•", "-", ":", ";")):
+                el.heading_level = cal.get("heading_level") or 2
+            elif cal_label == "List-Group":
                 el.role = "list_item"
-                continue
-
-            pf, p_idx, clean_body = RegexCatalog.classify_prefix(text)
-            el.prefix_family, el.prefix_index = pf, p_idx
-
-            words = len(text.split())
-
-            # Subtask 3.3.3: Recognize clinical subheadings a)-d) consistently
-            is_clinical_alpha_sub = (
-                pf in ("ALPHA_LOWER", "ALPHA", "DECIMAL")
-                and words <= 6
-                and (el.is_bold or text.endswith(":"))
-            )
-
-            # Multi-factor score
-            score = 0.0
-            # 1. Size
-            if el.rel_size >= weights.h1_min_rel_size:
-                score += weights.get("size", 0.30) * 1.0
-            elif el.rel_size >= weights.h2_min_rel_size:
-                score += weights.get("size", 0.30) * 0.75
-            elif el.rel_size >= weights.h3_min_rel_size:
-                score += weights.get("size", 0.30) * 0.50
-
-            # 2. Weight
-            if el.is_bold:
-                score += weights.get("weight", 0.22) * 1.0
-
-            # 3. Banner
-            if el.in_banner:
-                score += weights.get("banner", 0.15) * 1.0
-
-            # 4. Color / Accent
-            if el.is_accent_color or rgb_saturation(el.fg_rgb) >= weights.chromatic_saturation_min:
-                score += weights.get("color", 0.15) * 1.0
-
-            # 5. Case
-            if el.is_all_caps:
-                score += weights.get("case", 0.10) * 1.0
-
-            # 6. Prefix
-            if pf in ("DECIMAL", "ROMAN", "ALPHA", "ALPHA_LOWER", "ALPHA_UPPER") and words <= 12:
-                score += weights.get("prefix", 0.10) * 1.0
-
-            el.heading_confidence = score
-            is_prior_heading_label = (el.role == "heading")
-
-            if is_clinical_alpha_sub:
-                el.role = "heading"
-                el.heading_confidence = max(score, 0.75)
-                # Assign level H3 or H4
-                el.heading_level = 4 if 3 in act_stack or 2 in act_stack else 3
-            elif (
-                is_prior_heading_label
-                or score >= weights.min_heading_confidence
-                or el.rel_size >= weights.h2_min_rel_size
-                or (el.is_bold and el.rel_size >= 1.15)
-            ) and words <= 15 and not text.lstrip().startswith(("-", "•")):
-                el.role = "heading"
-                if el.rel_size >= weights.h1_min_rel_size or el.in_banner or (is_prior_heading_label and el.rel_size >= 1.20):
-                    el.heading_level = 1
-                elif el.rel_size >= weights.h2_min_rel_size or is_prior_heading_label:
-                    el.heading_level = 2
-                elif el.rel_size >= weights.h3_min_rel_size:
-                    el.heading_level = 3
-                else:
-                    el.heading_level = 4
-            elif pf in ("DECIMAL", "ALPHA", "ALPHA_LOWER", "BULLET") and not (el.is_bold and words <= 5):
-                el.role = "list_item"
+                el.heading_level = 0
+            elif cal_label in HARD_EXCLUDED_LABELS:
+                if cal_label in ("Page-Header", "Page-Footer"):
+                    el.role = "furniture"
+                    el.is_suppressed_furniture = True
+                elif cal_label in ("Figure", "Picture"):
+                    el.role = "figure_caption"
+                el.heading_level = 0
             else:
                 el.role = "paragraph"
+                el.heading_level = 0
 
 
 class NativeDigitalStrategy(LayoutStrategy):

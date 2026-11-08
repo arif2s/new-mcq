@@ -300,11 +300,13 @@ class IndraHybridLayoutRefiner:
                 "bbox": px_box,
                 "bbox_norm": norm_box,
                 "bbox_pt": pt_box,
+                "heading_level": e.heading_level if e.role == "heading" else None,
             })
             layout_boxes.append({
                 "order": idx_e + 1,
                 "type": b_type,
                 "label": f"{lbl} #{idx_e + 1}",
+                "heading_level": e.heading_level if e.role == "heading" else None,
                 "bbox": norm_box,
                 "bbox_norm": norm_box,
                 "bbox_px": px_box,

@@ -1014,18 +1014,30 @@ class IndraModularEngine:
             )
 
             raw_role = ln.get("role")
-            if not raw_role and "blocks" in raw:
-                # Check if this line is encompassed by a classified block from native OCR/order model
-                for blk in raw.get("blocks", []):
-                    b_lbl = blk.get("label", "")
+            raw_blk_label = ln.get("raw_block_label", "Text")
+            parent_blk_id = ln.get("block_id")
+            parent_blk_bbox = ln.get("block_bbox")
+
+            if "blocks" in raw:
+                # Inherit parent layout block label and bbox from native OCR/order model
+                for b_idx, blk in enumerate(raw.get("blocks", [])):
+                    b_lbl = blk.get("label", "Text")
                     b_box = blk.get("bbox", [])
-                    if len(b_box) == 4 and b_lbl in ("Section-Header", "Title", "Header"):
-                        # Check overlap with block
+                    if len(b_box) == 4:
                         b_w = float(raw.get("width_px") or w_ref)
                         b_h = float(raw.get("height_px") or h_ref)
                         blk_norm = (b_box[0] / b_w, b_box[1] / b_h, b_box[2] / b_w, b_box[3] / b_h)
-                        if overlap_ratio(bb, blk_norm) >= 0.50:
-                            raw_role = "heading"
+                        if overlap_ratio(bb, blk_norm) >= 0.35:
+                            raw_blk_label = b_lbl
+                            parent_blk_id = f"blk_{page_number}_{b_idx}"
+                            parent_blk_bbox = blk_norm
+                            if not raw_role:
+                                if b_lbl in ("Section-Header", "Title", "Header"):
+                                    raw_role = "heading"
+                                elif b_lbl == "List-Group":
+                                    raw_role = "list_item"
+                                elif b_lbl in ("Page-Header", "Page-Footer"):
+                                    raw_role = "furniture"
                             break
 
             el = PageElement(
@@ -1040,6 +1052,9 @@ class IndraModularEngine:
                 is_italic=is_i,
                 font_family=ln.get("font_family", "serif"),
                 role=raw_role or "paragraph",
+                raw_block_label=raw_blk_label,
+                block_id=parent_blk_id,
+                block_bbox=parent_blk_bbox,
             )
             elements.append(el)
 
@@ -1517,7 +1532,32 @@ def extract_page_with_indra_base_heading_opt(
         for ln in native_lines:
             native_blocks.append({"label": "Text", "bbox": ln["box"], "text": ln["text"]})
 
-    # 4. Non-Destructive Heading Level Alignment (Matches Base Blocks to Preassigned Multi-Pass TOC)
+    # 4. Multi-Step Typography & Calibrator Pass on native_blocks
+    from parsers.indra.heading_calibrator import calibrate_page_blocks
+    cal_inputs = []
+    for blk in native_blocks:
+        bx = blk.get("bbox") or [0, 0, w_px, h_px]
+        cal_inputs.append({
+            "raw_label": blk.get("label", "Text"),
+            "text": blk.get("text", ""),
+            "bbox": bx,
+            "font_size": blk.get("font_size", 10.0),
+            "is_bold": blk.get("is_bold", False),
+            "text_color": blk.get("text_color", (0, 0, 0)),
+            "bg_color": blk.get("bg_color"),
+            "has_bg_fill": blk.get("has_bg_fill", False),
+        })
+
+    calibrated_blocks = calibrate_page_blocks(cal_inputs, page_height=float(h_px))
+
+    # Synchronize calibrated results back to native_blocks
+    for blk, cal in zip(native_blocks, calibrated_blocks):
+        blk["label"] = cal.get("label", "Text")
+        blk["heading_level"] = cal.get("heading_level")
+        blk["is_heading"] = cal.get("is_heading", False)
+        blk["heading_score"] = cal.get("heading_score", 0.0)
+
+    # 5. Non-Destructive Heading Level Alignment & Output Assembly
     md_blocks: List[str] = []
     hierarchy_tree: List[Dict[str, Any]] = []
     headings: List[str] = []
@@ -1561,11 +1601,12 @@ def extract_page_with_indra_base_heading_opt(
                 used_toc_indices.add(t_idx)
                 break
 
-        is_heading = matched_toc is not None or lbl in ("Section-Header", "Title", "Header")
+        is_heading = bool(blk.get("is_heading")) or (matched_toc is not None and lbl not in ("Page-Header", "Page-Footer", "Table", "Caption", "Footnote"))
         if is_heading:
-            lvl = int(matched_toc["level"]) if matched_toc else (1 if lbl == "Title" else 2)
+            lvl = int(matched_toc["level"]) if matched_toc else int(blk.get("heading_level") or (1 if lbl == "Title" else 2))
             clean_title = str(matched_toc["title"]) if matched_toc else raw_txt.lstrip("#").strip()
             blk["label"] = "Section-Header"
+            blk["heading_level"] = lvl
 
             active_titles[lvl] = clean_title
             for deeper in [k for k in list(active_titles) if k > lvl]:
@@ -1640,6 +1681,7 @@ def extract_page_with_indra_base_heading_opt(
             "order": idx_b + 1,
             "type": b_type,
             "label": f"{lbl} #{idx_b + 1}",
+            "heading_level": blk.get("heading_level"),
             "bbox": bb_norm,
             "bbox_norm": bb_norm,
             "bbox_px": bx,

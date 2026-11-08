@@ -46,3 +46,6 @@ storage/reports/*.html
 .env.local
 *.bak
 *.tmp
+
+data/models/
+*.onnx

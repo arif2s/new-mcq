@@ -31,6 +31,16 @@ from parsers.indra.profiles import LAYOUT_PROFILES, LayoutProfile
 from parsers.indra.rules import RegexCatalog, overlap_ratio, rgb_distance, rgb_saturation, union_bbox
 from parsers.indra.types import BBox, HeadingPrototype, PageElement, PageElements, RGB
 
+from parsers.indra.heading_calibrator import (
+    HARD_EXCLUDED_LABELS,
+    calibrate_page_blocks,
+    classify_outline_prefix as hc_classify_outline_prefix,
+    compute_body_typography_baseline,
+    extract_hsv_color_profile,
+    is_distinct_heading_color,
+    parse_rgb_tuple,
+)
+
 logger = logging.getLogger("medisearch.heading_calibrator")
 
 _TOC_MEM_CACHE: Dict[str, Dict[str, Any]] = {}
@@ -260,6 +270,25 @@ def score_and_resolve_heading_candidate(
     ends_sent = text.endswith((".", ";")) and not el.is_all_caps
     if ends_sent and words > 8:
         el.role = "paragraph"
+        return
+
+    # Fast evaluation with calibrate_page_blocks
+    raw_lbl = getattr(el, "raw_block_label", "") or ("Section-Header" if el.role == "heading" else ("List-Group" if el.role == "list_item" else "Text"))
+    blk_in = [{
+        "text": text,
+        "raw_label": raw_lbl,
+        "font_size": el.size_pt,
+        "is_bold": el.is_bold,
+        "has_bg_fill": el.in_banner,
+        "text_color": el.fg_rgb,
+        "bg_color": el.bg_rgb if el.in_banner else None,
+        "bbox": [el.bbox_norm[0] * 612.0, el.bbox_norm[1] * 792.0, el.bbox_norm[2] * 612.0, el.bbox_norm[3] * 792.0],
+    }]
+    cal_res = calibrate_page_blocks(blk_in, page_height=792.0)
+    if cal_res and not cal_res[0].get("is_heading"):
+        el.role = "list_item" if cal_res[0].get("label") == "List-Group" else "paragraph"
+        el.heading_level = 0
+        el.heading_confidence = cal_res[0].get("heading_score", 0.0)
         return
 
     # Clinical subsection exemption (e.g. "a) Clinical Diagnosis :", "b) Investigations :", "c) Treatment:")

@@ -492,7 +492,52 @@ async def get_page_data(
         active_profile=active_profile,
     )
 
-    if lines:
+    # Prefer synchronized layout_boxes if available to reflect calibrated labels & heading levels
+    if layout_boxes:
+        for idx, lb in enumerate(layout_boxes):
+            bbox = lb.get("bbox_pt") or lb.get("bbox") or [0.0, 0.0, width, height]
+            if lb.get("bbox_norm"):
+                bn = lb["bbox_norm"]
+                bbox = [bn[0] * width, bn[1] * height, bn[2] * width, bn[3] * height]
+            elif bbox[0] <= 1.05 and bbox[1] <= 1.05 and bbox[2] <= 1.05 and bbox[3] <= 1.05:
+                bbox = [bbox[0] * width, bbox[1] * height, bbox[2] * width, bbox[3] * height]
+            elif bbox[2] > width * 1.5:
+                scale_x = width / max(1.0, float(indra_res.get("page_image_width") or width * (200.0 / 72.0)))
+                scale_y = height / max(1.0, float(indra_res.get("page_image_height") or height * (200.0 / 72.0)))
+                bbox = [bbox[0] * scale_x, bbox[1] * scale_y, bbox[2] * scale_x, bbox[3] * scale_y]
+
+            b_type = str(lb.get("type", "")).lower()
+            lbl = str(lb.get("label", "Text"))
+            if b_type == "heading" or "section-header" in lbl.lower():
+                el_type = "header"
+            elif b_type == "list" or "list-group" in lbl.lower():
+                el_type = "list"
+            elif b_type == "table" or "table" in lbl.lower():
+                el_type = "table"
+            elif b_type == "caption" or "caption" in lbl.lower():
+                el_type = "caption"
+            elif "footer" in lbl.lower():
+                el_type = "footer"
+            else:
+                el_type = "text"
+
+            heading_lvl = int(lb.get("heading_level") or (1 if el_type == "header" else 0))
+            elem_id = f"auto_{page_number}_{idx}_{uuid.uuid4().hex[:8]}"
+            elements.append({
+                "id": elem_id,
+                "file_path": normalized_file_path,
+                "page_number": page_number,
+                "x0": round(float(bbox[0]), 2),
+                "y0": round(float(bbox[1]), 2),
+                "x1": round(float(bbox[2]), 2),
+                "y1": round(float(bbox[3]), 2),
+                "element_type": el_type,
+                "heading_level": heading_lvl if el_type == "header" else 0,
+                "display_order": idx,
+                "raw_text": lb.get("text") or "",
+                "is_custom_drawn": 0,
+            })
+    elif lines:
         for idx, line in enumerate(lines):
             # Prefer point coordinates box_pt or convert normalized bbox_norm
             box = line.get("box_pt") or line.get("box") or [0.0, 0.0, width, height]
@@ -502,7 +547,6 @@ async def get_page_data(
             elif box[0] <= 1.05 and box[1] <= 1.05 and box[2] <= 1.05 and box[3] <= 1.05:
                 box = [box[0] * width, box[1] * height, box[2] * width, box[3] * height]
             elif box[2] > width * 1.5:
-                # If coordinates are in raster pixels, convert to points
                 scale_x = width / max(1.0, float(indra_res.get("page_image_width") or width * (200.0 / 72.0)))
                 scale_y = height / max(1.0, float(indra_res.get("page_image_height") or height * (200.0 / 72.0)))
                 box = [box[0] * scale_x, box[1] * scale_y, box[2] * scale_x, box[3] * scale_y]
@@ -543,37 +587,6 @@ async def get_page_data(
                 "heading_level": heading_lvl,
                 "display_order": idx,
                 "raw_text": raw_text,
-                "is_custom_drawn": 0,
-            })
-    elif layout_boxes:
-        for idx, lb in enumerate(layout_boxes):
-            bbox = lb.get("bbox_pt") or lb.get("bbox") or [0.0, 0.0, width, height]
-            if lb.get("bbox_norm"):
-                bn = lb["bbox_norm"]
-                bbox = [bn[0] * width, bn[1] * height, bn[2] * width, bn[3] * height]
-            elif bbox[0] <= 1.05 and bbox[1] <= 1.05 and bbox[2] <= 1.05 and bbox[3] <= 1.05:
-                bbox = [bbox[0] * width, bbox[1] * height, bbox[2] * width, bbox[3] * height]
-            elif bbox[2] > width * 1.5:
-                scale_x = width / max(1.0, float(indra_res.get("page_image_width") or width * (200.0 / 72.0)))
-                scale_y = height / max(1.0, float(indra_res.get("page_image_height") or height * (200.0 / 72.0)))
-                bbox = [bbox[0] * scale_x, bbox[1] * scale_y, bbox[2] * scale_x, bbox[3] * scale_y]
-
-            lbl = lb.get("label") or "Text"
-            el_type = indra_parser._map_indra_label_to_box_type(lbl)
-            heading_lvl = 1 if el_type == "header" else 0
-            elem_id = f"auto_{page_number}_{idx}_{uuid.uuid4().hex[:8]}"
-            elements.append({
-                "id": elem_id,
-                "file_path": normalized_file_path,
-                "page_number": page_number,
-                "x0": round(float(bbox[0]), 2),
-                "y0": round(float(bbox[1]), 2),
-                "x1": round(float(bbox[2]), 2),
-                "y1": round(float(bbox[3]), 2),
-                "element_type": el_type,
-                "heading_level": heading_lvl,
-                "display_order": idx,
-                "raw_text": lb.get("text") or "",
                 "is_custom_drawn": 0,
             })
 
