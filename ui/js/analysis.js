@@ -916,3 +916,28 @@
         initAnalysisWorkspace();
     }
 })();
+
+
+// --- Phase 7 Batched DocumentFragment Rendering for Large PDF Block Lists ---
+(function () {
+    window.renderBlocksBatched = function (container, items, renderItemFn, batchSize = 100) {
+        if (!container || !Array.isArray(items) || typeof renderItemFn !== "function") return;
+        container.innerHTML = "";
+        let index = 0;
+        function _appendNextBatch() {
+            const frag = document.createDocumentFragment();
+            const limit = Math.min(items.length, index + batchSize);
+            for (; index < limit; index++) {
+                const node = renderItemFn(items[index], index);
+                if (node instanceof Node) {
+                    frag.appendChild(node);
+                }
+            }
+            container.appendChild(frag);
+            if (index < items.length) {
+                window.requestAnimationFrame(_appendNextBatch);
+            }
+        }
+        _appendNextBatch();
+    };
+})();

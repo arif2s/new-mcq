@@ -376,3 +376,50 @@ window.AppState = {
     exportData: exportState,
     importData: importState
 };
+
+// --- Phase 7 Debounced State Persistence & LocalStorage Fallback ---
+(function () {
+    const LOCAL_STATE_KEY = "tema_q_cached_state_v1";
+    let _saveTimer = null;
+    let _pendingPatch = {};
+
+    window.saveStateToLocalBackup = function (stateObj) {
+        try {
+            if (stateObj && typeof stateObj === "object") {
+                window.localStorage.setItem(LOCAL_STATE_KEY, JSON.stringify(stateObj));
+            }
+        } catch (_err) {}
+    };
+
+    window.loadStateFromLocalBackup = function () {
+        try {
+            const raw = window.localStorage.getItem(LOCAL_STATE_KEY);
+            return raw ? JSON.parse(raw) : null;
+        } catch (_err) {
+            return null;
+        }
+    };
+
+    window.queueDebouncedStatePatch = function (partialState, delayMs = 300) {
+        if (partialState && typeof partialState === "object") {
+            Object.assign(_pendingPatch, partialState);
+            window.saveStateToLocalBackup(_pendingPatch);
+        }
+        if (_saveTimer) {
+            clearTimeout(_saveTimer);
+        }
+        _saveTimer = setTimeout(async function () {
+            const payload = Object.assign({}, _pendingPatch);
+            _pendingPatch = {};
+            _saveTimer = null;
+            if (!Object.keys(payload).length) return;
+            try {
+                await fetch("/api/state", {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+            } catch (_err) {}
+        }, delayMs);
+    };
+})();

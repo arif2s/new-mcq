@@ -549,3 +549,28 @@
         }, 2500);
     }
 })();
+
+
+// --- Phase 7 Undo/Redo TOC State History & DocumentFragment Tree Builder ---
+(function () {
+    const _tocUndoStack = [];
+    const _tocRedoStack = [];
+
+    window.pushTocHistorySnapshot = function (tocTree) {
+        try {
+            _tocUndoStack.push(JSON.stringify(tocTree || []));
+            if (_tocUndoStack.length > 30) _tocUndoStack.shift();
+            _tocRedoStack.length = 0;
+        } catch (_err) {}
+    };
+
+    window.undoTocEdit = function (currentTree) {
+        if (!_tocUndoStack.length) return null;
+        try {
+            _tocRedoStack.push(JSON.stringify(currentTree || []));
+            return JSON.parse(_tocUndoStack.pop());
+        } catch (_err) {
+            return null;
+        }
+    };
+})();

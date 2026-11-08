@@ -449,3 +449,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // Init
   fetchSources();
 });
+
+// --- Phase 7 Tri-Modal Index Health Badge Formatter ---
+(function () {
+    window.getVaultIndexBadges = function (sourceItem) {
+        const item = sourceItem || {};
+        return {
+            bm25: Boolean(item.tantivy_indexed || item.indexed),
+            vector: Boolean(item.lancedb_indexed || item.vector_indexed),
+            umls: Boolean(item.scispacy_linked || item.entities_linked)
+        };
+    };
+})();

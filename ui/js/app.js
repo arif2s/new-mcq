@@ -1111,3 +1111,59 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 });
+
+// --- Phase 7 Unified Safe Markdown + KaTeX Renderer, WS Backoff & rAF Drag Throttling ---
+(function () {
+    const SAFE_PURIFY_CONFIG = {
+        ADD_TAGS: ["math", "semantics", "mrow", "mi", "mo", "mn", "msup", "msub", "mfrac", "msqrt", "mtext", "annotation", "svg", "path", "line", "rect"],
+        ADD_ATTR: ["xmlns", "display", "encoding", "viewBox", "d", "preserveAspectRatio", "stroke", "fill", "data-page", "data-source"],
+        FORBID_TAGS: ["script", "iframe", "object", "embed", "form"],
+        FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus"]
+    };
+
+    window.renderSafeMarkdown = function (markdownText, targetElement) {
+        const raw = String(markdownText || "");
+        let html = raw;
+        if (typeof window.marked !== "undefined" && typeof window.marked.parse === "function") {
+            html = window.marked.parse(raw);
+        }
+        if (typeof window.DOMPurify !== "undefined" && typeof window.DOMPurify.sanitize === "function") {
+            html = window.DOMPurify.sanitize(html, SAFE_PURIFY_CONFIG);
+        }
+        if (targetElement && targetElement instanceof HTMLElement) {
+            targetElement.innerHTML = html;
+            if (typeof window.renderMathInElement === "function") {
+                try {
+                    window.renderMathInElement(targetElement, {
+                        delimiters: [
+                            { left: "$$", right: "$$", display: true },
+                            { left: "$", right: "$", display: false },
+                            { left: "\\(", right: "\\)", display: false },
+                            { left: "\\[", right: "\\]", display: true }
+                        ],
+                        throwOnError: false
+                    });
+                } catch (_err) {}
+            }
+        }
+        return html;
+    };
+
+    window.throttleWithRAF = function (fn) {
+        let rafId = null;
+        return function (...args) {
+            if (rafId !== null) return;
+            const context = this;
+            rafId = window.requestAnimationFrame(function () {
+                rafId = null;
+                fn.apply(context, args);
+            });
+        };
+    };
+
+    window.computeWsBackoffDelay = function (attempt) {
+        const base = Math.min(10000, 1000 * Math.pow(2, Math.max(0, Number(attempt) || 0)));
+        const jitter = Math.floor(Math.random() * 250);
+        return Math.min(10000, base + jitter);
+    };
+})();

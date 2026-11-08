@@ -203,3 +203,13 @@
         initPdfParsingQA();
     });
 })();
+
+// --- Phase 7 Safe Reader Markdown Hydration & Selection Lookup Hook ---
+(function () {
+    window.renderReaderContentSafely = function (markdownText, containerEl) {
+        if (typeof window.renderSafeMarkdown === "function") {
+            return window.renderSafeMarkdown(markdownText, containerEl);
+        }
+        return "";
+    };
+})();

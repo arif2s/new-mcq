@@ -283,3 +283,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     initQueueWebSocket();
 });
+
+// --- Phase 7 Queue Job Retry & Cancel API Helpers ---
+(function () {
+    window.cancelQueueJobById = async function (jobId) {
+        if (!jobId) return false;
+        try {
+            const resp = await fetch(`/api/queue/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+            return resp.ok;
+        } catch (_err) {
+            return false;
+        }
+    };
+})();

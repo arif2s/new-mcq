@@ -1989,3 +1989,30 @@ input[type="range"]::-moz-range-thumb {
   height: 100%;
   overflow: hidden;
 }
+
+
+/* --- Phase 7 GPU Compositing & Glassmorphic Scroll Optimization --- */
+.glass-panel,
+.modal-content,
+.draggable-panel {
+    will-change: transform, opacity;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+}
+
+.provenance-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.provenance-badge:hover {
+    transform: translateY(-1px);
+}

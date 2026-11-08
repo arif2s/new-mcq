@@ -224,3 +224,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 });
+
+// --- Phase 7 Retrievability-Weighted Mastery Calculation ---
+(function () {
+    window.computeWeightedMasteryScore = function (accuracyPct, avgRetrievability = 1.0) {
+        const acc = Math.max(0, Math.min(100, Number(accuracyPct) || 0));
+        const ret = Math.max(0, Math.min(1, Number(avgRetrievability) || 0));
+        return Math.round(acc * (0.4 + 0.6 * ret));
+    };
+})();

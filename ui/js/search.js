@@ -554,3 +554,48 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 });
+
+// --- Phase 7 AbortController Search Cancellation & 200ms Debounce ---
+(function () {
+    let _activeSearchController = null;
+    let _searchDebounceTimer = null;
+
+    window.executeRaceSafeSearch = function (query, searchEndpoint = "/api/search", onResult = null, debounceMs = 200) {
+        if (_searchDebounceTimer) {
+            clearTimeout(_searchDebounceTimer);
+        }
+        if (_activeSearchController) {
+            _activeSearchController.abort();
+            _activeSearchController = null;
+        }
+        const trimmed = String(query || "").trim();
+        if (!trimmed) {
+            if (typeof onResult === "function") onResult([]);
+            return Promise.resolve([]);
+        }
+        return new Promise(function (resolve) {
+            _searchDebounceTimer = setTimeout(async function () {
+                const controller = new AbortController();
+                _activeSearchController = controller;
+                try {
+                    const url = `${searchEndpoint}?q=${encodeURIComponent(trimmed)}`;
+                    const resp = await fetch(url, { signal: controller.signal });
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const data = await resp.json();
+                    if (typeof onResult === "function") onResult(data);
+                    resolve(data);
+                } catch (err) {
+                    if (err && err.name === "AbortError") {
+                        resolve(null);
+                        return;
+                    }
+                    resolve([]);
+                } finally {
+                    if (_activeSearchController === controller) {
+                        _activeSearchController = null;
+                    }
+                }
+            }, debounceMs);
+        });
+    };
+})();

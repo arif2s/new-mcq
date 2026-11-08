@@ -1413,3 +1413,19 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 });
+
+// --- Phase 7 Synthesis Stage Tracker & 3-Article Word Budget Calculator ---
+(function () {
+    window.SYNTHESIS_STAGES = ["Extracting", "Routing", "Synthesizing", "Auditing"];
+
+    window.computeArticleWordBudgetStatus = function (text, maxWords = 500) {
+        const words = String(text || "").trim().split(/\s+/).filter(Boolean);
+        const count = words.length;
+        return {
+            wordCount: count,
+            maxWords: maxWords,
+            pct: Math.min(100, Math.round((count / Math.max(1, maxWords)) * 100)),
+            withinBudget: count <= maxWords
+        };
+    };
+})();

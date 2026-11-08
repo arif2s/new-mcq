@@ -1372,3 +1372,17 @@ document.addEventListener('stateUpdated', initDashboard);
 document.addEventListener('DOMContentLoaded', () => {
     initDashboard();
 });
+
+// --- Phase 7 Flicker-Free KPI Counter Patching ---
+(function () {
+    window.updateDashboardKpiText = function (selectorOrEl, nextValue) {
+        const el = typeof selectorOrEl === "string" ? document.querySelector(selectorOrEl) : selectorOrEl;
+        if (!el) return false;
+        const formatted = String(nextValue ?? "");
+        if (el.textContent !== formatted) {
+            el.textContent = formatted;
+            return true;
+        }
+        return false;
+    };
+})();

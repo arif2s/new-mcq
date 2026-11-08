@@ -2075,3 +2075,39 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 });
+
+// --- Phase 7 Quiz Hotkeys (1-4 / A-D), FSRS Response Timer & Provenance Badges ---
+(function () {
+    let _questionRenderTimestamp = performance.now();
+
+    window.markQuestionRendered = function () {
+        _questionRenderTimestamp = performance.now();
+    };
+
+    window.getQuestionResponseTimeMs = function () {
+        return Math.max(0, Math.round(performance.now() - _questionRenderTimestamp));
+    };
+
+    window.formatProvenanceBadgeHtml = function (sourceType, title, pageNo) {
+        const safeSource = String(sourceType || "REF").toUpperCase().replace(/[^A-Z0-9_-]/g, "");
+        const safeTitle = String(title || "Source").replace(/[<>"'&]/g, "");
+        const pageSuffix = pageNo ? ` p.${Number(pageNo)}` : "";
+        return `<span class="provenance-badge" data-source="${safeSource}" data-page="${Number(pageNo) || 1}" title="${safeTitle}${pageSuffix}">[${safeSource}${pageSuffix}]</span>`;
+    };
+
+    document.addEventListener("keydown", function (ev) {
+        const tag = (ev.target && ev.target.tagName) ? ev.target.tagName.toUpperCase() : "";
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (ev.target && ev.target.isContentEditable)) {
+            return;
+        }
+        const keyMap = { "1": 0, "2": 1, "3": 2, "4": 3, "a": 0, "b": 1, "c": 2, "d": 3 };
+        const lower = String(ev.key || "").toLowerCase();
+        if (Object.prototype.hasOwnProperty.call(keyMap, lower)) {
+            const options = document.querySelectorAll(".quiz-option-btn, [data-quiz-option]");
+            const idx = keyMap[lower];
+            if (options && options[idx]) {
+                options[idx].click();
+            }
+        }
+    });
+})();

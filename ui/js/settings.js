@@ -1367,3 +1367,16 @@
     syncGeneralSettingsUI();
   });
 })();
+
+// --- Phase 7 Local LLM / LM Studio Connection Health Check ---
+(function () {
+    window.checkLocalLlmHealth = async function () {
+        try {
+            const resp = await fetch("/api/models/ping", { method: "GET" });
+            if (!resp.ok) return { online: false };
+            return await resp.json();
+        } catch (_err) {
+            return { online: false };
+        }
+    };
+})();
