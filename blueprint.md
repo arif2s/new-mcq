@@ -31,89 +31,90 @@
 .
 ├── config.py                          # Global paths, environment overrides, server/window config, model catalogs, and atomic vendor cacher.
 ├── run.py                             # Application entry point; sets environment, downloads vendor assets, boots server & browser.
-├── auditor.py                         # Compatibility re-exporter for agents.tema_q.auditor (clinical variance & JSON node merger).
-├── dummy.py                           # Fallback topic extractor for testing environments.
-├── requirements.txt                   # Production and testing Python dependency specifications.
+├── requirements.txt                   # Production and testing Python dependency specifications (restricts numpy<2.0.0, pyarrow<17.0.0).
+├── Ignore_list.txt                    # Medical stopwords, noise phrases, and ignored tokens synchronized with SQLite ignored_topics.
 ├── agents/
-│   ├── topic_extractor.py             # Compatibility re-exporter for topic extraction functions.
+│   ├── __init__.py                    # Central package re-exporting auditor and topic_extractor from agents.tema_q.
 │   └── tema_q/
-│       ├── topic_extractor.py         # SciSpaCy entity extraction, layperson synonym mapping, and sibling topic filtering.
-│       ├── pipeline.py                # 2-pass iterative LLM synthesis coordinator with token budgeting and LM Studio integration.
-│       ├── auditor.py                 # Primary clinical discrepancy, staging variance detection, and deterministic JSON node merger engine.
-│       ├── session_processor.py       # Async session processor for background RAG and LLM task execution.
-│       └── prompts.py                 # Strict token-budgeted medical RAG prompts and stop-token definitions.
+│       ├── __init__.py                # Tema-Q package marker.
+│       ├── topic_extractor.py         # MedSpaCy entity extraction, layperson synonym mapping, CUI binding, ConText negation, and sibling filtering.
+│       ├── subtopic_router.py         # Question-anchored clinical prose sanitizer (stripping tables/captions/images) and 7-domain subtopic router.
+│       ├── json_utils.py              # Resilient LLM JSON repair, bracket balancer, <think> block stripper, and Pydantic schema validation.
+│       ├── pipeline.py                # 2-pass iterative LLM synthesis coordinator with token budgeting, VLM page notes, and LM Studio integration.
+│       ├── auditor.py                 # Primary clinical discrepancy, staging variance detection, word budget enforcement, and JSON node merger.
+│       ├── session_processor.py       # Async session processor for background RAG, multi-article context budgeting (500w/1000w), and task execution.
+│       └── prompts.py                 # Strict token-budgeted medical RAG prompts, multi-article synthesis templates, and stop-token definitions.
 ├── core/
-│   ├── database.py                    # SQLite schema initialization, WAL/MMAP PRAGMAs, migrations, and thread-safe connection pooling.
-│   ├── queue_manager.py               # Asynchronous priority task queue worker (P1/P2/P3) and WebSocket state broadcaster.
-│   ├── scheduler.py                   # FSRS v4.5 spaced repetition scheduling algorithm.
-│   └── reporter.py                    # Jinja2 HTML dossier report compiler for clinical topic syntheses.
+│   ├── database.py                    # SQLite schema initialization, WAL/MMAP PRAGMAs, question_metadata tracking, and atomic transaction helpers.
+│   ├── model_lifecycle.py             # LazyModelHolder for low-RAM lazy loading and idle memory eviction of heavy models.
+│   ├── queue_manager.py               # Asynchronous priority task queue worker (P1/P2/P3), persistent job recovery, and WebSocket broadcaster.
+│   ├── scheduler.py                   # FSRS v4.5 spaced repetition scheduling algorithm, retrievability decay, and dynamic retention tuning.
+│   ├── topic_filter.py                # Ignore_list.txt stopword & token validation filter (is_valid_topic, filter_topics).
+│   └── reporter.py                    # Jinja2 HTML dossier report compiler for clinical topic syntheses with path traversal and XSS guards.
 ├── parsers/
 │   ├── embedding_engine.py            # CPUEmbeddingEngine running ONNX SapBERT/MiniLM (384/768d) lazily on CPU (optional GPU) with active switching.
-│   ├── lancedb_engine.py              # LanceDB hybrid vector storage and FTS engine for hierarchical document chunks.
-│   ├── tantivy_engine.py              # Low-latency BM25 lexical inverted index builder and depth-scored multi-depth searcher.
-│   ├── layout_profiles.py             # Dynamic profile linkers and heading policies interfacing with parsers.indra.profiles.
+│   ├── lancedb_engine.py              # LanceDB hybrid vector storage and FTS engine for hierarchical document chunks with SQL fallback.
+│   ├── tantivy_engine.py              # Low-latency BM25 lexical inverted index builder, stale .lock cleanup, and depth-scored multi-depth searcher.
 │   ├── heading_toc_calibrator.py      # Shared multi-pass H1-H6 heading hierarchy, 9D visual vectors, and lazy/streaming TOC calibrator.
-│   ├── indra_base_heading_opt.py      # Pure Base Indra OCR preserving Marker/Surya layout & reading order with HSV pill recovery and heading calibration.
-│   ├── docling_v1_heading_opt.py      # Preserves Docling v1 layout, reading order, and TableFormer with multi-pass heading calibration.
-│   ├── pdf_topic_indexer.py           # Full-PDF hierarchical topic indexer (`pdf_topic_index`), sibling-safe page resolver, and pypdfium2 VLM renderer.
-│   ├── docling_parser.py              # Layout-aware PDF textbook section & table extractor using Docling ML / PyMuPDF.
-│   ├── docling_v2_parser.py           # Standalone Docling v2 layout parser with AdaptivePdfLayoutEngine base64/SVG rendering.
-│   ├── docling_v3_parser.py           # Standalone Docling v3 layout engine with dark-pixel de-bleeding & PP-OCR ONNX re-reading.
-│   ├── docling/                       # Modularized Docling layout engine and vision processing subpackage.
+│   ├── pdf_topic_indexer.py           # Full-PDF hierarchical topic indexer (pdf_topic_index), sibling-safe page resolver, and pypdfium2 VLM renderer.
+│   ├── docling/                       # Modularized Docling layout engine and vision processing subpackage (replaces legacy docling_parser.py).
 │   │   ├── __init__.py                # Package facade exporting cleaner, converter, engine, geometry, inspector, and models.
 │   │   ├── models.py                  # Docling model weight paths, integrity checks, and offline verification.
 │   │   ├── converter.py               # DocumentConverter singleton factory and multi-engine OCR routing (auto, rapidocr, easyocr).
 │   │   ├── cleaner.py                 # Medical text sanitization, dehyphenation, drop-cap joining, OCR token repair heuristics.
 │   │   ├── geometry.py                # Bounding box math, overlap/containment tests, and color distance algorithms.
 │   │   ├── inspector.py               # Pixel-level visual analyzer, stroke-density profiling, line-crop re-OCR (RapidOCR/EasyOCR).
-│   │   └── engine.py                  # AdaptivePdfLayoutEngine 6-stage layout extraction pipeline.
-│   ├── indra_parser.py                # Datalab Indra OCR ONNX parser with LaTeX math & layout block extraction.
-│   ├── indra/                         # Modularized Datalab Indra OCR subpackage.
+│   │   └── engine.py                  # AdaptivePdfLayoutEngine 6-stage layout extraction pipeline with LanceDB ingestion export.
+│   ├── indra/                         # Modularized Datalab Indra OCR subpackage (replaces legacy indra_parser.py).
 │   │   ├── __init__.py                # Package facade exporting profiles, types, rules, strategies, engine, and refiner.
-│   │   ├── types.py                   # Type definitions (BBox, RGB, PageElement, PageElements, TableGrid, ThreadSafeLRUCache) with achromatic -1.0 hue sentinels and consensus tracking.
-│   │   ├── profiles.py                # Document layout profiles (NativeDigital, Textbook, Booklet, Article), 7-factor heading weights, and asymmetric gutter geometry.
+│   │   ├── types.py                   # Type definitions (BBox, RGB, PageElement, PageElements, TableGrid, ThreadSafeLRUCache) with achromatic -1.0 hue sentinels.
+│   │   ├── profiles.py                # Document layout profiles (NativeDigital, Textbook, Booklet, Article), 7-factor heading weights, and asymmetric gutters.
 │   │   ├── rules.py                   # Granular 12-family prefix catalog, SharedLineProcessor (clean, classify, enrich), icon bullet & TOC dot-leader filters, deskew math.
-│   │   ├── strategies.py              # Layout strategy hierarchy, vertical wrapped element merging (_merge_wrapped_elements), acronym tail recovery, and clinical subheadings a)-d).
-│   │   ├── engine.py                  # IndraModularEngine, FallbackChain (ONNX, pdfplumber, pypdfium2), 2D table grid builder, chromatic pill banner recovery, physiological subscripts (PaO2).
+│   │   ├── strategies.py              # Layout strategy hierarchy, vertical wrapped element merging (_merge_wrapped_elements), acronym tail recovery, and subheadings.
+│   │   ├── engine.py                  # IndraModularEngine, FallbackChain (ONNX, pdfplumber, pypdfium2), 2D table grid builder, chromatic pill banner recovery.
 │   │   ├── document.py                # Dual-mode lazy & streaming TOC tracking (DocumentHeadingTracker) with v37 disk caching and cross-page hierarchy compilation.
 │   │   └── refiner.py                 # IndraHybridLayoutRefiner and interactive SVG bounding box overlay generator with deduplicated heading emission.
-│   ├── pdf_extractor.py               # Lightweight PyMuPDF fallback fast text slicer with page heading detection.
-│   ├── pdf_parser.py                  # Standalone 6-stage layout reconstruction pipeline (PyMuPDF AdaptivePdfLayoutEngine).
+│   ├── pdf_extractor.py               # Lightweight PyMuPDF fallback fast text slicer with page heading detection and layout reconstruction.
 │   ├── obsidian_reader.py             # Obsidian markdown frontmatter stripper, wikilink cleaner, and section reader.
-│   ├── zim_reader.py                  # LibZim C-bindings reader for offline Wikipedia/medical .zim archives and asset extraction.
-│   ├── reranker.py                    # FlashRank (ms-marco-TinyBERT-L-2-v2) cross-encoder reranker with active model switching.
-│   └── scispacy_linker_engine.py      # SciSpaCy NLP pipeline loader, covering index SQLite pool, SciPy sparse TF-IDF matcher & batched linker.
+│   ├── zim_reader.py                  # LibZim C-bindings reader for offline Wikipedia/medical .zim archives, asset extraction, and scoped HTML styling.
+│   ├── reranker.py                    # FlashRank (ms-marco-TinyBERT-L-2-v2) cross-encoder reranker with active model switching and RRF merging.
+│   ├── scispacy_linker_engine.py      # SciSpaCy NLP pipeline loader, covering index SQLite pool, SciPy sparse TF-IDF matcher & batched linker.
+│   └── schema.py                      # Canonical AST schema (BoundingBox, ParsedBlock, HeadingNode, DocumentSection, ParsedDocument, clamp_heading_levels).
 ├── server/
-│   ├── app.py                         # FastAPI app initialization, startup/shutdown lifespans, WS endpoints, and static file mounting.
-│   ├── ws_manager.py                  # Global WebSocket connection manager for live task/indexing progress.
+│   ├── app.py                         # FastAPI app initialization, startup maintenance, stale Tantivy lock clearing, GZip, WS endpoints, and static mounts.
+│   ├── ws_manager.py                  # Global WebSocket connection manager for live task/indexing progress with concurrent broadcast and dead-socket pruning.
 │   ├── routes_analysis.py             # Interactive PDF visual layout analysis, bbox editing, heading tree, and LanceDB finalization.
-│   ├── routes_csv.py                  # Endpoints for CSV topic listing, question retrieval, filtering, and FSRS summary.
-│   ├── routes_csv_loader.py           # Background loader scanning data/csv and auto-ingesting questions into SQLite.
-│   ├── routes_mcq.py                  # MCQ topic extraction, scoring, synthesis lookup, and batch generation triggers.
-│   ├── routes_models.py               # Hardware-constrained model manager, active model switcher, diagnostic endpoints, & linker index builder.
+│   ├── routes_csv.py                  # Endpoints for CSV topic listing, question retrieval, filtering, FSRS summary, and background CSV ingestion.
+│   ├── routes_mcq.py                  # MCQ topic extraction, scoring, synthesis lookup, batch update triggers, and atomic grading/FSRS calculation.
+│   ├── routes_models.py               # Hardware-constrained model manager, active model switcher, diagnostic endpoints, API key masking, & linker index builder.
 │   ├── routes_notes.py                # External app bridges (SumatraPDF launch, Obsidian native URI, ZIM asset/article proxy).
 │   ├── routes_queue.py                # RAG task queue state management, topic ignoring, priority overrides, and queue clear/retry.
-│   ├── routes_search.py               # Multi-source hybrid search API (LanceDB + Tantivy + ZIM + SciSpaCy).
+│   ├── routes_search.py               # Multi-source hybrid search API (LanceDB + Tantivy + ZIM + SciSpaCy) with timeout-tolerant parallel execution.
 │   ├── routes_sessions.py             # Quiz session persistence, answer recording, session history, due repetition consolidation, due summary, and dashboard prompts.
-│   ├── routes_sources.py              # Source management (PDF, Obsidian, ZIM), wallpaper listing, and background indexer execution.
-│   └── routes_state.py                # Persistent state GET/PUT storage and vendor asset check.
+│   ├── routes_sources.py              # Source management (PDF, Obsidian, ZIM), wallpaper listing, safe path validation, chunked upload streaming, and background indexer.
+│   └── routes_state.py                # Persistent state GET/PUT storage, RFC 7396 recursive merge patch, and vendor asset check.
+├── docs/
+│   ├── idea.md                        # Architecture concepts, pipeline designs, and feature roadmaps.
+│   ├── mcq_blueprint.md               # Detailed MCQ test runner and spaced repetition technical specifications.
+│   └── verification_report.md         # Verification report for 3-article subtopic synthesis and audit pipeline.
 └── ui/
-    ├── index.html                     # Main SPA HTML shell with responsive subviews and modal containers (mirrored at root index.html).
+    ├── index.html                     # Main SPA HTML shell with responsive subviews and modal containers (non-blocking deferred scripts).
     ├── css/
-    │   ├── main.css                   # Glassmorphism UI tokens, theme CSS variables, grid styles, MediaWiki overrides, and utility classes.
+    │   ├── main.css                   # Glassmorphism UI tokens, theme CSS variables, grid styles, MediaWiki overrides, KaTeX fonts, and utility classes.
     │   └── animations.css             # Keyframe animations for transitions, loaders, and badges.
+    ├── vendor/                        # Offline vendor assets (tailwind.js, marked.min.js, purify.min.js, katex.min.js, auto-render.min.js, interact.min.js).
     └── js/
-        ├── app.js                     # Root UI navigation, tab switching, dynamic palette extraction, and citation click delegation.
-        ├── state.js                   # UI persistence sync layer (`AppPersistence`) interfacing with `/api/state/`.
-        ├── quiz.js                    # Quiz runner, MCQ presentation, option handling, and inspector integration.
+        ├── app.js                     # Root UI navigation, tab switching, dynamic palette extraction, citation delegation, and safe markdown rendering.
+        ├── state.js                   # UI persistence sync layer (AppPersistence) interfacing with /api/state/ with 300ms debounce and localStorage backup.
+        ├── quiz.js                    # Quiz runner, MCQ presentation, option handling, FSRS ratings, hotkeys 1-4/A-D, and inspector integration.
         ├── hub.js                     # Knowledge Hub session list, topic cards, synthesis carousel, and status indicators.
-        ├── search.js                  # Search view controller, inspector filters, result rendering, and citation launcher.
+        ├── search.js                  # Search view controller, race-safe search with AbortController, inspector filters, and citation launcher.
         ├── queue.js                   # Live task queue status table and controls.
         ├── vault.js                   # Source management panel, index trigger, and progress bar binder.
-        ├── dashboard.js               # Performance dashboard, daily statistics, dynamic prompt banner carousel (weak topics, subject rotation, encouragement), and rank simulation.
+        ├── dashboard.js               # Performance dashboard, dynamic prompt banner carousel (weak topics, subject rotation, motivation), and rank simulation.
         ├── expertise.js               # Clinical domain mastery breakdown and radar/progress UI.
-        ├── habits.js                  # Habit streak tracker and activity heatmaps.
-        ├── settings.js                # System settings, active model switching, prefetch downloader, model diagnostics, SciSpaCy model manager, and state export/import.
+        ├── habits.js                  # Habit streak tracker, custom daily target goals, and activity heatmaps.
+        ├── settings.js                # System settings, active model switching, prefetch downloader, model diagnostics, SciSpaCy manager, and state export/import.
         ├── test_features.js           # Interactive feature test bench (PDF, DB search, models, KaTeX, pipeline runner).
         ├── analysis.js                # Visual PDF layout analysis workspace, bbox drag/resize (interact.js), category tagger, auto-save.
         ├── analysis_toc.js            # Table of Contents hierarchical validation workspace, heading tree, tier shifting (H1-H6).
@@ -132,11 +133,10 @@
   - LLM & Models: `LM_STUDIO_URL: str`, `LM_STUDIO_TIMEOUT: float`, `DEFAULT_MODEL: str`, `DEFAULT_EMBEDDING_MODEL: str`, `DEFAULT_FLASHRANK_MODEL: str`, `MAX_CONTEXT_TOKENS: int = 4096`, `SCISPACY_MODEL_CATALOG: dict`
   - Functions: `ensure_directories() -> None`, `ensure_offline_vendor_assets() -> None`
 - `run.py`: `open_browser(url: str) -> None`, `main() -> None`
-- `auditor.py`: Compatibility re-exporter forwarding `detect_clinical_variances` and `merge_json_nodes` from `agents.tema_q.auditor`.
-- `dummy.py`: `extract_topics(text: str) -> list[str]`
+- `Ignore_list.txt`: Static stopword and noise token repository loaded by `core.topic_filter`.
 
 ### Agents Modules (`agents/`)
-- `agents.topic_extractor`: Re-exports `extract_topics`, `extract_topics_local`, `filter_sibling_topics`, `get_topic_aliases`, `generate_candidate_variants`, `canonicalize_clinical_phrase`, `extract_clinical_modifiers`, `extract_all_clinical_modifiers`, `get_ignored_topics_set`, `add_ignored_topic`, `remove_ignored_topic`, `normalize_topic_key`, `resolve_zim_topic`, `get_medspacy_model` from `agents.tema_q.topic_extractor`.
+- `agents.__init__`: Central package re-exporting `detect_clinical_variances`, `merge_json_nodes`, `filter_novel_secondary_sentences`, `audit_synthesized_note`, `extract_topics`, `extract_topics_local`, `filter_sibling_topics`, `get_topic_aliases`, `generate_candidate_variants`, `canonicalize_clinical_phrase`, `extract_clinical_modifiers`, `extract_all_clinical_modifiers`, `get_ignored_topics_set`, `add_ignored_topic`, `remove_ignored_topic`, `normalize_topic_key`, `resolve_zim_topic`, `get_medspacy_model` from `agents.tema_q`.
 - `agents.tema_q.topic_extractor`:
   - `extract_topics(text: str, explanation: str = "", strategy: str = "medspacy", use_zim_refinement: bool = False, use_tantivy_refinement: bool = False, **kwargs) -> list[str]`
   - `extract_topics_local(question: str = "", options: Optional[Any] = None, explanation: str = "", strategy: str = "medspacy", use_zim_refinement: bool = False, use_tantivy_refinement: bool = False, text: Optional[str] = None, **kwargs) -> dict[str, Any]`: Uses MedSpaCy ConText negation and clinical target rules to bind CUIs and semantic categories directly, bypassing brittle subclause splitting to prevent false-positive clause negation (e.g. "dyspnea but no asthma"); uses thread-local SQLite pooling (`_get_thread_db_connection()`) and LRU caching (`maxsize=16384`).
@@ -170,7 +170,14 @@
 - `agents.tema_q.session_processor`:
   - `process_session_questions(session_id: str, worker: Optional[Any] = None) -> None`
   - `process_session_llm_tasks(session_id: str, worker: Optional[Any] = None) -> None`
-- `agents.tema_q.prompts`: `STOP_TOKENS: list[str]`, `PASS1_CLINICAL_SYSTEM_PROMPT: str`, `PASS2_AUDIT_SYSTEM_PROMPT: str`, `DISTRACTOR_ANALYSIS_PROMPT: str`, `EXPLANATION_GENERATION_PROMPT: str`, `VLM_PAGE_SYNTHESIS_SYSTEM_PROMPT: str`
+- `agents.tema_q.subtopic_router`:
+  - `clean_prose_for_synthesis(text: str) -> str`: Strips Markdown/HTML tables, image links, embeds, figure captions, and visual clutter to produce clean clinical prose.
+  - `route_paragraphs_to_subtopics(paragraphs: list[str], domain: str) -> dict[str, list[str]]`: Routes prose paragraphs across 7 domain-specific subtopic schemas (`DOMAIN_SUBTOPIC_SCHEMAS`) via lexical keyword and ONNX embedding scoring.
+  - `normalize_subtopic_stem(term: str) -> str`: Normalizes subtopic stems and plural forms (`-oses` -> `-osis`, `-ies` -> `-y`, `-es`, `-s`).
+- `agents.tema_q.json_utils`:
+  - `parse_llm_json(raw: str) -> dict[str, Any] | list[Any]`: Resilient JSON repair engine; strips `<think>` reasoning and markdown fences, fixes trailing commas, balances brackets, and parses arbitrary LLM outputs safely.
+  - `parse_llm_pydantic(raw: str, schema_cls: type[T]) -> T | None`: Repairs JSON and validates schema via Pydantic (`ExtractedTopicsPayload`, `SubtopicCluster`, `SubtopicRoutePayload`, `SynthesizedNotePayload`, `MCQItemPayload`, `AuditVerdictPayload`).
+- `agents.tema_q.prompts`: `STOP_TOKENS: list[str]`, `PASS1_CLINICAL_SYSTEM_PROMPT: str`, `PASS2_AUDIT_SYSTEM_PROMPT: str`, `DISTRACTOR_ANALYSIS_PROMPT: str`, `EXPLANATION_GENERATION_PROMPT: str`, `VLM_PAGE_SYNTHESIS_SYSTEM_PROMPT: str`, `MULTI_ARTICLE_SYNTHESIS_PROMPT_TEMPLATE: str`
 
 ### Core Modules (`core/`)
 - `core.database`:
@@ -191,6 +198,12 @@
   - `get_fsrs_parameters() -> dict[str, Any]`: Reads user-configured FSRS parameters (`requested_retention`, `max_interval_days`, `easy_bonus`, `hard_factor`) from SQLite `user_state` with safe defaults.
   - `map_fsrs_state_to_status(state: int, stability: float = 0.0, reps: int = 0) -> str`: Maps FSRS numeric state and stability to UI status labels (`'new'`, `'learning'`, `'review'`, `'mastered'`).
   - `calculate_fsrs_next_interval(rating: int, state: int, difficulty: float, stability: float, reps: int, lapses: int, now: Optional[float] = None, requested_retention: Optional[float] = None, max_interval_days: Optional[int] = None) -> dict[str, Any]`: Computes updated FSRS v4.5 metrics using exact power-law interval scaling ($I = S \cdot \text{scaler}$ adhering to user-configured retention and capped at `max_interval_days`), $D_0(3)$ mean reversion, stability floor protection ($\ge 0.1$), and optional `due_timestamp` calculation; when `rating == 1` ('Again'), forces `interval_days = 0`, `interval_seconds = 0`, and sets `due_timestamp = now` so lapsed cards repeat on the next quiz set; returns `FSRS Stats Dict`.
+- `core.model_lifecycle`:
+  - `class LazyModelHolder`: Thread-safe lazy loader and memory releaser (`is_loaded`, `get()`, `release_memory()`, `unload_if_idle(ttl_override)`) supporting zero-VRAM baseline and automatic idle memory eviction.
+- `core.topic_filter`:
+  - `load_ignore_set() -> frozenset[str]`: LRU-cached loader reading stopwords and operational noise tokens from `Ignore_list.txt`.
+  - `is_valid_topic(topic: str | None) -> bool`: Validates candidate topics; rejects strings < 3 chars, purely non-alphanumeric text, and phrases consisting entirely of ignored tokens.
+  - `filter_topics(topics: list[str]) -> list[str]`: Filters and deduplicates topic lists while preserving original sequence.
 - `core.reporter`:
   - `generate_topic_report(topic: str, search_results: Optional[Union[dict, list]] = None, synthesis_output: Optional[dict] = None) -> str`: Compiles structured HTML dossier in `storage/reports/` adhering to `SynthesisOutputDict` (`display_title`, `enhanced_explanation`, `unified_article`, `distractor_analysis`, `variance_audit`, `top_references`); implements Invariant 13 polymorphic reference normalization, markdown-to-HTML rendering, and process/thread-safe atomic temp file replacement.
 
@@ -221,16 +234,10 @@
   - `get_schema() -> tantivy.Schema`
   - `get_index(reset: bool = False) -> tantivy.Index`
   - `search_index(query_str: str, limit_per_source: int = 3) -> dict[str, list[dict]]`
-- `parsers.layout_profiles`:
-  - Re-exports `LAYOUT_PROFILES`, `LayoutProfile`, `ColumnMode`, `CoordinateZone`, `FurnitureSuppressionPolicy`, `HeadingWeightPolicy`, `PageGeometryPolicy`, and `StrategyKey` from `parsers.indra.profiles`.
 - `parsers.heading_toc_calibrator`:
   - `build_document_toc_and_hierarchy(file_path: Union[str, Path], root_title: str = "", full_scan: bool = False, progress_callback: Optional[Callable[[int, int], None]] = None) -> Dict[str, Any]`: Multi-pass consensus heading classifier and TOC builder using 7-factor consensus scoring over 9D visual vectors, with bounded disk caching.
   - `score_and_resolve_heading_candidate(element: Any, profile: LayoutProfile, doc_font_stats: Dict[str, Any], page_no: int, total_pages: int, active_stack: Dict[int, str]) -> Tuple[bool, int, float]`: Evaluates visual typography, geometry, case, styling, and outline prefixes to score heading probability and tier.
   - `classify_outline_prefix(text: str) -> Tuple[int, str]`: Detects structured prefix patterns (e.g. `1.1.2`, `Chapter 4`, `A.`) mapping to standard heading tiers.
-- `parsers.indra_base_heading_opt`:
-  - `extract_page_with_indra_base_heading_opt(file_path: Union[str, Path], page_number: int = 1, default_title: str = "", full_toc_scan: bool = False, profile_key: str = "textbook", math: bool = False, furniture: bool = False, dpi: int = 200, threads: int = 4) -> Dict[str, Any]`: Preserves 100% of Marker/Surya layout and reading order, adding HSV chromatic pill banner recovery and multi-pass heading calibration.
-- `parsers.docling_v1_heading_opt`:
-  - `extract_page_with_docling_v1_heading_opt(file_path: Union[str, Path], page_number: int = 1, default_title: str = "", full_toc_scan: bool = False) -> Dict[str, Any]`: Preserves Docling v1 layout and TableFormer tables while calibrating H1-H6 heading tiers and breadcrumbs.
 - `parsers.pdf_topic_indexer`:
   - `ensure_pdf_topic_index_table() -> None`: Initializes the `pdf_topic_index` SQLite table and lookup indices.
   - `index_pdf_document_topics(file_path: Union[str, Path], root_title: str = "", engine_source: str = "hybrid_toc") -> int`: Full-PDF topic indexer recording section page ranges, parent topics, and normalized keys.
@@ -243,51 +250,18 @@
   - `parsers.docling.cleaner`: `clean_pdf_text(text: str) -> str`, `is_ocr_garbled_text(text: str) -> bool`, `repair_ocr_token_heuristics(text: str) -> str`.
   - `parsers.docling.geometry`: `rect_area(rect) -> float`, `rects_overlap(r1, r2) -> bool`, `point_in_rect(pt, rect) -> bool`, `rgb_distance(c1, c2) -> float`.
   - `parsers.docling.inspector`: `VisualPageInspector(page_image: np.ndarray)`, `get_rapidocr_line_engine() -> Any`, `get_easyocr_line_engine() -> Any`.
-  - `parsers.docling.engine`: `class AdaptivePdfLayoutEngine` implementing multi-stage layout extraction, bounding box computation, typography clustering, and table reconstruction.
-- `parsers.docling_parser`:
-  - `get_converter() -> DocumentConverter`: Thread-safe singleton loader with `accelerator_options.device = "cpu"` and `num_threads = 4`.
-  - `extract_structured_layout(file_path: Union[str, Path], page_number: int) -> str`: LRU-cached (maxsize=128) layout markdown extractor for specific pages with graceful fallback to `parsers.pdf_extractor.extract_page_slice()`.
-  - `extract_pdf_structure(file_path: Union[str, Path]) -> list[dict]`: Full document parser preserving hierarchical headings, markdown tables, lists, formulas, and text; returns dictionaries strictly conforming to `ChunkDict` (`page`, `page_number`, `heading`, `heading_path`, `subheading`, `text`, `article_length`, `doc_length`).
-  - `ingest_to_lancedb(file_path: Union[str, Path], source_article: str, main_topic: str = "") -> int`: Extracts sections and ingests chunks into LanceDB using cached singleton `get_embedding_engine()` and batched ONNX embeddings, enforcing PyArrow schema types.
-- `parsers.docling_v2_parser`:
-  - `is_docling_models_downloaded() -> bool`
-  - `download_docling_models() -> dict[str, Any]`
-  - `clean_pdf_text(text: str) -> str`
-  - `extract_pdf_structure(file_path: Union[str, Path], ocr_engine: str = "auto", **kwargs) -> list[dict[str, Any]]`
-  - `extract_structured_layout(file_path: Union[str, Path], page_number: int, ocr_engine: str = "auto", **kwargs) -> str`
-  - `extract_page_with_docling_v2(file_path: Union[str, Path], page_number: int, default_title: str = "", initial_heading_stack: Optional[dict[int, str]] = None, page_toc: Optional[list[tuple[int, str]]] = None, ocr_engine: str = "auto", **kwargs) -> dict[str, Any]`
-  - `extract_page_with_adaptive_layout(file_path: Union[str, Path], page_number: int, default_title: str = "", promote_headings: bool = False, initial_heading_stack: Optional[dict[int, str]] = None, page_toc: Optional[list[tuple[int, str]]] = None, ocr_engine: str = "auto", **kwargs) -> dict[str, Any]`
-  - `class AdaptivePdfLayoutEngine`: 5-tier typography profiling, dynamic heading stack tracking, booktabs table reconstruction, and layout bounding box overlay generator.
-- `parsers.docling_v3_parser`:
-  - `is_docling_models_downloaded() -> bool`
-  - `download_docling_models() -> dict[str, Any]`
-  - `clean_pdf_text(text: str) -> str`
-  - `extract_pdf_structure(file_path: Union[str, Path], ocr_engine: str = "auto", **kwargs) -> list[dict[str, Any]]`
-  - `extract_structured_layout(file_path: Union[str, Path], page_number: int, ocr_engine: str = "auto", **kwargs) -> str`
-  - `extract_page_with_docling_v3(file_path: Union[str, Path], page_number: int, default_title: str = "", initial_heading_stack: Optional[dict[int, str]] = None, page_toc: Optional[list[tuple[int, str]]] = None, ocr_engine: str = "auto", force_ocr: bool = False, **kwargs) -> dict[str, Any]`
-  - `extract_page_with_adaptive_layout(file_path: Union[str, Path], page_number: int, default_title: str = "", promote_headings: bool = False, initial_heading_stack: Optional[dict[int, str]] = None, page_toc: Optional[list[tuple[int, str]]] = None, ocr_engine: str = "auto", **kwargs) -> dict[str, Any]`
-  - `class AdaptivePdfLayoutEngine`: Visual page inspector with line-crop PP-OCR/EasyOCR/Indra re-reading, dark-pixel de-bleeding, vector chart obstacle isolation, and booktabs table reconstruction.
-- `parsers.indra_parser`:
-  - `get_indra_models_dir() -> Path`
-  - `is_indra_models_downloaded(include_math: bool = False) -> bool`
-  - `download_indra_models(include_math: bool = True) -> dict[str, Any]`
-  - `get_indra_converter(mode: str = "auto", math: bool = False, furniture: bool = False, dpi: int = 200, threads: int = 4, image_ocr: bool = True) -> Any`
-  - `ocr_image_region(gray_or_bgr_image: np.ndarray, math: bool = False, threads: int = 4) -> dict[str, Any]`
-  - `extract_page_with_indra(file_path: Union[str, Path], page_number: int, mode: str = "auto", math: bool = False, furniture: bool = False, dpi: int = 200, threads: int = 4, default_title: str = "", initial_heading_stack: Optional[dict[int, str]] = None, **kwargs) -> dict[str, Any]`
-  - `extract_structured_layout(file_path: Union[str, Path], page_number: int, mode: str = "auto", math: bool = False) -> str`
-  - `extract_pdf_structure(file_path: Union[str, Path], default_title: str = "", mode: str = "auto", math: bool = False, furniture: bool = False, dpi: int = 200, threads: int = 4, **kwargs) -> list[dict[str, Any]]`
-  - `ingest_to_lancedb(file_path: Union[str, Path], source_article: str, main_topic: str = "", mode: str = "auto", math: bool = False) -> int`
+  - `parsers.docling.engine`: `class AdaptivePdfLayoutEngine` implementing multi-stage layout extraction, bounding box computation, typography clustering, booktabs table reconstruction, and LanceDB ingestion (`ingest_to_lancedb(file_path, source_article, main_topic)`). Also provides consolidated heading calibration `extract_page_with_docling_v1_heading_opt`.
 - `parsers.indra`:
   - Re-exports core profiles, types, rules, strategies, engine components, and refiner functions:
   - `parsers.indra.types`: `BBox`, `RGB`, `ElementRole`, `HeadingPrototype`, `PageElement`, `PageElements`, `TableGrid`, `ThreadSafeLRUCache`; initializes `fg_hue = -1.0` and `bg_hue = -1.0` as achromatic sentinels, adds consensus tracking fields (`indent_ratio`, `line_count`, `confidence`, `embedded_toc_level`, `rotation`, `indra_role`).
   - `parsers.indra.profiles`: `ColumnMode`, `CoordinateZone`, `FurnitureSuppressionPolicy`, `HeadingWeightPolicy`, `LAYOUT_PROFILES`, `LayoutProfile`, `PageGeometryPolicy`, `StrategyKey`; incorporates 7-factor heading weights, asymmetric gutter thresholds, and expanded header zone ratios.
   - `parsers.indra.rules`: `RegexCatalog` (12 prefix families including `ALPHA_LOWER`, `ALPHA_UPPER`, `DECIMAL`; regex filters for `ICON_BULLET_MARKER`, `TOC_DOT_LEADER`, `CONTRIBUTOR_ROW`, `SITUATION_HEADER`), `SharedLineProcessor(clean, classify, enrich)`, `deskew_bbox_norm(bbox, angle)`, `enrich_lines(lines, ...)`, `overlap_ratio(b1, b2)`, `rgb_distance(c1, c2)`, `rgb_saturation(rgb)`, `rgb_to_hsv(rgb)`, `union_bbox(boxes)`.
   - `parsers.indra.strategies`: `LayoutStrategy`, `NativeDigitalStrategy`, `ScannedTwoColumnTextbookStrategy`, `IllustratedBookletStrategy`, `AcademicArticleStrategy`, `LayoutStrategyRegistry`; provides `_merge_wrapped_elements` (parenthetical acronym tails, *Situation multi-line exemptions) and clinical subheading classification a)-d).
-  - `parsers.indra.engine`: `FallbackChain`, `IndraModularEngine(mode, math, furniture, dpi, threads, image_ocr)`, `reconstruct_2d_table_grid(words, ...)`, `_crosses_dynamic_channel`, `_detect_and_ocr_chromatic_pill_banners`, physiological subscript attachment (PaO2, PaCO2) with zero-VRAM CPU/opportunistic GPU routing.
+  - `parsers.indra.engine`: `FallbackChain`, `IndraModularEngine(mode, math, furniture, dpi, threads, image_ocr)`, `reconstruct_2d_table_grid(words, ...)`, `_crosses_dynamic_channel`, `_detect_and_ocr_chromatic_pill_banners`, physiological subscript attachment (PaO2, PaCO2) with zero-VRAM CPU/opportunistic GPU routing, `extract_page_with_indra`, `extract_pdf_structure`, `extract_structured_layout`, `ingest_to_lancedb`, and consolidated heading calibration `extract_page_with_indra_base_heading_opt`.
   - `parsers.indra.document`: `DocumentHeadingTracker(root_title)`, `get_or_create_document_tracker(file_path, default_title, reset, target_page, full_scan, progress_callback)`; supports dual-mode lazy & streaming TOC tracking with v37 disk caching (`_get_toc_disk_cache_path`).
   - `parsers.indra.refiner`: `IndraHybridLayoutRefiner(page_elements)`, `build_layout_svg_overlay(page_elements, width, height)`; deduplicates consensus lines and suppresses duplicate heading/list item emissions in output markdown.
-- `parsers.indra_parser`:
-  - Enforces strict architectural line limit guardrail (`<= 673` lines) by delegating parsing workflows to `parsers.indra` subpackage while preserving legacy top-level signatures.
+- `parsers.schema`:
+  - Canonical AST data schema defining `BoundingBox`, `ParsedBlock`, `HeadingNode`, `DocumentSection`, `ParsedDocument`, and `clamp_heading_levels(sections)` re-exported across Docling and Indra.
 - `parsers.pdf_extractor`:
   - `clean_pdf_text(text: str) -> str`: Normalizes typographical ligatures (fi, fl, ffi), repairs line-break hyphenations, strips null bytes and form feeds, and cleans whitespace.
   - `extract_page_slice(file_path: Union[str, Path], page_number: int) -> str`: LRU-cached (maxsize=256) text extraction with natural reading order (`sort=True`) and bounds safety (rejects `page_number < 1`).
@@ -295,8 +269,7 @@
   - `extract_pdf_pages(file_path: Union[str, Path], default_title: str = "") -> list[dict[str, Any]]`: Complete document extractor returning full `ChunkDict` records with deterministic MD5 IDs for Tantivy BM25 and LanceDB indexing when `pdfEngine == 'fitz'`.
   - `extract_pdf_structure(file_path: Union[str, Path]) -> list[dict[str, Any]]`: Drop-in interoperability alias for `extract_pdf_pages()`.
   - `get_pdf_page_count(file_path: Union[str, Path]) -> int`: Fast trailer-based page count reader.
-- `parsers.pdf_parser`:
-  - Re-exports `AdaptivePdfLayoutEngine`, `clean_pdf_text`, and `extract_page_with_adaptive_layout` providing a standalone 6-stage layout reconstruction engine (typography profiling, shaded callout isolation, column splitting, recursive XY-cut ordering, heading stack continuation).
+
 - `parsers.obsidian_reader`:
   - `read_markdown_body(file_path: Union[str, Path]) -> str`: LRU-cached (maxsize=512) frontmatter, comment, and wikilink stripper; handles Windows UTF-8 BOM (`utf-8-sig`) and returns cleaned plain text.
   - `extract_obsidian_sections(file_path: Union[str, Path]) -> list[dict]`: Layout-aware section extractor; protects fenced code blocks from false heading parsing, suppresses phantom sections, and returns complete dictionaries adhering strictly to `ChunkDict` (`id`, `doc_id`, `text`, `snippet`, `title`, `heading`, `heading_path`, `subheading`, `source="obsidian"`, `file_path`, `page=1`, `page_number=1`, `doc_length`, `article_length`).
@@ -353,10 +326,7 @@
     - `broadcast_session_update_sync(...)`
     - `broadcast_indexing_progress_sync(...)`
   - Singletons: `manager = ConnectionManager()`, `ws_manager = manager` (exported aliases).
-- `server.routes_csv_loader`:
-  - `scan_and_ingest_csvs() -> dict[str, Any]`: Recursively scans `CSV_DIR` and `MCQS_DIR`, normalizes diverse option/answer representations (numbers 1-4, bracketed letters, verbatim text matches), and executes chunked (`BATCH_SIZE=1000`) `INSERT OR IGNORE` queries into `csv_questions`.
-  - `load_csvs_background`: Backward-compatibility callable alias for `scan_and_ingest_csvs`.
-  - `POST /api/csv/reload`, `POST /reload`, `GET /api/csv/reload`, `GET /reload` -> `reload_csvs(background_tasks: Optional[BackgroundTasks] = None) -> dict[str, Any]`: Offloads re-scanning to worker threads via `asyncio.to_thread` and returns execution metrics.
+
 - `server.routes_analysis`:
   - `GET /api/analysis/files` -> `get_analysis_files() -> list[dict[str, Any]]`: Scans indexed PDF sources and lists analysis progress, reviewed page counts, and total pages.
   - `POST /api/analysis/initialize` -> `initialize_analysis(req: InitializeAnalysisRequest) -> dict[str, Any]`: Starts or loads layout analysis session for a PDF, registering layout profile in `layout_analysis_progress`.
@@ -365,8 +335,11 @@
   - `POST /api/analysis/save-markdown` -> `save_markdown_override(req: SaveMarkdownRequest) -> dict[str, Any]`: Persists manual full-document or page-level markdown override text.
   - `GET /api/analysis/toc` -> `get_document_toc(file_path: str) -> dict[str, Any]`: Compiles hierarchical document heading tree from saved page bounding boxes (`element_type='header'`) and layout strategies.
   - `POST /api/analysis/update-heading` -> `update_heading_level(req: UpdateHeadingRequest) -> dict[str, Any]`: Modifies heading tier level (H1-H6) for an annotated header bounding box in `user_annotated_bboxes`.
-  - `POST /api/analysis/finalize` -> `finalize_analysis(req: FinalizeAnalysisRequest) -> dict[str, Any]`: Compiles all reviewed page bboxes into unified markdown, optionally exports to LanceDB via `parsers.docling_parser.ingest_to_lancedb()`, marks progress as `completed`, and updates source status.
+  - `POST /api/analysis/finalize` -> `finalize_analysis(req: FinalizeAnalysisRequest) -> dict[str, Any]`: Compiles all reviewed page bboxes into unified markdown, optionally exports to LanceDB via `parsers.docling.engine.ingest_to_lancedb()`, marks progress as `completed`, and updates source status.
 - `server.routes_csv`:
+  - `scan_and_ingest_csvs() -> dict[str, Any]`: Recursively scans `CSV_DIR` and `MCQS_DIR`, normalizes diverse option/answer representations (numbers 1-4, bracketed letters, verbatim text matches), and executes chunked (`BATCH_SIZE=1000`) `INSERT OR IGNORE` queries into `csv_questions`.
+  - `load_csvs_background`: Backward-compatibility callable alias for `scan_and_ingest_csvs`.
+  - `POST /api/csv/reload`, `POST /reload`, `GET /api/csv/reload`, `GET /reload` -> `reload_csvs(background_tasks: Optional[BackgroundTasks] = None) -> dict[str, Any]`: Offloads re-scanning to worker threads via `asyncio.to_thread` and returns execution metrics.
   - `GET /api/csv/subjects`, `POST /api/csv/subjects`, `GET /api/mcq/subjects`, `POST /api/mcq/subjects` -> `get_subjects() -> list[SubjectResponse]`: Aggregates question counts per subject file stem.
   - `GET /api/csv/topics`, `POST /api/csv/topics`, `GET /api/mcq/topics`, `POST /api/mcq/topics` -> `get_topics(subject: Optional[str] = None) -> list[TopicResponse]`: Lists topic counts with optional subject filtering.
   - `POST /api/csv/search_count` & `POST /api/mcq/search_count` -> `search_count(req: GenerateSetRequest) -> dict[str, Any]`: Computes matching question count over FTS5 and subject/topic filters.
@@ -457,7 +430,7 @@
   - `POST /api/sources/open_pdf` -> `open_pdf(payload: OpenPdfPayload) -> dict[str, str]`: Windows deep-link launcher for SumatraPDF using `-reuse-instance` and `-page` flags with `.pdf` path validation and auto-discovery in `%LOCALAPPDATA%` and `%ProgramFiles%`.
   - `GET /api/sources/asset?path=...` -> `get_asset(path: str) -> FileResponse`: Serves Obsidian attachments with path traversal checks (`is_relative_to`) and mimetype sniffing.
   - `POST /api/sources/build_zim_dict` -> `build_zim_dict() -> dict[str, Any]`: Zero-copy C++ B-tree archive inspection updating item counts.
-  - `POST /api/sources/test_pdf_extract` -> `test_pdf_extract(payload: TestPdfExtractPayload) -> dict[str, Any]`: Interactive PDF layout comparator testing Fitz text, heuristic headings, Docling v2, and Docling v3 ML layout parsers.
+  - `POST /api/sources/test_pdf_extract` -> `test_pdf_extract(payload: TestPdfExtractPayload) -> dict[str, Any]`: Interactive PDF layout comparator testing Fitz text, heuristic headings, Docling OCR engines (`auto`, `rapidocr`, `easyocr`), and Indra OCR layout parsers.
 - `server.routes_state`:
   - `GET /api/state/vendor_status` -> `get_vendor_status() -> dict[str, Any]`: Checks presence and size (>128 bytes) of offline vendor scripts (Tailwind, Marked, DOMPurify, KaTeX) in `ui/vendor/`.
   - `POST /api/state/vendor_download` -> `trigger_vendor_download() -> dict[str, Any]`: Triggers atomic download of vendor assets via `config.ensure_offline_vendor_assets()`.
@@ -472,19 +445,19 @@
   - `DELETE /api/state/{key}` -> `delete_state_key(key: str) -> dict[str, str]`: Deletes state entry from SQLite.
 
 ### Frontend Modules (`ui/js/`)
-- `ui/js/app.js`: `switchTab(tabName: str)`, `openInspector(forceOpen: bool = true)`, `closeInspector()`, `openDocumentReader({title, sourceType, htmlContent, markdownContent, filePath, anchor})` (renders 1200px max-width glass card, sets `body.zim-reader-open`, dismisses on backdrop click or Escape), `closeDocumentReader()`, `renderMarkdownAndMath(text: str)`, `escapeHTML(str: str)`, `extractAndApplyPalette(imgElement: HTMLImageElement)`, `updateThemeAndBackground()`, citation delegation on click (`data-source-type`, `data-file-path`, `data-page`).
-- `ui/js/state.js`: `AppPersistence.fetchState()`, `AppPersistence.saveState()`, `AppPersistence.updateState(patch)`
-- `ui/js/quiz.js`: `initQuizSetup()`, `beginQuizRunner()`, `handleSelectOption(optLetter: str)`, `handleQuitQuiz()`, `updateInspectorForQuestion(q)`, `renderTopicVerificationModalDOM()` (records and restores `scrollTop` position of `#topic-editor-content`), `openExplanationNoteModal(q)` (opens expanded Markdown/KaTeX explanation note modal `#explanation-note-modal`, dismissible via backdrop click or Escape), separates FSRS rating controls (`#fsrs-rating-container`) and CSV explanation (`#feedback-container`) into distinct cards.
+- `ui/js/app.js`: `switchTab(tabName: str)`, `openInspector(forceOpen: bool = true)`, `closeInspector()`, `openDocumentReader({title, sourceType, htmlContent, markdownContent, filePath, anchor})` (renders 1200px max-width glass card, sets `body.zim-reader-open`, dismisses on backdrop click or Escape), `closeDocumentReader()`, `renderSafeMarkdown(text: str)` (safe markdown and KaTeX renderer with DOMPurify MathML/SVG whitelisting), `throttleWithRAF(fn)` (requestAnimationFrame drag/scroll throttling), `computeWsBackoffDelay(attempt)` (exponential WebSocket reconnect backoff), `escapeHTML(str: str)`, `extractAndApplyPalette(imgElement: HTMLImageElement)`, `updateThemeAndBackground()`, citation delegation on click (`data-source-type`, `data-file-path`, `data-page`).
+- `ui/js/state.js`: `AppPersistence.fetchState()`, `AppPersistence.saveState()`, `AppPersistence.updateState(patch)`, `queueDebouncedStatePatch(key, val, delayMs=300)` (debounced state sync layer with immediate localStorage backup via `saveStateToLocalBackup`), tracks `dailyTargets.customGoals` for custom topic/subject study targets.
+- `ui/js/quiz.js`: `initQuizSetup()`, `beginQuizRunner()`, `handleSelectOption(optLetter: str)`, `handleQuitQuiz()` (commits partial completions to test history and habit streaks without requiring full submission), `updateInspectorForQuestion(q)`, `renderTopicVerificationModalDOM()` (records and restores `scrollTop` position of `#topic-editor-content`), `openExplanationNoteModal(q)` (opens expanded Markdown/KaTeX explanation note modal `#explanation-note-modal`, dismissible via backdrop click or Escape), hotkey listeners (1-4, A-D), ms latency recording, separates FSRS rating controls (`#fsrs-rating-container`) and CSV explanation (`#feedback-container`) into distinct cards.
 - `ui/js/hub.js`: `renderHub()`, `openTopicCarousel(topicKey: str)`, `openTopicCarouselForQuiz(topicKey: str)`, `openSessionReview(sessionId: str)`
-- `ui/js/search.js`: `performGlobalSearch(query: str)`, `renderCentralSearchResults(results)`, `renderSearchFilterInspector()`
+- `ui/js/search.js`: `executeRaceSafeSearch(query: str)` (race-safe search with AbortController cancellation and 200ms debounce), `performGlobalSearch(query: str)`, `renderCentralSearchResults(results)`, `renderSearchFilterInspector()`
 - `ui/js/queue.js`: `fetchQueueStatus()`, `renderQueue()`, `initQueueWebSocket()`
 - `ui/js/vault.js`: `fetchSources()`, `renderSources()`, `updateProgressUI(percent, msg)`
-- `ui/js/dashboard.js`: `initDashboard()`, `fetchDashboardPrompts()`, `renderBannerCarousel()` (rotates dynamic carousel of up to 10 banners: spaced repetition due reviews, NLP weak topics, 3+ day subject rotation prompts, and motivational messages), `handleBannerAction(banner)`, `startBannerAutoCycle()`, `startGradualBannerRotation()`, `renderRankEditor()`
+- `ui/js/dashboard.js`: `initDashboard()`, `fetchDashboardPrompts()`, `renderBannerCarousel()` (rotates dynamic carousel of up to 10 banners: spaced repetition due reviews, NLP weak topics, 3+ day subject rotation prompts, and motivational messages with time-of-day/velocity adaptation and CSS glow animations), `handleBannerAction(banner)`, `startBannerAutoCycle()`, `startGradualBannerRotation()`, `renderRankEditor()`, `simulateRank()` (calculates Avg Rank across trailing 200 questions).
 - `ui/js/expertise.js`: `initExpertiseMap()`
-- `ui/js/habits.js`: `initHabits()`
-- `ui/js/settings.js`: `initSettings()`, `loadDiagnostics()`, `loadScispacyModels()`
-- `ui/js/test_features.js`: `initTestFeatures()`, `renderPdfExtractorView()`, `renderDbQueriesView()`
-- `ui/js/analysis.js`: `initAnalysisWorkspace()`, `loadFilesList()`, `loadPageData(file, page)`, `renderPageCanvas()`, `renderLayoutBoxes()`, `savePageAnnotations()`, `autoSave()`. Manages dual-pane visual workspace, interactive drag/resize via `interact.js`, category retagging (`text`, `header`, `table`, `figure`), reading order flow, and 3-second debounced persistence.
+- `ui/js/habits.js`: `initHabits()`, renders heatmap intensity classes (`.heatmap-cell-0` to `.heatmap-cell-4`), custom daily target tracking (`dailyTargets.customGoals`).
+- `ui/js/settings.js`: `initSettings()`, `loadDiagnostics()`, `loadScispacyModels()`, manual triggers `#btn-update-all-refs` and `#btn-update-all-summaries` for bulk reference and LM Studio summary updates.
+- `ui/js/test_features.js`: `initTestFeatures()`, `renderPdfExtractorView()`, `renderDbQueriesView()`, multi-engine OCR dropdown routing (`auto`, `rapidocr`, `easyocr`).
+- `ui/js/analysis.js`: `initAnalysisWorkspace()`, `loadFilesList()`, `loadPageData(file, page)`, `renderPageCanvas()`, `renderLayoutBoxes()`, `savePageAnnotations()`, `autoSave()`. Manages dual-pane visual workspace, interactive drag/resize via `ui/vendor/interact.min.js`, category retagging (`text`, `header`, `table`, `figure`), reading order flow, and 3-second debounced persistence.
 - `ui/js/analysis_toc.js`: `openTocValidation(file_path)`, `initTocWorkspace()`, `loadTocHeadings()`, `renderHeadingsTree()`, `shiftHeadingTier(boxId, delta)`, `commitAndIngestDocument()`. Controls Table of Contents validation dual-pane screen, bounding box focus on canvas, nested heading tree manipulation (H1-H6), and LanceDB finalization trigger.
 - `ui/js/reader.js`: `initReaderView()`, `openDocumentInReader(sourceType: str, path: str, pageOrAnchor: str)`
 
@@ -1119,7 +1092,7 @@ CREATE INDEX idx_qm_last_attempt ON question_metadata(last_attempt_ts);
      ├── User adjusts heading tiers (Arrow keys / buttons) -> POST /api/analysis/update-heading
      └── Commit & Ingest -> POST /api/analysis/finalize
            ├── Compiles verified document Markdown
-           ├── parsers/docling_parser.py (ingest_to_lancedb) -> LanceDB vector & FTS table
+           ├── parsers/docling/engine.py (ingest_to_lancedb) -> LanceDB vector & FTS table
            └── Updates layout_analysis_progress status='completed' -> Vault UI displays green checkmark
 ```
 
@@ -1151,8 +1124,8 @@ CREATE INDEX idx_qm_last_attempt ON question_metadata(last_attempt_ts);
 18. **WebSocket Thread & Loop Boundary Isolation**: Background worker threads dispatching live WebSocket notifications MUST use thread-safe dispatchers (`asyncio.run_coroutine_threadsafe`) targeting the primary FastAPI event loop, serialize writes per socket connection, construct WebSocket URLs using `window.location.protocol` (`wss://` or `ws://`) and `window.location.host`, and conform verbatim to canonical message schemas (`type="task_update"`, `type="session_update"`, `type="indexing_progress"`).
 19. **UTF-8 BOM and Code Block Protection in Markdown Parsers**: Obsidian markdown parsers MUST decode using `utf-8-sig` to automatically strip Windows UTF-8 Byte Order Marks, and track fenced code block boundaries (` ``` ` / `~~~`) to prevent code comments (e.g., `# python comment`) from being falsely parsed as document section headings.
 20. **Chunked Database Ingestion & Transaction Boundaries**: Large dataset ingestion operations (e.g. `csv_questions` mass loading) MUST commit records in discrete batches (`BATCH_SIZE <= 1000`) rather than holding long-lived write transactions, preventing SQLite database locks (`busy_timeout`) on concurrent quiz and search worker threads.
-21. **HTML Shell & Deferred Script Integrity**: The application HTML shell files (`ui/index.html` and root `index.html`) MUST remain identical. All vendor and application JavaScript files MUST be included with `defer` attributes, interactive buttons MUST use explicit `type="button"`, and theme persistence MUST initialize immediately via an inline IIFE reading `localStorage.getItem("theme")`.
-22. **Docling & Indra Offline Execution Safety**: Layout and OCR parsers (`parsers/docling_v2_parser.py`, `parsers/docling_v3_parser.py`, `parsers/indra_parser.py`) MUST set `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` (plus `INDRA_OCR_MODEL_DIR` for Indra) when local model weights are detected, enforcing 100% offline execution without online Hugging Face Hub hangs.
+21. **HTML Shell & Deferred Script Integrity**: The application HTML shell file `ui/index.html` serves as the primary SPA entry point. All vendor and application JavaScript files MUST be included with `defer` attributes, interactive buttons MUST use explicit `type="button"`, and theme persistence MUST initialize immediately via an inline IIFE reading `localStorage.getItem("theme")`.
+22. **Docling & Indra Offline Execution Safety**: Layout and OCR parsers (`parsers/docling/` and `parsers/indra/`) MUST set `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` (plus `INDRA_OCR_MODEL_DIR` for Indra) when local model weights are detected, enforcing 100% offline execution without online Hugging Face Hub hangs.
 23. **Non-Collapsing Inspector on Background Topic Extraction**: In `ui/js/app.js` and `ui/js/quiz.js`, `openInspector(forceOpen)` defaults `forceOpen` to `true`. When called with `forceOpen = false` during automatic background updates (`updateInspectorForQuestion`), inspector content MUST update without reopening the right sidebar if it was collapsed by the user.
 24. **PDF Layout Analysis & Bounding Box Transaction Isolation**: Page bounding box modifications (`POST /api/analysis/save-page`) MUST be persisted atomically within a single SQLite transaction (clearing existing bboxes for the specific page and inserting active `BBoxItem` records) to prevent partial annotation writes. Heading level updates (`POST /api/analysis/update-heading`) must update `user_annotated_bboxes` immediately, and document finalization (`POST /api/analysis/finalize`) must mark `layout_analysis_progress(status='completed')` and reflect validated state across Vault source lists without deleting raw bounding box review history.
 25. **Spaced Repetition Due Review & Wrong Answers Consolidation**: Due repetition questions and wrongly answered questions MUST be consolidated into a single Knowledge Hub session (`sess_spaced_repetition_due` titled `🧠 Due & Wrong Review Set`) via `sync_consolidated_due_session`. Questions answered incorrectly or due for review appear immediately in due review counts (`GET /api/sessions/due_summary`) and dashboard prompt reminders (`GET /api/sessions/dashboard_prompts`). In `core/scheduler.py`, rating 'Again' (`grade == 1`) configures `interval_days = 0`, `interval_seconds = 0`, and sets `due_timestamp = current_ts`, and `generate_set` prioritizes unattempted questions first before falling back to attempted questions when question count is limited.
@@ -1160,5 +1133,10 @@ CREATE INDEX idx_qm_last_attempt ON question_metadata(last_attempt_ts);
 27. **Segmented Controls Two-Way Binding & Accessibility Role Contract**: UI segmented button groups (`.segmented-group` and `.segmented-btn`) replacing select dropdowns for frequent actions (source type, layout profile, obsidian click mode, wallpaper timer, database target) MUST retain the underlying `<select>` element in the DOM, synchronize selections bidirectionally between button clicks and `<select>` change events, and declare `role="radiogroup"` on the container and `role="radio"` / `aria-checked` on individual option buttons for full assistive accessibility.
 28. **Indra OCR Achromatic Hue Sentinels & Multi-Line Continuation Integrity**: In `parsers/indra/types.py`, default hue values for `PageElement` and `HeadingPrototype` MUST be initialized to `-1.0` (`fg_hue = -1.0`, `bg_hue = -1.0`) to unambiguously differentiate achromatic elements (pure grays, whites, blacks) from chromatic elements with hue 0.0 (red). In `parsers/indra/strategies.py`, `_merge_wrapped_elements` MUST merge vertical wrapped lines sharing identical column index and visual styles within `v_gap <= 0.038`, specifically exempting parenthetical acronym tails (`(COPD):`) and *Situation headers from being broken into fragmented blocks.
 29. **Theme Contrast & Dark/Light Semantic Palette Variable Isolation**: In `ui/css/main.css`, theme neutrals (`--c-neutral-100` through `--c-neutral-500`), segmented variables (`--segmented-bg`, `--segmented-border`, `--segmented-active-bg`), and code backgrounds (`--code-bg`) MUST be defined across `:root` and `body.dark-theme`, providing contextual overrides on panels and cards for Tailwind dark-mode utilities (`text-gray-*`, `text-slate-*`, `text-white`) to ensure high contrast and WCAG AA readability without altering colored badges or buttons.
-30. **Multi-Pass Heading Calibration & Base Layout Preservation**: The heading calibration engines (`parsers/heading_toc_calibrator.py`, `parsers/indra_base_heading_opt.py`, and `parsers/docling_v1_heading_opt.py`) MUST preserve 100% of the underlying base OCR text extraction, word positions, and reading order (Marker/Surya for Indra, TableFormer for Docling v1), augmenting output strictly with non-destructive H1-H6 heading tier classification and hierarchical breadcrumbs. In `parsers/pdf_topic_indexer.py`, lookups against `pdf_topic_index` MUST enforce sibling mutual exclusion (`SIBLING_MUTUAL_EXCLUSIONS`) to prevent cross-topic pollution (e.g. Bronchopneumonia vs Lobar Pneumonia), and page-to-picture base64 rendering for LM Studio Vision-LM (VLM) synthesis MUST fall back gracefully to structured plain text if VLM execution fails or is unsupported.
+30. **Multi-Pass Heading Calibration & Base Layout Preservation**: The heading calibration engines (`parsers/heading_toc_calibrator.py`, `parsers/indra/engine.py`, and `parsers/docling/engine.py`) MUST preserve 100% of the underlying base OCR text extraction, word positions, and reading order (Marker/Surya for Indra, TableFormer for Docling v1), augmenting output strictly with non-destructive H1-H6 heading tier classification and hierarchical breadcrumbs. In `parsers/pdf_topic_indexer.py`, lookups against `pdf_topic_index` MUST enforce sibling mutual exclusion (`SIBLING_MUTUAL_EXCLUSIONS`) to prevent cross-topic pollution (e.g. Bronchopneumonia vs Lobar Pneumonia), and page-to-picture base64 rendering for LM Studio Vision-LM (VLM) synthesis MUST fall back gracefully to structured plain text if VLM execution fails or is unsupported.
 31. **Question Metadata Tracking, Session Auto-Removal & Dynamic FSRS Tuning**: Question attempt metrics (`attempt_count`, `wrong_count`, `last_is_correct`, `last_attempt_ts`) and verified clinical topics MUST be recorded atomically into `question_metadata` via `record_question_attempt` on every quiz completion. FSRS interval calculations in `core/scheduler.py` dynamically scale according to user-configured retention and interval caps (`requested_retention`, `max_interval_days`) persisted in `user_state`. When `auto_remove_completed_sets` is enabled, fetching session history (`GET /api/sessions/history`) automatically purges fully revised study sets from `quiz_sessions` and child tables (excluding `sess_spaced_repetition_due`), and reviewed questions with future due timestamps are purged immediately from the consolidated review set.
+32. **Domain-Anchored Subtopic Routing & Word-Budget Enforcement**: Multi-source synthesis pipelines (`agents/tema_q/subtopic_router.py`, `agents/tema_q/session_processor.py`, `agents/tema_q/auditor.py`) MUST strip tables, images, and captions before routing prose across the 7 canonical medical domain subtopic schemas (`DOMAIN_SUBTOPIC_SCHEMAS`). Synthesis contexts MUST strictly enforce hard token and word ceilings: maximum 500 words for primary articles, maximum 1000 words for merged secondary articles, and secondary sentences MUST be pre-filtered via token containment and staging/numeric novelty (`filter_novel_secondary_sentences`) to prevent duplicate passage pollution.
+33. **Resilient LLM Output Repair & Pydantic Schema Validation**: All JSON outputs received from LM Studio or local LLM generation MUST pass through `agents/tema_q/json_utils.py` (`parse_llm_json` and `parse_llm_pydantic`). Processing MUST cleanly strip `<think>...</think>` internal reasoning blocks and markdown backtick fences, balance unclosed brackets/braces, strip invalid trailing commas, and validate against strongly-typed Pydantic schemas before ingestion into application state or databases.
+34. **Topic Stopword Filtering & Ignore List Bidirectional Synchronization**: Candidate topic extraction (`agents/tema_q/topic_extractor.py`), full-PDF TOC indexing (`parsers/pdf_topic_indexer.py`), and dossier report generation (`core/reporter.py`) MUST validate all topic strings against `core/topic_filter.py` (`is_valid_topic`). Strings shorter than 3 characters, purely non-alphanumeric noise, and phrases formed exclusively from `Ignore_list.txt` stopwords MUST be rejected. Ignored topics and frequent note topics (>2 occurrences) MUST synchronize bidirectionally between SQLite tables (`ignored_topics`, `topic_note_counts`) and local flat files (`Ignore_list.txt`, `tests/fixtures/topic.txt`).
+35. **Server Lifespan Maintenance & Safe Upload Streaming**: FastAPI server startup MUST invoke `run_startup_maintenance()`, ensure runtime storage directories exist, clear stale 0-byte Tantivy lockfiles, and register `GZipMiddleware(minimum_size=1000)`. Uploaded files (`server/routes_sources.py`) MUST undergo null byte and path traversal validation (`validate_safe_source_path`) and stream to disk in discrete 1 MB chunks (`stream_upload_to_disk`) with incremental SHA-256 digest computation to guard against memory exhaustion during large vault imports.
+36. **Frontend Race-Safe Search & Performance Throttling**: Interactive UI search operations (`ui/js/search.js`) MUST enforce query cancellation via `AbortController` and 200ms input debounce (`executeRaceSafeSearch`) to eliminate out-of-order response races. Heavy visual updates (drag events in layout analysis and scroll events) MUST be throttled using `requestAnimationFrame` (`throttleWithRAF`), state updates debounced at 300ms with localStorage backup (`queueDebouncedStatePatch`), and WebSocket reconnection guarded by exponential backoff (`computeWsBackoffDelay`).
