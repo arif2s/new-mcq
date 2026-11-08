@@ -534,3 +534,41 @@ def generate_topic_report(
         raise
 
     return str(output_path)
+
+
+# --- Phase 4 Sanitized & Stopword-Filtered HTML Report Helpers ---
+import html as _html
+from pathlib import Path as _Path
+import re as _re
+from core.topic_filter import is_valid_topic as _is_valid_topic
+
+_SAFE_SLUG_RE = _re.compile(r"[^a-z0-9_-]+")
+
+
+def sanitize_report_path(topic: str, reports_dir: str | _Path = "storage/reports") -> _Path | None:
+    """
+    Validate topic against Ignore_list.txt and return a path-traversal-safe report file path.
+    Returns None if the topic is a stopword or invalid.
+    """
+    if not _is_valid_topic(topic):
+        return None
+    slug = _SAFE_SLUG_RE.sub("_", topic.strip().lower()).strip("_")
+    if not slug or len(slug) < 3:
+        return None
+    base = _Path(reports_dir).resolve()
+    base.mkdir(parents=True, exist_ok=True)
+    candidate = (base / f"{slug}_report.html").resolve()
+    if base not in candidate.parents:
+        raise ValueError(f"Path traversal blocked for topic: {topic!r}")
+    return candidate
+
+
+def render_safe_report_html(topic: str, body_text: str) -> str:
+    """Escape dynamic topic and body content to prevent stored XSS in static reports."""
+    safe_title = _html.escape(topic.strip())
+    safe_body = _html.escape(body_text or "")
+    return (
+        f"<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
+        f"<title>{safe_title} - Report</title></head>"
+        f"<body><h1>{safe_title}</h1><pre>{safe_body}</pre></body></html>"
+    )

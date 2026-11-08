@@ -369,3 +369,33 @@ def get_lancedb_engine(
         elif engine.vector_dim != target_dim:
             engine.reset_table(vector_dim=target_dim)
         return engine
+
+
+# --- Phase 4 Batched Vector Insertion & Index Compaction ---
+from typing import Any as _Any
+
+
+def batch_add_vectors(table: _Any, records: list[dict[str, _Any]], batch_size: int = 256) -> int:
+    """Insert vector records in memory-safe batches rather than row-by-row."""
+    if not records or table is None:
+        return 0
+    total = 0
+    for i in range(0, len(records), max(1, batch_size)):
+        chunk = records[i : i + batch_size]
+        table.add(chunk)
+        total += len(chunk)
+    return total
+
+
+def optimize_lancedb_table(table: _Any) -> bool:
+    """Compact small Lance fragments and clean up old versions if supported by the table."""
+    if table is None:
+        return False
+    try:
+        if hasattr(table, "compact_files"):
+            table.compact_files()
+        if hasattr(table, "cleanup_old_versions"):
+            table.cleanup_old_versions()
+        return True
+    except Exception:
+        return False

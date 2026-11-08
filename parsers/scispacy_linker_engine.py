@@ -1907,3 +1907,28 @@ def extract_and_link_entities(
         linked_docs.append(doc_entities)
 
     return linked_docs[0] if is_single else linked_docs
+
+# --- Phase 4 Cached Alias Normalization & Memory Release Hook ---
+from functools import lru_cache as _lru_cache
+import gc as _gc
+
+
+@_lru_cache(maxsize=4096)
+def normalize_clinical_alias(term: str) -> str:
+    if not term:
+        return ""
+    return " ".join(term.strip().lower().split())
+
+
+def release_scispacy_memory(engine_instance: object | None = None) -> bool:
+    """Release heavy SciSpaCy / UMLS linker pipelines from RAM when idle."""
+    if engine_instance is not None:
+        for attr in ("nlp", "linker", "_nlp", "_linker", "model"):
+            if hasattr(engine_instance, attr):
+                try:
+                    setattr(engine_instance, attr, None)
+                except Exception:
+                    pass
+    normalize_clinical_alias.cache_clear()
+    _gc.collect()
+    return True

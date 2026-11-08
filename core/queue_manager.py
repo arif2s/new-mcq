@@ -593,3 +593,75 @@ def prioritize_session_tasks(session_id: str) -> int:
 
 
 queue_worker = PriorityQueueWorker()
+
+# --- Phase 4 Persistent Job Queue Recovery & Task Cancellation ---
+import asyncio as _asyncio
+import sqlite3 as _sqlite3
+import time as _time
+from typing import Any as _Any
+
+
+def ensure_queue_jobs_table(conn: _sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS queue_jobs (
+            job_id TEXT PRIMARY KEY,
+            job_type TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            progress INTEGER NOT NULL DEFAULT 0,
+            payload_json TEXT,
+            error_message TEXT,
+            updated_at REAL NOT NULL
+        )
+        """
+    )
+    conn.commit()
+
+
+def persist_job_state(
+    conn: _sqlite3.Connection,
+    job_id: str,
+    job_type: str,
+    status: str,
+    progress: int = 0,
+    payload_json: str = "{}",
+    error_message: str | None = None,
+) -> None:
+    ensure_queue_jobs_table(conn)
+    conn.execute(
+        """
+        INSERT INTO queue_jobs (job_id, job_type, status, progress, payload_json, error_message, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(job_id) DO UPDATE SET
+            status = excluded.status,
+            progress = excluded.progress,
+            error_message = excluded.error_message,
+            updated_at = excluded.updated_at
+        """,
+        (job_id, job_type, status.upper(), max(0, min(100, int(progress))), payload_json, error_message, _time.time()),
+    )
+    conn.commit()
+
+
+def recover_interrupted_jobs(conn: _sqlite3.Connection, target_status: str = "PENDING") -> int:
+    """Reset any jobs stranded in RUNNING state from an unclean server shutdown."""
+    ensure_queue_jobs_table(conn)
+    cur = conn.execute(
+        """
+        UPDATE queue_jobs
+        SET status = ?, error_message = 'Recovered after server restart', updated_at = ?
+        WHERE status = 'RUNNING'
+        """,
+        (target_status.upper(), _time.time()),
+    )
+    conn.commit()
+    return cur.rowcount
+
+
+def cancel_async_job(task_registry: dict[str, _asyncio.Task[_Any]], job_id: str) -> bool:
+    """Cancel an in-flight asyncio.Task by job_id if present."""
+    task = task_registry.get(job_id)
+    if task is not None and not task.done():
+        task.cancel()
+        return True
+    return False

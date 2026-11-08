@@ -312,3 +312,48 @@ def rerank_chunks(
     except Exception as exc:
         logger.warning("FlashRank reranking fallback triggered: %s", exc)
         return _normalize_fallback_chunks(chunks, top_k)
+
+
+# --- Phase 4 Reciprocal Rank Fusion (RRF) & Top-K Candidate Gating ---
+from typing import Any as _Any
+
+
+def reciprocal_rank_fusion(
+    ranked_lists: list[list[dict[str, _Any]]],
+    id_key: str = "id",
+    k: int = 60,
+    top_n: int = 20,
+) -> list[dict[str, _Any]]:
+    """
+    Merge multiple ranked retrieval lists (Tantivy BM25, LanceDB Vector, SciSpaCy Alias)
+    using Reciprocal Rank Fusion: RRF_score(d) = sum(1.0 / (k + rank_i(d))).
+    Restricts output to top_n candidates for fast downstream cross-encoder reranking.
+    """
+    fused_scores: dict[str, float] = {}
+    doc_map: dict[str, dict[str, _Any]] = {}
+
+    for result_list in ranked_lists:
+        if not result_list:
+            continue
+        for rank_idx, item in enumerate(result_list, start=1):
+            if not isinstance(item, dict):
+                continue
+            doc_id = str(
+                item.get(id_key)
+                or item.get("chunk_id")
+                or item.get("doc_id")
+                or item.get("path")
+                or item.get("title")
+                or f"{ id(item) }"
+            )
+            fused_scores[doc_id] = fused_scores.get(doc_id, 0.0) + (1.0 / (k + rank_idx))
+            if doc_id not in doc_map:
+                doc_map[doc_id] = dict(item)
+
+    sorted_ids = sorted(fused_scores.keys(), key=lambda d: fused_scores[d], reverse=True)
+    results: list[dict[str, _Any]] = []
+    for doc_id in sorted_ids[: max(1, top_n)]:
+        entry = doc_map[doc_id]
+        entry["rrf_score"] = round(fused_scores[doc_id], 6)
+        results.append(entry)
+    return results

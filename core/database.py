@@ -5,6 +5,8 @@ import sqlite3
 # Enforce Invariant 1: Zero VRAM for Backend
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
+from pathlib import Path
+
 from config import DB_PATH
 
 logger = logging.getLogger("medisearch.database")
@@ -55,7 +57,7 @@ def get_db_connection() -> sqlite3.Connection:
     conn.execute("PRAGMA mmap_size = 536870912;")
     conn.execute("PRAGMA temp_store = MEMORY;")
     conn.execute("PRAGMA cache_size = -64000;")
-    return conn
+    return configure_sqlite_wal(conn)
 
 
 def _safe_add_column(conn: sqlite3.Connection, table: str, col_def: str) -> None:
@@ -747,3 +749,57 @@ def upsert_user_annotated_bbox(
     else:
         with get_db_connection() as local_conn:
             local_conn.execute(query, params)
+
+
+# --- Phase 4 SQLite WAL Mode, Atomic Transactions & Batch Helpers ---
+from contextlib import contextmanager as _contextmanager
+import sqlite3 as _sqlite3
+from typing import Any as _Any, Iterable as _Iterable, Iterator as _Iterator
+
+SQLITE_WAL_PRAGMAS = (
+    "PRAGMA journal_mode=WAL;",
+    "PRAGMA synchronous=NORMAL;",
+    "PRAGMA busy_timeout=5000;",
+    "PRAGMA foreign_keys=ON;",
+    "PRAGMA temp_store=MEMORY;",
+)
+
+
+def configure_sqlite_wal(conn: _sqlite3.Connection) -> _sqlite3.Connection:
+    """Apply production WAL and concurrency pragmas to a SQLite connection."""
+    cursor = conn.cursor()
+    for pragma in SQLITE_WAL_PRAGMAS:
+        cursor.execute(pragma)
+    cursor.close()
+    return conn
+
+
+def connect_wal(db_path: str | Path, timeout: float = 10.0) -> _sqlite3.Connection:
+    """Open a SQLite connection pre-configured with WAL mode and Row factory."""
+    conn = _sqlite3.connect(str(db_path), timeout=timeout, check_same_thread=False)
+    conn.row_factory = _sqlite3.Row
+    return configure_sqlite_wal(conn)
+
+
+@_contextmanager
+def atomic_transaction(conn: _sqlite3.Connection) -> _Iterator[_sqlite3.Cursor]:
+    """Context-managed atomic transaction that commits on success and rolls back on exception."""
+    cursor = conn.cursor()
+    try:
+        if not conn.in_transaction:
+            cursor.execute("BEGIN IMMEDIATE;")
+        yield cursor
+        conn.commit()
+    except Exception:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
+    finally:
+        cursor.close()
+
+
+def batch_execute(conn: _sqlite3.Connection, sql: str, params_seq: _Iterable[_Iterable[_Any]]) -> int:
+    """Execute bulk inserts/updates inside a single atomic transaction."""
+    with atomic_transaction(conn) as cur:
+        cur.executemany(sql, params_seq)
+        return cur.rowcount

@@ -510,3 +510,49 @@ def get_embedding_engine(model_id: Optional[str] = None) -> CPUEmbeddingEngine:
                 gc.collect()
             _ENGINE_CACHE[target_id] = CPUEmbeddingEngine(target_id)
         return _ENGINE_CACHE[target_id]
+
+
+# --- Phase 4 Length-Sorted Batching & VRAM/RAM Release Hook ---
+import gc as _gc
+from typing import Any as _Any, Callable as _Callable
+
+
+def encode_length_bucketed(
+    texts: list[str],
+    encode_fn: _Callable[[list[str]], list[_Any]],
+    batch_size: int = 32,
+) -> list[_Any]:
+    """
+    Sort texts by character length prior to batch encoding to minimize transformer padding overhead,
+    then restore original ordering.
+    """
+    if not texts:
+        return []
+    indexed = sorted(enumerate(texts), key=lambda pair: len(pair[1] or ""))
+    ordered_embeddings: list[_Any] = [None] * len(texts)
+    for start in range(0, len(indexed), max(1, batch_size)):
+        batch = indexed[start : start + batch_size]
+        batch_texts = [t for _, t in batch]
+        batch_vecs = encode_fn(batch_texts)
+        for (orig_idx, _), vec in zip(batch, batch_vecs):
+            ordered_embeddings[orig_idx] = vec
+    return ordered_embeddings
+
+
+def release_embedding_memory(engine_instance: object | None = None) -> bool:
+    """Unload embedding model weights and flush CUDA cache if present."""
+    if engine_instance is not None:
+        for attr in ("model", "_model", "encoder", "_encoder"):
+            if hasattr(engine_instance, attr):
+                try:
+                    setattr(engine_instance, attr, None)
+                except Exception:
+                    pass
+    _gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
+    return True

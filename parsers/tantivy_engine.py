@@ -501,3 +501,41 @@ def search_index(query_str: str, limit_per_source: int = 3) -> Dict[str, List[Di
             logger.debug("LanceDB reference search fallback skipped: %s", exc)
 
     return results
+
+
+# --- Phase 4 Stale Lockfile Recovery & Synchronized Batch Writer ---
+from pathlib import Path as _Path
+import threading as _threading
+from typing import Any as _Any, Callable as _Callable
+
+_TANTIVY_WRITER_LOCK = _threading.RLock()
+
+
+def cleanup_stale_tantivy_lock(index_dir: str | _Path = "data/index") -> bool:
+    """
+    Safely remove a stale 0-byte .tantivy-meta.lock file left behind by an unclean exit
+    or git checkout before opening the Tantivy IndexWriter.
+    """
+    lock_file = _Path(index_dir) / ".tantivy-meta.lock"
+    if lock_file.exists():
+        try:
+            if lock_file.stat().st_size == 0:
+                lock_file.unlink()
+                return True
+        except OSError:
+            return False
+    return False
+
+
+def synchronized_batch_write(writer_factory: _Callable[[], _Any], docs: list[_Any]) -> int:
+    """Thread-safe batch document indexing with a single commit per batch."""
+    if not docs:
+        return 0
+    with _TANTIVY_WRITER_LOCK:
+        writer = writer_factory()
+        count = 0
+        for doc in docs:
+            writer.add_document(doc)
+            count += 1
+        writer.commit()
+        return count
