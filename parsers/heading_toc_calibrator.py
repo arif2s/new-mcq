@@ -661,7 +661,7 @@ def build_document_toc_and_hierarchy(
                     or (el.bbox_norm[1] >= 0.915 and running_footer_counts[sig] >= 2)
                     or (p_num > 1 and el.bbox_norm[3] <= 0.14 and sig in seen_h1_sigs)
                     or RegexCatalog.PAGE_NUMBER.match(el.text)
-                    or RegexCatalog.RUNNING_HEADER.match(re.sub(r"^\d+[\.\)]\s*", "", el.text))
+                    or (el.bbox_norm[3] <= 0.08 and el.rel_size < 1.35 and not el.is_bold and RegexCatalog.RUNNING_HEADER.match(re.sub(r"^\d+[\.\)]\s*", "", el.text)))
                 ):
                     continue
 
@@ -798,28 +798,52 @@ def build_document_toc_and_hierarchy(
     else:
         # MODE A: Lazy Bidirectional H1 Lookup around target_page
         tp = max(1, min(total_pages, int(target_page or 1)))
+
+        # 1. Backward scan: probe backwards to find the start of the chapter (prior H1)
+        start_p = 1
         for p_b in range(tp, max(0, tp - 96), -1):
+            found_h1 = False
             for p_num, raw_page in iter_prescan_pdf_primitives(path, (p_b,)):
                 cands, has_h1 = _extract_page_candidates(p_num, raw_page)
-                page_candidates.append((p_num, cands))
                 if has_h1:
+                    found_h1 = True
+                    start_p = p_b
                     break
-            else:
-                continue
-            break
-        if 1 not in scanned_set:
-            for p_num, raw_page in iter_prescan_pdf_primitives(path, (1,)):
-                cands, _ = _extract_page_candidates(p_num, raw_page)
-                page_candidates.append((p_num, cands))
+            if found_h1:
+                break
+
+        # 2. Forward scan limit: probe forward from target_page to find next chapter boundary
+        end_p = min(total_pages, tp + 64)
         for p_f in range(tp + 1, min(total_pages, tp + 64) + 1):
+            found_h1 = False
             for p_num, raw_page in iter_prescan_pdf_primitives(path, (p_f,)):
                 cands, has_h1 = _extract_page_candidates(p_num, raw_page)
-                page_candidates.append((p_num, cands))
                 if has_h1:
+                    found_h1 = True
+                    end_p = p_f
                     break
-            else:
-                continue
-            break
+            if found_h1:
+                break
+
+        # 3. Assemble all contiguous pages from the chapter start through the horizon in monotonic order
+        target_pages_seq: List[int] = []
+        if start_p > 1 and 1 not in target_pages_seq:
+            target_pages_seq.append(1)
+        for p_seq in range(start_p, end_p + 1):
+            if p_seq not in target_pages_seq:
+                target_pages_seq.append(p_seq)
+
+        # Clear probing artifacts and rescanned set so pages are processed cleanly in monotonic order
+        scanned_set.clear()
+        page_candidates.clear()
+        running_header_counts.clear()
+        running_footer_counts.clear()
+
+        for p_num in sorted(target_pages_seq):
+            for _, raw_page in iter_prescan_pdf_primitives(path, (p_num,)):
+                cands, _ = _extract_page_candidates(p_num, raw_page)
+                page_candidates.append((p_num, cands))
+
         _flush_chapter_batch(page_candidates)
 
     payload = {

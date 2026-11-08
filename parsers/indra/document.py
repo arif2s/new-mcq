@@ -302,23 +302,32 @@ def build_document_toc_and_hierarchy(
         pages_to_scan = list(range(1, total_pages + 1))
     else:
         # Mode A: Lazy Bidirectional H1 Lookup
-        # Scan backward from target_page until H1 found, plus page 1, plus forward until next H1
-        scanned_set = {1, target_page}
-        # Backward scan
+        # Probe backward from target_page until H1 found, then forward until next H1,
+        # and assemble the entire contiguous chapter range in monotonic order
+        start_p = 1
         for p in range(target_page, 0, -1):
-            scanned_set.add(p)
             if p == 1:
                 break
             w, h, elems, bans = _iter_prescan_page_primitives(doc, p)
             if any(e.rel_size >= 1.40 or e.in_banner or RegexCatalog.CHAPTER_HEADER.match(e.text) for e in elems):
+                start_p = p
                 break
-        # Forward scan
+
+        end_p = min(total_pages, target_page + 25)
         for p in range(target_page + 1, min(total_pages + 1, target_page + 25)):
-            scanned_set.add(p)
             w, h, elems, bans = _iter_prescan_page_primitives(doc, p)
             if any(e.rel_size >= 1.40 or e.in_banner or RegexCatalog.CHAPTER_HEADER.match(e.text) for e in elems):
+                end_p = p
                 break
-        pages_to_scan = sorted(scanned_set)
+
+        target_seq: list[int] = []
+        if start_p > 1:
+            target_seq.append(1)
+        for p_seq in range(start_p, end_p + 1):
+            if p_seq not in target_seq:
+                target_seq.append(p_seq)
+
+        pages_to_scan = sorted(target_seq)
 
     active_stack: dict[int, str] = {}
     current_chapter_batch: list[PageElement] = []
