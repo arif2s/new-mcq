@@ -1625,6 +1625,33 @@ def extract_page_with_indra_base_heading_opt(
     svg_overlay = build_layout_svg_overlay(native_blocks, native_lines, w_px, h_px)
     elapsed = round((time.perf_counter() - t0) * 1000.0, 2)
 
+    layout_boxes = []
+    for idx_b, blk in enumerate(native_blocks):
+        bx = blk.get("bbox") or [0, 0, w_px, h_px]
+        bb_norm = [
+            float(bx[0]) / max(1.0, w_px),
+            float(bx[1]) / max(1.0, h_px),
+            float(bx[2]) / max(1.0, w_px),
+            float(bx[3]) / max(1.0, h_px),
+        ] if max(bx, default=0.0) > 1.05 else [float(v) for v in bx]
+        lbl = str(blk.get("label", "Text"))
+        b_type = "heading" if lbl == "Section-Header" else ("list" if lbl == "List-Group" else "paragraph")
+        layout_boxes.append({
+            "order": idx_b + 1,
+            "type": b_type,
+            "label": f"{lbl} #{idx_b + 1}",
+            "bbox": bb_norm,
+            "bbox_norm": bb_norm,
+            "bbox_px": bx,
+            "bbox_pt": [
+                bb_norm[0] * float(w_pt),
+                bb_norm[1] * float(h_pt),
+                bb_norm[2] * float(w_pt),
+                bb_norm[3] * float(h_pt),
+            ],
+            "text": blk.get("text", ""),
+        })
+
     return {
         "status": "success",
         "engine": "indra_base_heading_opt",
@@ -1638,6 +1665,7 @@ def extract_page_with_indra_base_heading_opt(
         "document_toc": toc_payload.get("document_toc", []),
         "page_toc": hierarchy_tree,
         "blocks": native_blocks,
+        "layout_boxes": layout_boxes,
         "lines": native_lines,
         "svg_overlay": svg_overlay,
         "page_image_b64": page_image_b64,

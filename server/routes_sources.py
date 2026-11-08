@@ -1246,7 +1246,7 @@ async def test_pdf_extract(payload: TestPdfExtractPayload) -> Dict[str, Any]:
                     "subheading": result.get("subheading", target_path.stem),
                     "extracted_text": result.get("markdown") or result.get("text", ""),
                     "page_image_base64": result.get("page_image_b64") or result.get("page_image_base64", ""),
-                    "layout_boxes": result.get("blocks", []),
+                    "layout_boxes": result.get("layout_boxes") or result.get("blocks", []),
                     "hierarchy_tree": result.get("hierarchy_tree", []),
                     "lines": result.get("lines", []),
                     "svg_overlay": result.get("svg_overlay", ""),

@@ -2776,7 +2776,7 @@ except ImportError:
 # extract_page_with_adaptive_layout is defined locally in this module
 
 _CONVERTER_LOCK = threading.RLock()
-
+_converters: Dict[Any, Any] = {}
 _CONVERT_LOCK = threading.RLock()
 
 def get_converter(do_ocr: bool = False) -> Any:
@@ -3364,6 +3364,8 @@ def extract_page_with_docling_v1_heading_opt(
     detection, then upgrades all Markdown headings and unheaded TOC lines using
     the Multi-Pass H1-H6 TOC Calibrator.
     """
+    from parsers.heading_toc_calibrator import build_document_toc_and_hierarchy
+
     path = Path(file_path).resolve()
     root_title = default_title.strip() or path.stem
 
@@ -3479,6 +3481,18 @@ def extract_page_with_docling_v1_heading_opt(
         sections_for_chunks.append((cur_sec_path, cur_sec_sub, list(cur_sec_blocks)))
 
     final_md = "\n".join(calibrated_lines).strip()
+    try:
+        adaptive_res = extract_page_with_adaptive_layout(str(path), page_number, default_title=root_title)
+        layout_boxes = adaptive_res.get("layout_boxes", [])
+        page_image_base64 = adaptive_res.get("page_image_base64", "")
+        page_width = adaptive_res.get("page_width", 612.0)
+        page_height = adaptive_res.get("page_height", 792.0)
+    except Exception:
+        layout_boxes = []
+        page_image_base64 = ""
+        page_width = 612.0
+        page_height = 792.0
+
     return {
         "status": "success",
         "engine": "docling_v1_heading_opt",
@@ -3491,6 +3505,10 @@ def extract_page_with_docling_v1_heading_opt(
         "active_heading_stack": active_titles,
         "document_toc": toc_payload.get("document_toc", []),
         "sections_for_chunks": sections_for_chunks,
+        "layout_boxes": layout_boxes,
+        "page_image_base64": page_image_base64,
+        "page_width": page_width,
+        "page_height": page_height,
     }
 
 def extract_structured_layout_v1_heading_opt(

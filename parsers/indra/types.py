@@ -164,8 +164,8 @@ class HeadingPrototype:
     in_banner: bool
     is_all_caps: bool
     is_bold: bool
-    is_accent_color: bool
-    prefix_family: Optional[str]
+    is_accent_color: bool = False
+    prefix_family: Optional[str] = None
     fg_hue: float = -1.0
     bg_hue: float = -1.0
     font_family: str = "serif"
@@ -176,6 +176,54 @@ class HeadingPrototype:
     rotation: float = 0.0
     indra_role: str = ""
     thickness: float = 1.0
+
+    def __init__(
+        self,
+        level: int,
+        rel_size: float,
+        fg_rgb: RGB,
+        bg_rgb: RGB,
+        in_banner: bool,
+        is_all_caps: bool,
+        is_bold: bool,
+        is_accent_color: Optional[bool] = None,
+        prefix_family: Optional[str] = None,
+        fg_hue: float = -1.0,
+        bg_hue: float = -1.0,
+        font_family: str = "serif",
+        indent_ratio: float = 0.0,
+        line_count: int = 1,
+        confidence: float = 1.0,
+        embedded_toc_level: Optional[int] = None,
+        rotation: float = 0.0,
+        indra_role: str = "",
+        thickness: float = 1.0,
+        **kwargs: Any,
+    ) -> None:
+        accent_val = is_accent_color if is_accent_color is not None else kwargs.get("is_accent", False)
+        object.__setattr__(self, "level", int(level))
+        object.__setattr__(self, "rel_size", float(rel_size))
+        object.__setattr__(self, "fg_rgb", tuple(fg_rgb))
+        object.__setattr__(self, "bg_rgb", tuple(bg_rgb))
+        object.__setattr__(self, "in_banner", bool(in_banner))
+        object.__setattr__(self, "is_all_caps", bool(is_all_caps))
+        object.__setattr__(self, "is_bold", bool(is_bold))
+        object.__setattr__(self, "is_accent_color", bool(accent_val))
+        object.__setattr__(self, "prefix_family", prefix_family)
+        object.__setattr__(self, "fg_hue", float(fg_hue))
+        object.__setattr__(self, "bg_hue", float(bg_hue))
+        object.__setattr__(self, "font_family", str(font_family))
+        object.__setattr__(self, "indent_ratio", float(indent_ratio))
+        object.__setattr__(self, "line_count", int(line_count))
+        object.__setattr__(self, "confidence", float(confidence))
+        object.__setattr__(self, "embedded_toc_level", embedded_toc_level)
+        object.__setattr__(self, "rotation", float(rotation))
+        object.__setattr__(self, "indra_role", str(indra_role))
+        object.__setattr__(self, "thickness", float(thickness))
+
+    @property
+    def is_accent(self) -> bool:
+        return self.is_accent_color
 
 
 from parsers.schema import (  # noqa: E402,F401

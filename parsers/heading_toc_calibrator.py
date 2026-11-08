@@ -734,7 +734,7 @@ def build_document_toc_and_hierarchy(
                     in_banner=el.in_banner,
                     is_all_caps=el.is_all_caps,
                     is_bold=el.is_bold,
-                    is_accent=el.is_accent_color,
+                    is_accent_color=el.is_accent_color,
                     prefix_family=el.prefix_family,
                     fg_hue=el.fg_hue,
                     bg_hue=el.bg_hue,
