@@ -506,6 +506,100 @@ def delete_state_key(key: str) -> Dict[str, str]:
         conn.commit()
     return {"status": "success"}
 
+
+# --- Ignored Topics REST Endpoints ---
+class IgnoredTopicPayload(BaseModel):
+    topic_name: str
+    topic_norm: Optional[str] = None
+    question_id: Optional[str] = None
+
+
+@router.get("/ignored-topics")
+def get_ignored_topics_state() -> Dict[str, Any]:
+    """Retrieves all ignored topics from the persistent SQLite ignored_topics table."""
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT topic_norm, original_text FROM ignored_topics ORDER BY topic_norm ASC")
+        rows = cursor.fetchall()
+        topics = [r["topic_norm"] for r in rows]
+    return {"status": "success", "topics": topics}
+
+
+@router.post("/ignored-topics")
+def add_ignored_topic_state(payload: IgnoredTopicPayload) -> Dict[str, Any]:
+    """Adds a topic to the ignored_topics table and optionally purges it from extracted_topics."""
+    from agents.tema_q.topic_extractor import add_ignored_topic
+    term = payload.topic_name or payload.topic_norm or ""
+    if term:
+        add_ignored_topic(term)
+    if payload.question_id and term:
+        with closing(get_db_connection()) as conn:
+            conn.execute(
+                "DELETE FROM extracted_topics WHERE question_id = ? AND LOWER(topic_name) = LOWER(?)",
+                (payload.question_id, term),
+            )
+            conn.commit()
+    return {"status": "success", "topic": term}
+
+
+@router.delete("/ignored-topics/{topic_norm}")
+def remove_ignored_topic_state(topic_norm: str) -> Dict[str, Any]:
+    """Removes a topic from the persistent ignored_topics table."""
+    from agents.tema_q.topic_extractor import remove_ignored_topic
+    remove_ignored_topic(topic_norm)
+    return {"status": "success", "topic_norm": topic_norm}
+
+
+# --- Indra & Docling Document Extraction Configuration ---
+class ExtractionConfigPayload(BaseModel):
+    explicit_profile_id: Optional[str] = None
+    fallback_provider_primary: Optional[str] = "indra_ocr"
+    dpi: Optional[int] = 200
+    threads: Optional[int] = 4
+    math: Optional[bool] = True
+    furniture: Optional[bool] = True
+
+
+@router.get("/extraction-config")
+def get_extraction_config() -> Dict[str, Any]:
+    """Retrieves current PDF extraction and layout calibration settings."""
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM user_state WHERE key = 'extraction_config'")
+        row = cursor.fetchone()
+        if row and row["value"]:
+            try:
+                return {"status": "success", "config": json.loads(row["value"])}
+            except Exception:
+                pass
+    return {
+        "status": "success",
+        "config": {
+            "explicit_profile_id": None,
+            "fallback_provider_primary": "indra_ocr",
+            "dpi": 200,
+            "threads": 4,
+            "math": True,
+            "furniture": True,
+        },
+    }
+
+
+@router.put("/extraction-config")
+def set_extraction_config(payload: ExtractionConfigPayload) -> Dict[str, Any]:
+    """Persists PDF layout profile heuristics, fallback providers, and extraction parameters."""
+    cfg = payload.dict()
+    with closing(get_db_connection()) as conn:
+        conn.execute(
+            """
+            INSERT INTO user_state (key, value) VALUES ('extraction_config', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (json.dumps(cfg),),
+        )
+        conn.commit()
+    return {"status": "success", "config": cfg}
+
 # --- Phase 6 RFC 7396 JSON Merge Patch for Concurrent State Updates ---
 from typing import Any as _Any
 

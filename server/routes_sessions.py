@@ -203,6 +203,12 @@ class UpdateSessionTopicsRequest(BaseModel):
     topics_reviewed: Optional[bool] = None
 
 
+class SelectTopicRequest(BaseModel):
+    question_id: str
+    topic_name: str
+    selected: int = 1
+
+
 class DeleteSessionsRequest(BaseModel):
     session_ids: List[str]
 
@@ -936,6 +942,28 @@ def update_session_topics(
         "refs_status": refs_status,
         "llm_status": llm_status,
         "topic_list": normalized,
+    }
+
+
+@router.patch("/topics/select")
+def select_topic(req: SelectTopicRequest) -> Dict[str, Any]:
+    """Optimistically updates the selected state of an extracted topic in SQLite."""
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO extracted_topics (question_id, topic_name, selected)
+            VALUES (?, ?, ?)
+            ON CONFLICT(question_id, topic_name) DO UPDATE SET selected = excluded.selected
+            """,
+            (req.question_id, req.topic_name, req.selected),
+        )
+        conn.commit()
+    return {
+        "status": "success",
+        "question_id": req.question_id,
+        "topic_name": req.topic_name,
+        "selected": req.selected,
     }
 
 

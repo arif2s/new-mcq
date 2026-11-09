@@ -111,9 +111,19 @@
         }
     }
 
+    let _pageDataAbortController = null;
+    let _pageDataRequestToken = 0;
+
     // Load Page Data from /api/analysis/page-data
     async function loadPageData(pageNum) {
         if (!state.currentFilePath) return;
+
+        if (_pageDataAbortController) {
+            _pageDataAbortController.abort();
+        }
+        _pageDataAbortController = new AbortController();
+        const signal = _pageDataAbortController.signal;
+        const currentToken = ++_pageDataRequestToken;
 
         state.isExtracting = true;
         // Invariant 23: Prevent right sidebar collapsing during extraction
@@ -129,9 +139,13 @@
                 page_number: String(pageNum),
             });
 
-            const resp = await fetch(`/api/analysis/page-data?${params.toString()}`);
+            const resp = await fetch(`/api/analysis/page-data?${params.toString()}`, { signal });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
+
+            if (currentToken !== _pageDataRequestToken || signal.aborted) {
+                return;
+            }
 
             state.pageDimensions = data.dimensions || { width: 612.0, height: 792.0 };
             state.elements = (data.elements || []).map((el, idx) => ({
@@ -159,9 +173,12 @@
 
             updatePaginationUI();
         } catch (err) {
+            if (err.name === 'AbortError') return;
             console.error("Failed to load page data:", err);
         } finally {
-            state.isExtracting = false;
+            if (currentToken === _pageDataRequestToken) {
+                state.isExtracting = false;
+            }
             // Respect Invariant 23
             if (rightSidebar && wasCollapsed && !rightSidebar.classList.contains("collapsed")) {
                 // If it was collapsed and something toggled it, do nothing or restore as needed
@@ -980,4 +997,109 @@
 
         container.innerHTML = cleanHtml;
     };
+
+    // Delegated Citation Router, LRU Fragment Cache & Idle-Chunked Math Renderer
+    const dossierFragmentCache = new Map();
+    const MAX_CACHE_ENTRIES = 40;
+
+    function initDossierViewport(viewportEl, openSourceInReaderCallback) {
+        if (!viewportEl) return;
+
+        // 1. Single delegated listener that strictly suppresses href="#" hash jumps
+        viewportEl.addEventListener('click', (event) => {
+            const citationAnchor = event.target.closest('a.citation-link');
+            if (!citationAnchor) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            const sourcePayload = {
+                sourceType: citationAnchor.dataset.sourceType || 'pdf',
+                filePath: citationAnchor.dataset.filePath || '',
+                page: Number.parseInt(citationAnchor.dataset.page || '1', 10) || 1,
+                articleId: citationAnchor.dataset.articleId || ''
+            };
+
+            if (typeof openSourceInReaderCallback === 'function') {
+                openSourceInReaderCallback(sourcePayload);
+            }
+        });
+    }
+
+    function renderClinicalDossierOptimized(viewportEl, cacheKey, rawHtmlOrMarkdown, isPreRenderedHtml = true) {
+        if (!viewportEl) return;
+
+        // 2. Reserve intrinsic geometry to prevent Cumulative Layout Shift (CLS)
+        viewportEl.style.contentVisibility = 'auto';
+        viewportEl.style.containIntrinsicSize = '1px 720px';
+
+        // 3. Serve immediately from LRU DocumentFragment cache if available
+        if (dossierFragmentCache.has(cacheKey)) {
+            const cachedHtml = dossierFragmentCache.get(cacheKey);
+            dossierFragmentCache.delete(cacheKey);
+            dossierFragmentCache.set(cacheKey, cachedHtml);
+            viewportEl.innerHTML = cachedHtml;
+            return;
+        }
+
+        // 4. Parse & Sanitize
+        const parsedHtml = isPreRenderedHtml
+            ? rawHtmlOrMarkdown
+            : (window.marked ? window.marked.parse(rawHtmlOrMarkdown) : rawHtmlOrMarkdown);
+
+        const cleanHtml = window.DOMPurify
+            ? window.DOMPurify.sanitize(parsedHtml, {
+                ADD_ATTR: ['data-source-type', 'data-file-path', 'data-page', 'data-article-id', 'target']
+            })
+            : parsedHtml;
+
+        // Neutralize any residual href="#" inside dossier HTML before DOM insertion
+        const template = document.createElement('template');
+        template.innerHTML = cleanHtml;
+        template.content.querySelectorAll('a.citation-link[href="#"]').forEach((anchor) => {
+            anchor.removeAttribute('href');
+            anchor.setAttribute('role', 'button');
+            anchor.setAttribute('tabindex', '0');
+        });
+
+        viewportEl.replaceChildren(template.content.cloneNode(true));
+
+        // 5. Chunk KaTeX math typesetting across idle frames to avoid blocking input
+        const mathContainers = Array.from(viewportEl.querySelectorAll('.box, .prose-content, p, li'));
+        const scheduleIdle = window.requestIdleCallback || ((cb) => setTimeout(cb, 16));
+
+        let index = 0;
+        function processNextMathBatch(deadline) {
+            while (index < mathContainers.length && (deadline?.timeRemaining?.() > 4 || !deadline)) {
+                const node = mathContainers[index++];
+                if (window.renderMathInElement && /[$\\]/.test(node.textContent)) {
+                    window.renderMathInElement(node, {
+                        delimiters: [
+                            { left: '$$', right: '$$', display: true },
+                            { left: '$', right: '$', display: false },
+                            { left: '\\(', right: '\\)', display: false },
+                            { left: '\\[', right: '\\]', display: true }
+                        ],
+                        throwOnError: false
+                    });
+                }
+                if (!deadline) break;
+            }
+
+            if (index < mathContainers.length) {
+                scheduleIdle(processNextMathBatch);
+            } else {
+                if (dossierFragmentCache.size >= MAX_CACHE_ENTRIES) {
+                    const oldestKey = dossierFragmentCache.keys().next().value;
+                    dossierFragmentCache.delete(oldestKey);
+                }
+                dossierFragmentCache.set(cacheKey, viewportEl.innerHTML);
+            }
+        }
+
+        scheduleIdle(processNextMathBatch);
+    }
+
+    window.initDossierViewport = initDossierViewport;
+    window.renderClinicalDossierOptimized = renderClinicalDossierOptimized;
 })();

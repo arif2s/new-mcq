@@ -574,3 +574,116 @@
         }
     };
 })();
+
+// Zero-Reflow TOC Observer & rAF Split-Pane Controller
+class DossierTocController {
+    constructor(dossierScrollContainer, tocListEl) {
+        this.scrollContainer = dossierScrollContainer;
+        this.tocListEl = tocListEl;
+        this.observer = null;
+        this.activeId = null;
+    }
+
+    mount() {
+        this.disconnect();
+        if (!this.scrollContainer || !this.tocListEl) return;
+        const headings = Array.from(this.scrollContainer.querySelectorAll('h2, h3'));
+        this.tocListEl.innerHTML = '';
+
+        const fragment = document.createDocumentFragment();
+        headings.forEach((heading, idx) => {
+            if (!heading.id) {
+                heading.id = `dossier-sec-${idx}`;
+            }
+            const li = document.createElement('li');
+            li.className = heading.tagName === 'H3' ? 'pl-3 text-xs' : 'text-xs font-medium';
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.dataset.targetId = heading.id;
+            btn.className = 'toc-item w-full text-left py-1 px-2 rounded transition text-slate-400 hover:text-slate-100';
+            btn.textContent = heading.textContent;
+            li.appendChild(btn);
+            fragment.appendChild(li);
+        });
+        this.tocListEl.appendChild(fragment);
+
+        this.observer = new IntersectionObserver(
+            (entries) => {
+                for (const entry of entries) {
+                    if (entry.isIntersecting) {
+                        this.setActiveHeading(entry.target.id);
+                        break;
+                    }
+                }
+            },
+            {
+                root: this.scrollContainer,
+                rootMargin: '-10% 0px -75% 0px',
+                threshold: 0
+            }
+        );
+
+        headings.forEach((h) => this.observer.observe(h));
+
+        this.tocListEl.onclick = (e) => {
+            const btn = e.target.closest('button[data-target-id]');
+            if (!btn) return;
+            const target = this.scrollContainer.querySelector(`#${CSS.escape(btn.dataset.targetId)}`);
+            target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        };
+    }
+
+    setActiveHeading(id) {
+        if (this.activeId === id) return;
+        this.activeId = id;
+        this.tocListEl.querySelectorAll('.toc-item').forEach((btn) => {
+            const isCurrent = btn.dataset.targetId === id;
+            btn.classList.toggle('bg-sky-500/15', isCurrent);
+            btn.classList.toggle('text-sky-400', isCurrent);
+            btn.setAttribute('aria-current', isCurrent ? 'location' : 'false');
+        });
+    }
+
+    disconnect() {
+        if (this.observer) {
+            this.observer.disconnect();
+            this.observer = null;
+        }
+    }
+}
+
+function bindRafGatedSplitPane(splitContainerEl, handleSelector) {
+    if (!window.interact || !splitContainerEl) return;
+    let pendingWidthPercent = null;
+    let rafScheduled = false;
+
+    window.interact(handleSelector).draggable({
+        axis: 'x',
+        listeners: {
+            start() {
+                splitContainerEl.classList.add('select-none', 'pointer-events-none');
+            },
+            move(event) {
+                const rect = splitContainerEl.getBoundingClientRect();
+                const relX = Math.min(Math.max(event.clientX - rect.left, rect.width * 0.25), rect.width * 0.75);
+                pendingWidthPercent = (relX / rect.width) * 100;
+
+                if (!rafScheduled) {
+                    rafScheduled = true;
+                    requestAnimationFrame(() => {
+                        if (pendingWidthPercent !== null) {
+                            splitContainerEl.style.setProperty('--left-pane-width', `${pendingWidthPercent.toFixed(2)}%`);
+                        }
+                        rafScheduled = false;
+                    });
+                }
+            },
+            end() {
+                splitContainerEl.classList.remove('select-none', 'pointer-events-none');
+            }
+        }
+    });
+}
+
+window.DossierTocController = DossierTocController;
+window.bindRafGatedSplitPane = bindRafGatedSplitPane;

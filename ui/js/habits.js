@@ -1,5 +1,109 @@
 // ui/js/habits.js
 
+// Basis-Point Precision Math & Coalesced Counter Controller
+class PrecisionCounterController {
+    constructor(displayElement, initialValue = 0, options = {}) {
+        this.el = displayElement;
+        // Store internally as integer basis points (1 unit = 10000 bp) to eliminate IEEE 754 drift
+        this.valueBp = Math.round(Number(initialValue) * 10000);
+        this.minBp = Math.round((options.min ?? 0) * 10000);
+        this.maxBp = Math.round((options.max ?? 100000) * 10000);
+        this.decimals = options.decimals ?? 0;
+        this.suffix = options.suffix ?? '';
+        this.onSyncCallback = options.onSyncCallback || null;
+
+        this.rafId = null;
+        this.displayedBp = this.valueBp;
+        this.pendingDeltaBp = 0;
+        this.syncTimer = null;
+        this.renderImmediate(this.valueBp);
+    }
+
+    static formatBasisPoints(bpValue, decimals = 1, suffix = '') {
+        const factor = Math.pow(10, decimals);
+        const exactScaled = Math.round((bpValue / 10000) * factor) / factor;
+        return `${exactScaled.toFixed(decimals)}${suffix}`;
+    }
+
+    static computeWeightedMasteryPercent(clusters) {
+        if (!Array.isArray(clusters) || clusters.length === 0) return '0.0%';
+        let totalWeightedBp = 0;
+        let totalWeight = 0;
+        for (const c of clusters) {
+            const weight = Math.max(1, Number(c.priority_weight) || 1);
+            const scoreBp = Math.round((Number(c.score) || (c.verified ? 0.88 : 0.40)) * 10000);
+            totalWeightedBp += scoreBp * weight;
+            totalWeight += weight;
+        }
+        // Convert 0..10000 basis points to 0..100.0%
+        const percentBp = Math.round((totalWeightedBp / totalWeight) * 100);
+        return PrecisionCounterController.formatBasisPoints(percentBp, 1, '%');
+    }
+
+    increment(deltaUnits = 1) {
+        const deltaBp = Math.round(Number(deltaUnits) * 10000);
+        const nextBp = Math.min(this.maxBp, Math.max(this.minBp, this.valueBp + deltaBp));
+        const actualAppliedBp = nextBp - this.valueBp;
+        if (actualAppliedBp === 0) return;
+
+        this.valueBp = nextBp;
+        this.pendingDeltaBp += actualAppliedBp;
+        this.animateToTarget(this.valueBp);
+        this.scheduleCoalescedSync();
+    }
+
+    animateToTarget(targetBp) {
+        if (this.rafId) {
+            cancelAnimationFrame(this.rafId);
+        }
+        const startBp = this.displayedBp;
+        const diffBp = targetBp - startBp;
+        const durationMs = 180;
+        const startTime = performance.now();
+
+        const step = (now) => {
+            const elapsed = Math.min(1, (now - startTime) / durationMs);
+            const eased = 1 - Math.pow(1 - elapsed, 3); // Cubic ease-out
+            this.displayedBp = Math.round(startBp + diffBp * eased);
+            this.renderImmediate(this.displayedBp);
+
+            if (elapsed < 1) {
+                this.rafId = requestAnimationFrame(step);
+            } else {
+                this.displayedBp = targetBp;
+                this.renderImmediate(targetBp);
+                this.rafId = null;
+            }
+        };
+        this.rafId = requestAnimationFrame(step);
+    }
+
+    renderImmediate(bp) {
+        if (!this.el) return;
+        this.el.textContent = PrecisionCounterController.formatBasisPoints(bp, this.decimals, this.suffix);
+    }
+
+    scheduleCoalescedSync() {
+        if (!this.onSyncCallback) return;
+        if (this.syncTimer) clearTimeout(this.syncTimer);
+
+        this.syncTimer = setTimeout(async () => {
+            const deltaToCommit = this.pendingDeltaBp / 10000;
+            const committedTotal = this.valueBp / 10000;
+            this.pendingDeltaBp = 0;
+            try {
+                await this.onSyncCallback({ delta: deltaToCommit, total: committedTotal });
+            } catch (err) {
+                // Rollback on server failure
+                this.valueBp -= Math.round(deltaToCommit * 10000);
+                this.animateToTarget(this.valueBp);
+            }
+        }, 350);
+    }
+}
+
+window.PrecisionCounterController = PrecisionCounterController;
+
 function _getHabitLocalDateStr(dateObj = new Date()) {
     const year = dateObj.getFullYear();
     const month = String(dateObj.getMonth() + 1).padStart(2, '0');

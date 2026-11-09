@@ -366,6 +366,167 @@ async function importState(jsonString) {
     return false;
 }
 
+// Monotonic State Store & Resilient WebSocket Synchronizer
+class AppStateStore {
+    constructor() {
+        this.state = {
+            queue: new Map(),
+            sessions: new Map(),
+            models: { loaded: false, activeModel: null, vramLocked: false },
+            connectionStatus: 'DISCONNECTED',
+            lastSeqTimestamp: 0
+        };
+        this.listeners = new Set();
+        this.ws = null;
+        this.reconnectAttempts = 0;
+        this.maxReconnectDelay = 15000;
+        this.syncAbortController = null;
+    }
+
+    subscribe(listener) {
+        this.listeners.add(listener);
+        return () => this.listeners.delete(listener);
+    }
+
+    notify(changedSlice) {
+        for (const listener of this.listeners) {
+            try {
+                listener(this.state, changedSlice);
+            } catch (err) {
+                console.error('[AppStateStore] Listener error:', err);
+            }
+        }
+    }
+
+    applyServerPatch(patch, eventTimestamp = Date.now()) {
+        const ts = Number(eventTimestamp) || Date.now();
+        // Reject stale out-of-order payloads using high-water mark timestamp
+        if (ts < this.state.lastSeqTimestamp) {
+            return false;
+        }
+        this.state.lastSeqTimestamp = ts;
+
+        if (Array.isArray(patch.queueTasks) || Array.isArray(patch.tasks)) {
+            const taskList = patch.queueTasks || patch.tasks;
+            for (const task of taskList) {
+                const taskId = task.id || task.task_id;
+                if (!taskId) continue;
+                const existing = this.state.queue.get(taskId);
+                if (!existing || (task.updatedAt || ts) >= (existing.updatedAt || 0)) {
+                    this.state.queue.set(taskId, { ...existing, ...task, updatedAt: task.updatedAt || ts });
+                }
+            }
+            this.notify('queue');
+        }
+
+        if (patch.sessionUpdate || patch.session) {
+            const s = patch.sessionUpdate || patch.session;
+            const sid = s.session_id || s.id;
+            if (sid) {
+                const existing = this.state.sessions.get(sid);
+                if (!existing || (s.updatedAt || ts) >= (existing.updatedAt || 0)) {
+                    this.state.sessions.set(sid, { ...existing, ...s, updatedAt: ts });
+                    this.notify('sessions');
+                }
+            }
+        }
+        return true;
+    }
+
+    async reconcileFullState() {
+        if (this.syncAbortController) {
+            this.syncAbortController.abort();
+        }
+        this.syncAbortController = new AbortController();
+        const { signal } = this.syncAbortController;
+
+        try {
+            const [stateRes, queueRes] = await Promise.all([
+                fetch('/api/state/', { signal, headers: { 'Cache-Control': 'no-cache' } }).catch(() => null),
+                fetch('/api/queue/status', { signal, headers: { 'Cache-Control': 'no-cache' } }).catch(() => null)
+            ]);
+
+            let serverTs = Date.now();
+            if (stateRes && stateRes.ok) {
+                const stateData = await stateRes.json();
+                if (stateData.timestamp) serverTs = Math.max(serverTs, Number(stateData.timestamp));
+            }
+            if (queueRes && queueRes.ok) {
+                const queueData = await queueRes.json();
+                const tasks = queueData.tasks || [];
+                this.state.queue.clear();
+                for (const task of tasks) {
+                    const taskId = task.id || task.task_id;
+                    if (taskId) {
+                        this.state.queue.set(taskId, { ...task, updatedAt: serverTs });
+                    }
+                }
+            }
+            this.state.lastSeqTimestamp = serverTs;
+            this.notify('hydration');
+        } catch (err) {
+            if (err.name !== 'AbortError') {
+                console.error('[AppStateStore] Reconciliation error:', err);
+            }
+        }
+    }
+
+    connectWebSocket(wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`) {
+        if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+            return;
+        }
+
+        this.state.connectionStatus = 'CONNECTING';
+        this.notify('connection');
+        try {
+            this.ws = new WebSocket(wsUrl);
+            window.appWebSocket = this.ws;
+
+            this.ws.onopen = async () => {
+                this.reconnectAttempts = 0;
+                this.state.connectionStatus = 'CONNECTED';
+                this.notify('connection');
+                await this.reconcileFullState();
+            };
+
+            this.ws.onmessage = (event) => {
+                try {
+                    const payload = JSON.parse(event.data);
+                    const ts = payload.timestamp ? Number(payload.timestamp) : Date.now();
+                    this.applyServerPatch(payload, ts);
+                } catch (e) {
+                    console.error('[AppStateStore] Malformed WS frame:', e);
+                }
+            };
+
+            this.ws.onclose = () => {
+                this.state.connectionStatus = 'DISCONNECTED';
+                this.notify('connection');
+                const baseDelay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
+                const jitter = Math.random() * 400;
+                this.reconnectAttempts += 1;
+                setTimeout(() => this.connectWebSocket(wsUrl), baseDelay + jitter);
+            };
+
+            this.ws.onerror = () => {
+                try { this.ws.close(); } catch (_) {}
+            };
+        } catch (err) {
+            this.state.connectionStatus = 'DISCONNECTED';
+            this.notify('connection');
+            const baseDelay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
+            const jitter = Math.random() * 400;
+            this.reconnectAttempts += 1;
+            setTimeout(() => this.connectWebSocket(wsUrl), baseDelay + jitter);
+        }
+    }
+}
+
+const appStateStore = new AppStateStore();
+
+window.AppStateStore = AppStateStore;
+window.appStateStore = appStateStore;
+
 window.AppState = {
     get: () => appState,
     fetch: fetchState,
@@ -374,7 +535,8 @@ window.AppState = {
     recordQuizCompletion,
     applyAppearance: applyAppearanceVariables,
     exportData: exportState,
-    importData: importState
+    importData: importState,
+    store: appStateStore
 };
 
 // --- Phase 7 Debounced State Persistence & LocalStorage Fallback ---

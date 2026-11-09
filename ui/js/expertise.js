@@ -54,11 +54,11 @@ function initExpertiseMap() {
     });
 
     for (const subject in groups) {
-        groups[subject].sort((a, b) => b.accuracy - a.accuracy);
+        groups[subject] = [...groups[subject]].sort((a, b) => b.accuracy - a.accuracy);
     }
 
-    recs.sort((a, b) => a.accuracy - b.accuracy || b.attempted - a.attempted);
-    const topRecs = recs.slice(0, 5);
+    const sortedRecs = [...recs].sort((a, b) => a.accuracy - b.accuracy || b.attempted - a.attempted);
+    const topRecs = sortedRecs.slice(0, 5);
 
     const emptyContainer = document.getElementById('expertise-empty');
     const contentContainer = document.getElementById('expertise-content');

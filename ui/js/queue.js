@@ -8,12 +8,23 @@ function _isQueueVisible() {
     return Boolean(isQueueViewActive || (viewEl && viewEl.classList.contains('active')));
 }
 
+let _queueFetchToken = 0;
 async function fetchQueueStatus() {
+    const currentToken = ++_queueFetchToken;
     try {
-        const res = await fetch('/api/queue/status');
+        const res = await fetch('/api/queue/status', {
+            headers: { 'Cache-Control': 'no-cache' }
+        });
         if (res.ok) {
             const status = await res.json();
-            renderQueue(status);
+            if (currentToken === _queueFetchToken) {
+                // Synchronize through monotonic store if available to prevent stale overwrite
+                if (window.appStateStore && Array.isArray(status.tasks)) {
+                    const ts = Number(status.timestamp) || Date.now();
+                    window.appStateStore.applyServerPatch({ tasks: status.tasks }, ts);
+                }
+                renderQueue(status);
+            }
         }
     } catch (e) {
         console.error("Failed to fetch queue status:", e);
@@ -296,3 +307,130 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 })();
+
+// Tema-Q Pipeline, Model Lifecycle & Ignore-List Controller
+class PipelineAndModelController {
+    constructor(containerEl) {
+        this.container = containerEl;
+    }
+
+    async mount() {
+        if (!this.container) return;
+        const [modelsRes, ignoredRes] = await Promise.all([
+            fetch('/api/models/status').catch(() => ({ ok: false })),
+            fetch('/api/state/ignored-topics').catch(() => ({ ok: false }))
+        ]);
+        const modelStatus = modelsRes && modelsRes.ok ? await modelsRes.json() : { loaded: false, model_name: 'Zero-VRAM Mode (CPU Safe)' };
+        const ignoredData = ignoredRes && ignoredRes.ok ? await ignoredRes.json() : { topics: [] };
+
+        this.render(modelStatus, ignoredData.topics || []);
+    }
+
+    render(modelStatus, ignoredTopics) {
+        if (!this.container) return;
+        this.container.innerHTML = `
+            <div class="space-y-5 p-5 rounded-xl bg-slate-900/70 border border-slate-800 text-slate-200">
+                <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                    <div>
+                        <h3 class="text-base font-semibold text-violet-400">Tema-Q Pipeline &amp; Model Lifecycle</h3>
+                        <p class="text-xs text-slate-400">Active Model: <strong id="active-model-badge">${modelStatus.model_name || 'Unloaded (Zero-VRAM Mode)'}</strong></p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button type="button" id="btn-unload-vram" class="px-3 py-1.5 rounded-lg bg-amber-600/20 border border-amber-500/40 text-amber-300 hover:bg-amber-600/30 text-xs font-medium">
+                            Purge / Unload LLM Weights
+                        </button>
+                        <button type="button" id="btn-batch-precompute" class="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold">
+                            Trigger Batch Precompute
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label class="block text-xs">
+                        <span class="text-slate-300 font-medium">Session Processing Depth</span>
+                        <select id="pipeline-circle-mode" class="mt-1 w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-slate-200">
+                            <option value="CIRCLE_2_ONLY">Circle 2 Only (Fast Deterministic Tantivy/LanceDB References)</option>
+                            <option value="CIRCLE_3_FULL" selected>Circle 2 + Circle 3 (Full LLM Dossier &amp; Distractor Rationale)</option>
+                        </select>
+                    </label>
+
+                    <label class="block text-xs">
+                        <span class="text-slate-300 font-medium">Auditor Token Jaccard Deduplication Threshold (<span id="jaccard-val">0.75</span>)</span>
+                        <input type="range" id="jaccard-slider" min="0.50" max="0.95" step="0.05" value="0.75" class="mt-2 w-full accent-violet-400" />
+                    </label>
+                </div>
+
+                <div class="pt-3 border-t border-slate-800">
+                    <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                        Permanent Ignore List (<code>ignored_topics</code>: <span id="ignored-count">${ignoredTopics.length}</span>)
+                    </h4>
+                    <div id="ignored-topics-list" class="flex flex-wrap gap-2 max-h-36 overflow-y-auto p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
+                        ${ignoredTopics.length === 0
+                            ? '<span class="text-xs text-slate-500" id="empty-ignore-msg">No clinical topics currently suppressed.</span>'
+                            : ignoredTopics.map((t) => `
+                                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-slate-800 text-slate-300 border border-slate-700" data-topic-norm="${window.escapeHTML ? window.escapeHTML(t) : t}">
+                                    <span>${window.escapeHTML ? window.escapeHTML(t) : t}</span>
+                                    <button type="button" class="restore-topic-btn text-slate-400 hover:text-emerald-400 font-bold" aria-label="Restore topic ${window.escapeHTML ? window.escapeHTML(t) : t}">&times;</button>
+                                </span>
+                            `).join('')}
+                    </div>
+                </div>
+            </div>
+        `;
+
+        this.bindEvents();
+    }
+
+    bindEvents() {
+        const slider = this.container.querySelector('#jaccard-slider');
+        const valSpan = this.container.querySelector('#jaccard-val');
+        slider?.addEventListener('input', (e) => {
+            valSpan.textContent = Number(e.target.value).toFixed(2);
+        });
+
+        this.container.querySelector('#btn-unload-vram')?.addEventListener('click', async () => {
+            const res = await fetch('/api/models/unload', { method: 'POST' });
+            if (res.ok) {
+                const badge = this.container.querySelector('#active-model-badge');
+                if (badge) badge.textContent = 'Unloaded (Zero-VRAM Mode)';
+                if (typeof window.showToast === 'function') window.showToast('Model weights unloaded.');
+            }
+        });
+
+        this.container.querySelector('#btn-batch-precompute')?.addEventListener('click', async () => {
+            const mode = this.container.querySelector('#pipeline-circle-mode').value;
+            const jaccard = Number(slider.value);
+            const res = await fetch('/api/queue/enqueue', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    task_type: 'BATCH_PRECOMPUTE',
+                    circle_mode: mode,
+                    jaccard_threshold: jaccard
+                })
+            });
+            if (res.ok) {
+                if (typeof window.showToast === 'function') window.showToast('Batch precompute enqueued.');
+                fetchQueueStatus();
+            }
+        });
+
+        this.container.querySelector('#ignored-topics-list')?.addEventListener('click', async (e) => {
+            const btn = e.target.closest('.restore-topic-btn');
+            if (!btn) return;
+            const badge = btn.closest('[data-topic-norm]');
+            if (!badge) return;
+            const topicNorm = badge.dataset.topicNorm;
+            badge.remove();
+            const countEl = this.container.querySelector('#ignored-count');
+            if (countEl) {
+                const current = parseInt(countEl.textContent || '0', 10);
+                countEl.textContent = String(Math.max(0, current - 1));
+            }
+            await fetch(`/api/state/ignored-topics/${encodeURIComponent(topicNorm)}`, { method: 'DELETE' });
+            if (typeof window.showToast === 'function') window.showToast(`Restored topic: ${topicNorm}`);
+        });
+    }
+}
+
+window.PipelineAndModelController = PipelineAndModelController;

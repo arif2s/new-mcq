@@ -607,6 +607,7 @@ window.openLocalResource = async function(type, pathOrId, extraPageOrTitle = 1, 
 (function initGlobalWebSocket() {
     let ws = null;
     let reconnectTimer = null;
+    let reconnectAttempts = 0;
 
     function connectWS() {
         if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
@@ -618,10 +619,31 @@ window.openLocalResource = async function(type, pathOrId, extraPageOrTitle = 1, 
             ws = new WebSocket(wsUrl);
             window.appWebSocket = ws;
 
+            ws.onopen = async () => {
+                reconnectAttempts = 0;
+                if (window.appStateStore && typeof window.appStateStore.reconcileFullState === 'function') {
+                    await window.appStateStore.reconcileFullState();
+                }
+            };
+
             ws.onmessage = (event) => {
                 try {
                     const payload = JSON.parse(event.data);
+                    const ts = payload.timestamp ? Number(payload.timestamp) : Date.now();
                     const msgType = payload.type || payload.event || '';
+
+                    if (window.appStateStore && typeof window.appStateStore.applyServerPatch === 'function') {
+                        const patchObj = {};
+                        if (msgType === 'task_update' || msgType === 'TASK_UPDATE') {
+                            patchObj.queueTasks = [payload.task || payload];
+                        } else if (msgType === 'session_update' || msgType === 'SESSION_STATUS_UPDATE') {
+                            patchObj.sessionUpdate = payload.session || payload;
+                        }
+                        if (Object.keys(patchObj).length > 0) {
+                            window.appStateStore.applyServerPatch(patchObj, ts);
+                        }
+                    }
+
                     document.dispatchEvent(new CustomEvent('ws:message', { detail: payload }));
 
                     if (msgType === 'task_update' || msgType === 'TASK_UPDATE') {
@@ -636,7 +658,9 @@ window.openLocalResource = async function(type, pathOrId, extraPageOrTitle = 1, 
 
             ws.onclose = () => {
                 if (reconnectTimer) clearTimeout(reconnectTimer);
-                reconnectTimer = setTimeout(connectWS, 3000);
+                const delay = window.computeWsBackoffDelay ? window.computeWsBackoffDelay(reconnectAttempts) : 3000;
+                reconnectAttempts += 1;
+                reconnectTimer = setTimeout(connectWS, delay);
             };
 
             ws.onerror = () => {
@@ -644,7 +668,9 @@ window.openLocalResource = async function(type, pathOrId, extraPageOrTitle = 1, 
             };
         } catch (_) {
             if (reconnectTimer) clearTimeout(reconnectTimer);
-            reconnectTimer = setTimeout(connectWS, 5000);
+            const delay = window.computeWsBackoffDelay ? window.computeWsBackoffDelay(reconnectAttempts) : 5000;
+            reconnectAttempts += 1;
+            reconnectTimer = setTimeout(connectWS, delay);
         }
     }
 
@@ -779,9 +805,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // Wrap switchTab to always invoke triggerViewActivation
+    // Wrap switchTab to always invoke triggerViewActivation and chart cleanup
     const originalSwitchTab = window.switchTab;
     window.switchTab = function(targetId) {
+        if (typeof window.destroyAllChartsOnViewUnmount === 'function') {
+            window.destroyAllChartsOnViewUnmount();
+        }
         originalSwitchTab(targetId);
         triggerViewActivation(targetId);
     };

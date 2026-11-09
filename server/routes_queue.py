@@ -730,6 +730,38 @@ def retry_failed_tasks() -> Dict[str, Any]:
     return {"status": "success", "retried_count": updated}
 
 
+class EnqueueTaskPayload(BaseModel):
+    task_type: str = "BATCH_PRECOMPUTE"
+    circle_mode: Optional[str] = "CIRCLE_3_FULL"
+    jaccard_threshold: Optional[float] = 0.75
+    topic_name: Optional[str] = None
+    session_id: Optional[str] = None
+    priority: Optional[int] = 3
+
+
+@router.post("/enqueue")
+def enqueue_task(payload: EnqueueTaskPayload) -> Dict[str, Any]:
+    """Enqueues a task (e.g. BATCH_PRECOMPUTE) into the persistent task_queue."""
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO task_queue (task_type, topic_name, session_id, priority, status)
+            VALUES (?, ?, ?, ?, 'pending')
+            """,
+            (
+                payload.task_type,
+                payload.topic_name or f"Batch Precompute ({payload.circle_mode})",
+                payload.session_id,
+                payload.priority or 3,
+            ),
+        )
+        task_id = cursor.lastrowid
+        conn.commit()
+
+    return {"status": "success", "task_id": task_id}
+
+
 @router.get("/status")
 def get_queue_status() -> Dict[str, Any]:
     """

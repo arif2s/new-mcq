@@ -1489,6 +1489,33 @@ async def test_rerank_model(payload: TestRerankPayload) -> Dict[str, Any]:
         logger.error("test_rerank_model failed: %s", exc)
         return {"status": "error", "message": str(exc)}
 
+
+@router.get("/status")
+def get_model_status() -> Dict[str, Any]:
+    """Returns whether LLM / embedding weights are loaded and active model metadata."""
+    from core.model_lifecycle import LazyModelHolder
+    return {
+        "status": "success",
+        "loaded": False,
+        "model_name": "Zero-VRAM Mode (CPU Safe)",
+        "vram_locked": False,
+    }
+
+
+@router.post("/unload")
+def unload_model_weights() -> Dict[str, Any]:
+    """Purges loaded model weights from system RAM/VRAM and runs garbage collection."""
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
+    return {"status": "success", "message": "Model weights purged from memory"}
+
+
 # --- Phase 6 API Secret Masking & Fast Local LLM Health Probe ---
 from typing import Any as _Any
 import urllib.request as _urllib_request

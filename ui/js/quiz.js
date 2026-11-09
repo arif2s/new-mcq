@@ -1,5 +1,199 @@
 // ui/js/quiz.js
 
+// Optimistic Topic Mutation Manager with Transactional Rollback
+class TopicSelectionManager {
+    constructor(stateStore = null) {
+        this.store = stateStore;
+        this.inFlightMutations = new Map();
+    }
+
+    async toggleTopicSelection(questionId, topicName, pillElement) {
+        const mutationKey = `${questionId}::${topicName}`;
+        if (this.inFlightMutations.has(mutationKey)) {
+            return;
+        }
+
+        const prevSelected = pillElement.getAttribute('aria-pressed') === 'true';
+        const nextSelected = !prevSelected;
+
+        // 1. Immediate Optimistic UI Update
+        this.applyPillVisualState(pillElement, nextSelected, true);
+        this.inFlightMutations.set(mutationKey, true);
+
+        try {
+            const response = await fetch('/api/sessions/topics/select', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    question_id: questionId,
+                    topic_name: topicName,
+                    selected: nextSelected ? 1 : 0
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`SQLite commit failed with status ${response.status}`);
+            }
+            this.applyPillVisualState(pillElement, nextSelected, false);
+        } catch (err) {
+            // 2. Deterministic Rollback on Failure
+            this.applyPillVisualState(pillElement, prevSelected, false);
+            pillElement.classList.add('ring-2', 'ring-red-500');
+            setTimeout(() => pillElement.classList.remove('ring-2', 'ring-red-500'), 1800);
+            console.error('[TopicSelectionManager] Rollback executed:', err);
+        } finally {
+            this.inFlightMutations.delete(mutationKey);
+        }
+    }
+
+    async ignoreTopicPermanently(questionId, topicName, pillContainerEl) {
+        const normKey = (topicName || '').trim().toLowerCase();
+        const parentList = pillContainerEl.parentElement;
+        const nextSibling = pillContainerEl.nextSibling;
+
+        // Optimistically remove from DOM and cache reference for rollback
+        pillContainerEl.remove();
+
+        try {
+            const response = await fetch('/api/state/ignored-topics', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question_id: questionId, topic_name: topicName, topic_norm: normKey })
+            });
+            if (!response.ok) throw new Error('Failed to persist to ignored_topics table');
+        } catch (err) {
+            // Re-insert node at exact prior DOM position on failure
+            if (parentList) {
+                parentList.insertBefore(pillContainerEl, nextSibling);
+            }
+            console.error('[TopicSelectionManager] Failed to ignore topic, restored DOM node:', err);
+        }
+    }
+
+    applyPillVisualState(el, isSelected, isPending) {
+        el.setAttribute('aria-pressed', String(isSelected));
+        el.classList.toggle('bg-sky-500/25', isSelected);
+        el.classList.toggle('border-sky-400', isSelected);
+        el.classList.toggle('bg-slate-800/60', !isSelected);
+        el.classList.toggle('border-slate-700', !isSelected);
+        el.classList.toggle('opacity-70', isPending);
+    }
+}
+
+window.TopicSelectionManager = TopicSelectionManager;
+const topicSelectionManager = new TopicSelectionManager(window.appStateStore);
+window.topicSelectionManager = topicSelectionManager;
+
+// Request Cancellation & Error Boundary Controller
+class AsyncViewLoader {
+    constructor(containerEl = null) {
+        this.container = containerEl;
+        this.activeControllers = new Map();
+        this.latestRequestToken = 0;
+    }
+
+    setContainer(containerEl) {
+        this.container = containerEl;
+    }
+
+    async loadQuestionDossier(sessionId, questionId, topicName = null) {
+        const requestKey = 'active_dossier_view';
+        if (this.activeControllers.has(requestKey)) {
+            this.activeControllers.get(requestKey).abort();
+        }
+
+        const controller = new AbortController();
+        this.activeControllers.set(requestKey, controller);
+        const currentToken = ++this.latestRequestToken;
+
+        if (this.container) {
+            this.renderLoadingBoundary(questionId, topicName);
+        }
+
+        const params = new URLSearchParams({ session_id: sessionId, question_id: questionId });
+        if (topicName) params.set('topic', topicName);
+
+        try {
+            const response = await fetch(`/api/analysis/dossier?${params.toString()}`, {
+                method: 'GET',
+                signal: controller.signal,
+                headers: { 'Accept': 'application/json' }
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: Failed to load clinical dossier`);
+            }
+
+            const data = await response.json();
+
+            if (currentToken !== this.latestRequestToken || controller.signal.aborted) {
+                return null;
+            }
+
+            if (this.container) {
+                this.renderSuccessContent(data);
+            }
+            return data;
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                return null;
+            }
+            if (currentToken === this.latestRequestToken && this.container) {
+                this.renderErrorBoundary(error.message, () => {
+                    this.loadQuestionDossier(sessionId, questionId, topicName);
+                });
+            }
+            return null;
+        } finally {
+            if (this.activeControllers.get(requestKey) === controller) {
+                this.activeControllers.delete(requestKey);
+            }
+        }
+    }
+
+    renderLoadingBoundary(questionId, topicName) {
+        if (!this.container) return;
+        this.container.setAttribute('aria-busy', 'true');
+        this.container.innerHTML = `
+            <div class="p-6 rounded-xl border border-slate-700/60 bg-slate-900/50 animate-pulse" role="status">
+                <div class="h-5 w-48 bg-slate-700 rounded mb-4"></div>
+                <div class="h-3 w-full bg-slate-800 rounded mb-2"></div>
+                <div class="h-3 w-5/6 bg-slate-800 rounded mb-2"></div>
+                <div class="h-3 w-3/4 bg-slate-800 rounded"></div>
+                <span class="sr-only">Loading clinical synthesis for ${topicName || questionId}...</span>
+            </div>
+        `;
+    }
+
+    renderErrorBoundary(errorMessage, retryCallback) {
+        if (!this.container) return;
+        this.container.setAttribute('aria-busy', 'false');
+        this.container.innerHTML = `
+            <div class="p-5 rounded-xl border border-red-500/40 bg-red-950/30 text-red-200 flex items-center justify-between gap-3" role="alert">
+                <div>
+                    <p class="font-semibold text-sm">Synthesis Retrieval Interrupted</p>
+                    <p class="text-xs text-red-300/80 mt-1 error-msg-text"></p>
+                </div>
+                <button type="button" class="retry-btn px-3 py-1.5 text-xs font-medium rounded-lg bg-red-600/80 hover:bg-red-500 text-white transition shrink-0">
+                    Retry Load
+                </button>
+            </div>
+        `;
+        const msgEl = this.container.querySelector('.error-msg-text');
+        if (msgEl) msgEl.textContent = errorMessage;
+        this.container.querySelector('.retry-btn')?.addEventListener('click', retryCallback, { once: true });
+    }
+
+    renderSuccessContent(data) {
+        if (!this.container) return;
+        this.container.setAttribute('aria-busy', 'false');
+        window.dispatchEvent(new CustomEvent('dossier:loaded', { detail: data }));
+    }
+}
+
+window.AsyncViewLoader = AsyncViewLoader;
+const globalQuizViewLoader = new AsyncViewLoader();
+
 let quizConfig = {
     subject: 'all',
     topic: 'all',
@@ -1039,23 +1233,38 @@ function renderQuestion() {
         </div>
     `;
 
-    // Render Options A-D
+    // Render Options A-D with WAI-ARIA and Keyboard Navigation
     const optsDiv = document.getElementById('options-container');
-    ['A', 'B', 'C', 'D'].forEach(opt => {
+    if (optsDiv) {
+        optsDiv.setAttribute('role', 'radiogroup');
+        optsDiv.setAttribute('aria-label', 'Multiple Choice Answer Options');
+    }
+
+    const optionCards = [];
+    ['A', 'B', 'C', 'D'].forEach((opt, idx) => {
         const text = q[`option_${opt.toLowerCase()}`] || q[`opt_${opt.toLowerCase()}`];
         if (!text) return;
 
         const btn = document.createElement('button');
-        let classes = 'w-full text-left px-5 py-4 rounded-xl border transition-all flex items-center justify-between font-medium ';
+        btn.type = 'button';
+        btn.setAttribute('data-option-key', opt);
+        btn.setAttribute('role', 'radio');
+        btn.setAttribute('aria-label', `Option ${opt}: ${text}`);
+
+        let classes = 'w-full text-left px-5 py-4 rounded-xl border transition-all flex items-center justify-between font-medium outline-none focus:ring-2 focus:ring-brand-500 ';
 
         if (!isAnswered) {
             classes += 'glass-card border-gray-700/50 hover:border-brand-500 cursor-pointer';
+            btn.setAttribute('aria-checked', 'false');
+            btn.setAttribute('tabindex', idx === 0 ? '0' : '-1');
             btn.onclick = () => handleSelectOption(q, opt);
         } else {
             classes += 'cursor-default ';
             const ans = quizAnswers[q.id];
             const isCorrectOpt = opt === (q.correct_answer || 'A').toUpperCase();
             const isSelected = ans.selected === opt;
+            btn.setAttribute('aria-checked', String(isSelected));
+            btn.setAttribute('tabindex', isSelected ? '0' : '-1');
 
             if (ans.timedOut) classes += 'glass-panel border-gray-700/50 opacity-50';
             else if (isCorrectOpt) classes += 'bg-success-500/20 border-success-500/50 text-success-300';
@@ -1075,7 +1284,52 @@ function renderQuestion() {
             ${isAnswered && !quizAnswers[q.id].timedOut && quizAnswers[q.id].selected === opt && opt !== (q.correct_answer || 'A').toUpperCase() ? '<span class="text-danger-500 font-bold text-lg">✗</span>' : ''}
         `;
         optsDiv.appendChild(btn);
+        optionCards.push(btn);
     });
+
+    if (!isAnswered && optsDiv && optionCards.length > 0) {
+        optsDiv.onkeydown = (e) => {
+            const currentFocused = document.activeElement;
+            const currentIdx = optionCards.indexOf(currentFocused);
+            const optKeys = ['A', 'B', 'C', 'D'];
+
+            if (e.key >= '1' && e.key <= '4') {
+                e.preventDefault();
+                const card = optionCards[Number(e.key) - 1];
+                if (card) {
+                    card.focus();
+                    handleSelectOption(q, card.dataset.optionKey);
+                }
+                return;
+            }
+
+            const upper = e.key.toUpperCase();
+            if (optKeys.includes(upper)) {
+                e.preventDefault();
+                const card = optionCards[optKeys.indexOf(upper)];
+                if (card) {
+                    card.focus();
+                    handleSelectOption(q, card.dataset.optionKey);
+                }
+                return;
+            }
+
+            if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+                e.preventDefault();
+                const nextIdx = (Math.max(0, currentIdx) + 1) % optionCards.length;
+                optionCards.forEach((c, i) => c.setAttribute('tabindex', i === nextIdx ? '0' : '-1'));
+                optionCards[nextIdx].focus();
+            } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+                e.preventDefault();
+                const prevIdx = (Math.max(0, currentIdx) - 1 + optionCards.length) % optionCards.length;
+                optionCards.forEach((c, i) => c.setAttribute('tabindex', i === prevIdx ? '0' : '-1'));
+                optionCards[prevIdx].focus();
+            } else if ((e.key === 'Enter' || e.key === ' ') && currentIdx !== -1) {
+                e.preventDefault();
+                handleSelectOption(q, optionCards[currentIdx].dataset.optionKey);
+            }
+        };
+    }
 
     // Learn Mode Feedback: Separate FSRS 1-4 Rating Bar + CSV Explanation + LLM Detailed Explanation
     if (isAnswered && isLearn && !quizAnswers[q.id].timedOut) {
@@ -1823,8 +2077,18 @@ function renderReferenceBadgesHTML(rawRefs) {
     `;
 }
 
+let _activeInspectorAbortController = null;
+let _inspectorRequestToken = 0;
+
 async function updateInspectorForQuestion(questionObj) {
     if (!questionObj) return;
+
+    if (_activeInspectorAbortController) {
+        _activeInspectorAbortController.abort();
+    }
+    _activeInspectorAbortController = new AbortController();
+    const inspectorSignal = _activeInspectorAbortController.signal;
+    const currentToken = ++_inspectorRequestToken;
 
     // Requirement 1: While doing MCQ the reference list should only show verified topics
     const topicsSet = new Set();
@@ -1864,7 +2128,9 @@ async function updateInspectorForQuestion(questionObj) {
     // 3. Query backend verified topics for this question if none found yet or if question has an ID
     if (topicsSet.size === 0 && qid) {
         try {
-            const verRes = await fetch(`/api/mcq/question/${encodeURIComponent(qid)}/verified_topics`);
+            const verRes = await fetch(`/api/mcq/question/${encodeURIComponent(qid)}/verified_topics`, {
+                signal: inspectorSignal
+            });
             if (verRes.ok) {
                 const verData = await verRes.json();
                 if (Array.isArray(verData.verified_topics)) {
@@ -1873,7 +2139,9 @@ async function updateInspectorForQuestion(questionObj) {
                     });
                 }
             }
-        } catch (_) {}
+        } catch (err) {
+            if (err.name === 'AbortError') return;
+        }
     }
 
     // 4. If still no verified topics and session was verified/confirmed, check question's main topic against session verified topics
@@ -1903,14 +2171,20 @@ async function updateInspectorForQuestion(questionObj) {
         const statusRes = await fetch('/api/mcq/topics/status', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ topics: topicsArray })
+            body: JSON.stringify({ topics: topicsArray }),
+            signal: inspectorSignal
         });
         if (statusRes.ok) {
             const data = await statusRes.json();
             statuses = data.topics || {};
         }
     } catch (e) {
+        if (e.name === 'AbortError') return;
         console.warn("Failed to fetch topic statuses for inspector:", e);
+    }
+
+    if (currentToken !== _inspectorRequestToken) {
+        return; // Guard against stale async completion
     }
 
     let html = `<div class="flex flex-col text-xs space-y-4 pb-6">`;

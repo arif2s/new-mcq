@@ -1380,3 +1380,114 @@
         }
     };
 })();
+
+// Indra & Docling Document Extraction Configuration Panel
+function mountExtractionSettingsPanel(containerEl, initialConfig = {}) {
+  if (!containerEl) return;
+  const config = {
+    explicit_profile_id: initialConfig.explicit_profile_id || 'auto',
+    fallback_provider_primary: initialConfig.fallback_provider_primary || 'indra_ocr',
+    dpi: initialConfig.dpi || 200,
+    threads: initialConfig.threads || 4,
+    math: initialConfig.math ?? true,
+    furniture: initialConfig.furniture ?? true
+  };
+
+  containerEl.innerHTML = `
+    <form id="extraction-config-form" class="space-y-4 p-5 rounded-xl bg-slate-900/70 border border-slate-800 text-slate-200">
+      <div class="border-b border-slate-800 pb-3">
+        <h3 class="text-base font-semibold text-sky-400">PDF Ingestion &amp; Indra Layout Calibration</h3>
+        <p class="text-xs text-slate-400 mt-0.5">Configure layout profile heuristics, OCR fallback priority, and structural filtering.</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <label class="block text-xs">
+          <span class="text-slate-300 font-medium">Layout Profile Override</span>
+          <select name="explicit_profile_id" class="mt-1 w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm">
+            <option value="auto">Auto-Detect (Sticky Heuristic)</option>
+            <option value="academic_article">Academic Article (DOI / Journal Header)</option>
+            <option value="native_digital">Native Digital Single-Column</option>
+            <option value="scanned_two_column_textbook">Scanned Two-Column Medical Textbook</option>
+            <option value="illustrated_booklet">Illustrated Clinical Booklet / Guideline</option>
+          </select>
+        </label>
+
+        <label class="block text-xs">
+          <span class="text-slate-300 font-medium">Primary Ingestion Engine</span>
+          <select name="fallback_provider_primary" class="mt-1 w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm">
+            <option value="indra_ocr">Indra Native + OCR (Default)</option>
+            <option value="pdfplumber">PDFPlumber Table-First</option>
+            <option value="pypdfium2">PyPDFium2 High-Speed Raster OCR</option>
+          </select>
+        </label>
+
+        <label class="block text-xs">
+          <span class="text-slate-300 font-medium">Rasterization Resolution (DPI: <span id="dpi-val">${config.dpi}</span>)</span>
+          <input type="range" name="dpi" min="120" max="400" step="20" value="${config.dpi}" class="mt-2 w-full accent-sky-400" />
+        </label>
+
+        <label class="block text-xs">
+          <span class="text-slate-300 font-medium">Extraction Worker Threads (<span id="threads-val">${config.threads}</span>)</span>
+          <input type="range" name="threads" min="1" max="16" step="1" value="${config.threads}" class="mt-2 w-full accent-sky-400" />
+        </label>
+      </div>
+
+      <div class="flex flex-wrap gap-6 pt-2">
+        <label class="inline-flex items-center gap-2 text-xs cursor-pointer">
+          <input type="checkbox" name="math" ${config.math ? 'checked' : ''} class="rounded border-slate-700 bg-slate-950 text-sky-500" />
+          <span>Enable LaTeX/KaTeX Formula Extraction (<code>math=True</code>)</span>
+        </label>
+
+        <label class="inline-flex items-center gap-2 text-xs cursor-pointer">
+          <input type="checkbox" name="furniture" ${config.furniture ? 'checked' : ''} class="rounded border-slate-700 bg-slate-950 text-sky-500" />
+          <span>Filter Running Headers, Footers &amp; Watermarks (<code>furniture=True</code>)</span>
+        </label>
+      </div>
+
+      <div class="flex justify-end pt-3 border-t border-slate-800">
+        <button type="submit" class="px-4 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold text-xs transition">
+          Save Ingestion Profile
+        </button>
+      </div>
+    </form>
+  `;
+
+  const form = containerEl.querySelector('#extraction-config-form');
+  form.elements.explicit_profile_id.value = config.explicit_profile_id;
+  form.elements.fallback_provider_primary.value = config.fallback_provider_primary;
+
+  form.elements.dpi.addEventListener('input', (e) => {
+    containerEl.querySelector('#dpi-val').textContent = e.target.value;
+  });
+  form.elements.threads.addEventListener('input', (e) => {
+    containerEl.querySelector('#threads-val').textContent = e.target.value;
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(form);
+    const payload = {
+      explicit_profile_id: formData.get('explicit_profile_id') === 'auto' ? null : formData.get('explicit_profile_id'),
+      fallback_provider_primary: formData.get('fallback_provider_primary'),
+      dpi: Number(formData.get('dpi')),
+      threads: Number(formData.get('threads')),
+      math: form.elements.math.checked,
+      furniture: form.elements.furniture.checked
+    };
+
+    try {
+      await fetch('/api/state/extraction-config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (typeof window.showToast === 'function') {
+        window.showToast("Ingestion profile settings saved.");
+      }
+    } catch (err) {
+      console.error("Failed to save extraction config:", err);
+    }
+  });
+}
+
+window.mountExtractionSettingsPanel = mountExtractionSettingsPanel;

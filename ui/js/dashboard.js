@@ -1,5 +1,63 @@
 // ui/js/dashboard.js
 
+// Central Chart & Canvas Lifecycle Registry
+const chartRegistry = new Map();
+
+function renderExpertiseChart(canvasId, rawClusters, renderBuilderFn) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return null;
+
+    if (chartRegistry.has(canvasId)) {
+        const prevInstance = chartRegistry.get(canvasId);
+        try {
+            if (typeof prevInstance.destroy === 'function') {
+                prevInstance.destroy();
+            } else if (typeof prevInstance.dispose === 'function') {
+                prevInstance.dispose();
+            }
+        } catch (e) {
+            console.warn(`[ChartRegistry] Cleanup warning for ${canvasId}:`, e);
+        }
+        chartRegistry.delete(canvasId);
+    }
+
+    const safeClusters = Array.isArray(rawClusters)
+        ? rawClusters.map((item) => ({ ...item, sources: item.sources ? [...item.sources] : [] }))
+        : [];
+
+    const sortedByMastery = [...safeClusters].sort((a, b) => {
+        const vDiff = (b.verified ? 1 : 0) - (a.verified ? 1 : 0);
+        if (vDiff !== 0) return vDiff;
+        return (Number(b.score) || 0) - (Number(a.score) || 0);
+    });
+
+    if (typeof renderBuilderFn === 'function') {
+        const newInstance = renderBuilderFn(canvas.getContext('2d'), sortedByMastery);
+        if (newInstance) {
+            chartRegistry.set(canvasId, newInstance);
+        }
+        return newInstance;
+    }
+    return null;
+}
+
+function destroyAllChartsOnViewUnmount() {
+    for (const [canvasId, instance] of chartRegistry.entries()) {
+        try {
+            if (instance && typeof instance.destroy === 'function') {
+                instance.destroy();
+            } else if (instance && typeof instance.dispose === 'function') {
+                instance.dispose();
+            }
+        } catch (_) {}
+        chartRegistry.delete(canvasId);
+    }
+}
+
+window.chartRegistry = chartRegistry;
+window.renderExpertiseChart = renderExpertiseChart;
+window.destroyAllChartsOnViewUnmount = destroyAllChartsOnViewUnmount;
+
 const DEFAULT_RANK_CONFIG = {
     examName: "NEET PG (Default)",
     totalQuestions: 200,
