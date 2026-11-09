@@ -43,6 +43,9 @@
             }
         });
 
+        // Setup font size zoom controls (+/-) for Obsidian / ZIM document reader
+        initReaderFontZoomControls();
+
         // Wrap window.openDocumentReader to support Back navigation across linked ZIM/Obsidian articles
         const baseOpenReader = window.openDocumentReader;
         if (typeof baseOpenReader === "function" && !baseOpenReader._enhancedByReaderJs) {
@@ -53,10 +56,73 @@
                 isNavigatingBack = false;
                 baseOpenReader(opts);
                 renderReaderBackButton();
+                applyReaderFontSize();
             };
             wrappedOpenReader._enhancedByReaderJs = true;
             window.openDocumentReader = wrappedOpenReader;
         }
+    }
+
+    const MIN_READER_FONT = 12;
+    const MAX_READER_FONT = 26;
+    const DEFAULT_READER_FONT = 15;
+    let currentReaderFontSize = parseInt(localStorage.getItem('reader_font_size') || String(DEFAULT_READER_FONT), 10);
+    if (isNaN(currentReaderFontSize) || currentReaderFontSize < MIN_READER_FONT || currentReaderFontSize > MAX_READER_FONT) {
+        currentReaderFontSize = DEFAULT_READER_FONT;
+    }
+
+    function applyReaderFontSize() {
+        const viewerContainer = document.getElementById("zim-viewer-container");
+        if (viewerContainer) {
+            viewerContainer.style.setProperty('--modal-reader-font-size', `${currentReaderFontSize}px`);
+        }
+        const label = document.getElementById("reader-font-size-label");
+        if (label) {
+            const pct = Math.round((currentReaderFontSize / DEFAULT_READER_FONT) * 100);
+            label.textContent = `${pct}%`;
+        }
+        try {
+            localStorage.setItem('reader_font_size', String(currentReaderFontSize));
+        } catch (_) {}
+    }
+
+    function initReaderFontZoomControls() {
+        const decBtn = document.getElementById("reader-font-decrease-btn");
+        const incBtn = document.getElementById("reader-font-increase-btn");
+        const label = document.getElementById("reader-font-size-label");
+
+        if (decBtn && !decBtn._hasFontZoomListener) {
+            decBtn._hasFontZoomListener = true;
+            decBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                if (currentReaderFontSize > MIN_READER_FONT) {
+                    currentReaderFontSize = Math.max(MIN_READER_FONT, currentReaderFontSize - 1);
+                    applyReaderFontSize();
+                }
+            });
+        }
+
+        if (incBtn && !incBtn._hasFontZoomListener) {
+            incBtn._hasFontZoomListener = true;
+            incBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                if (currentReaderFontSize < MAX_READER_FONT) {
+                    currentReaderFontSize = Math.min(MAX_READER_FONT, currentReaderFontSize + 1);
+                    applyReaderFontSize();
+                }
+            });
+        }
+
+        if (label && !label._hasFontZoomListener) {
+            label._hasFontZoomListener = true;
+            label.addEventListener("click", (e) => {
+                e.stopPropagation();
+                currentReaderFontSize = DEFAULT_READER_FONT;
+                applyReaderFontSize();
+            });
+        }
+
+        applyReaderFontSize();
     }
 
     function renderReaderBackButton() {

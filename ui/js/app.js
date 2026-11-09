@@ -1005,6 +1005,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             ];
 
             const filteredHues = [];
+            const vividPixels = [];
             const quadrantDataList = [];
 
             regions.forEach((region) => {
@@ -1018,7 +1019,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                     sumR += r; sumG += g; sumB += b;
                     const [h, s, l] = rgbToHsl(r, g, b);
                     pixelsWithLum.push({ r, g, b, l, h, s });
-                    if (l >= 0.08 && l <= 0.92 && s >= 0.12) filteredHues.push(h);
+                    if (l >= 0.08 && l <= 0.92 && s >= 0.12) {
+                        filteredHues.push(h);
+                    }
+                    // Collect chromatic, non-muddy, non-monochrome pixels for artistic button extraction
+                    if (s >= 0.22 && l >= 0.15 && l <= 0.85) {
+                        vividPixels.push({ h, s, l, r, g, b });
+                    }
                 }
 
                 pixelsWithLum.sort((a, b) => a.l - b.l);
@@ -1053,6 +1060,84 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (avgRad < 0) avgRad += 2 * Math.PI;
                 domHue = (avgRad * 180) / Math.PI;
             }
+
+            // --- 1. Dynamic Artistic Button Hue Extraction from Picture ---
+            // Choose an artistic, vibrant hue derived directly from the picture.
+            // If the wallpaper has vivid chromatic pixels, pick an artistic hue with good saturation.
+            let buttonHue = domHue;
+            if (vividPixels.length > 0) {
+                // Select a representative artistic color from vivid pixels (e.g. weighted towards higher saturation)
+                vividPixels.sort((a, b) => (b.s * 0.6 + Math.abs(b.l - 0.5) * -0.4) - (a.s * 0.6 + Math.abs(a.l - 0.5) * -0.4));
+                // Sample from top 15% most vibrant colors to get an artistic, distinct accent hue
+                const topSampleCount = Math.max(1, Math.floor(vividPixels.length * 0.15));
+                const pickIndex = Math.floor(Math.random() * topSampleCount);
+                buttonHue = vividPixels[pickIndex].h;
+            } else {
+                // Harmonic offset if image is near-monochrome
+                buttonHue = (domHue + 28) % 360;
+            }
+
+            // Calculate WCAG AA contrast-safe button colors
+            const btnSat = 0.76;
+            let btnLum = theme === 'dark' ? 0.44 : 0.40;
+            let [rBtn, gBtn, bBtn] = hslToRgb(buttonHue, btnSat, btnLum);
+            let btnRelLum = getRelativeLuminance(rBtn, gBtn, bBtn);
+            const whiteRelLum = getRelativeLuminance(255, 255, 255);
+            const darkRelLum = getRelativeLuminance(15, 23, 42);
+
+            let crWhite = getContrastRatio(btnRelLum, whiteRelLum);
+            let crDark = getContrastRatio(btnRelLum, darkRelLum);
+
+            let btnTextColor = '#FFFFFF';
+            let btnTextShadow = '0 1px 2px rgba(0, 0, 0, 0.45)';
+
+            if (crWhite >= crDark) {
+                // Target white text with at least 4.5:1 contrast ratio
+                while (crWhite < 4.5 && btnLum > 0.20) {
+                    btnLum -= 0.02;
+                    [rBtn, gBtn, bBtn] = hslToRgb(buttonHue, btnSat, btnLum);
+                    btnRelLum = getRelativeLuminance(rBtn, gBtn, bBtn);
+                    crWhite = getContrastRatio(btnRelLum, whiteRelLum);
+                }
+                btnTextColor = '#FFFFFF';
+                btnTextShadow = '0 1px 2px rgba(0, 0, 0, 0.45)';
+            } else {
+                // Target dark text with at least 4.5:1 contrast ratio
+                while (crDark < 4.5 && btnLum < 0.85) {
+                    btnLum += 0.02;
+                    [rBtn, gBtn, bBtn] = hslToRgb(buttonHue, btnSat, btnLum);
+                    btnRelLum = getRelativeLuminance(rBtn, gBtn, bBtn);
+                    crDark = getContrastRatio(btnRelLum, darkRelLum);
+                }
+                btnTextColor = '#0F172A';
+                btnTextShadow = '0 1px 1px rgba(255, 255, 255, 0.4)';
+            }
+
+            const hoverLum = btnTextColor === '#FFFFFF'
+                ? Math.min(btnLum + 0.07, 0.65)
+                : Math.max(btnLum - 0.07, 0.35);
+
+            const [rHover, gHover, bHover] = hslToRgb((buttonHue + 12) % 360, btnSat, hoverLum);
+
+            const hueH = Math.round(buttonHue);
+            const hueH2 = Math.round((buttonHue + 18) % 360);
+            const sPct = Math.round(btnSat * 100);
+            const lPct = Math.round(btnLum * 100);
+            const hlPct = Math.round(hoverLum * 100);
+
+            const primaryBg = `linear-gradient(135deg, hsl(${hueH}, ${sPct}%, ${lPct}%), hsl(${hueH2}, ${sPct}%, ${hlPct}%))`;
+            const primaryHoverBg = `linear-gradient(135deg, hsl(${Math.round((hueH + 8) % 360)}, ${sPct}%, ${hlPct}%), hsl(${Math.round((hueH + 24) % 360)}, ${sPct}%, ${lPct}%))`;
+            const primaryShadow = `0 4px 15px rgba(${rBtn}, ${gBtn}, ${bBtn}, 0.38)`;
+            const primaryHoverShadow = `0 6px 20px rgba(${rBtn}, ${gBtn}, ${bBtn}, 0.52)`;
+
+            document.documentElement.style.setProperty('--primary-btn-bg', primaryBg);
+            document.documentElement.style.setProperty('--primary-btn-hover-bg', primaryHoverBg);
+            document.documentElement.style.setProperty('--primary-btn-text', btnTextColor);
+            document.documentElement.style.setProperty('--primary-btn-shadow', primaryShadow);
+            document.documentElement.style.setProperty('--primary-btn-hover-shadow', primaryHoverShadow);
+            document.documentElement.style.setProperty('--primary-btn-text-shadow', btnTextShadow);
+            document.documentElement.style.setProperty('--accent-color', `rgb(${rBtn}, ${gBtn}, ${bBtn})`);
+            document.documentElement.style.setProperty('--accent-hover', `rgb(${rHover}, ${gHover}, ${bHover})`);
 
             const hueShifts = [0, 15, -15, 30];
             const alpha = (window.AppState && typeof window.AppState.get().cardOpacity === 'number')

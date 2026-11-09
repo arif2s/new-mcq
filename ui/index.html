@@ -1373,9 +1373,16 @@
         <div id="zim-viewer-container" class="overlay-panel fade-enter" style="display: none;">
           <div class="overlay-header">
             <h2>Document Viewer</h2>
-            <button type="button" id="close-zim-viewer-btn" class="icon-btn cursor-pointer" aria-label="Close Reader" title="Close Reader">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-            </button>
+            <div class="flex items-center gap-3">
+              <div class="font-zoom-ctrl-group" title="Adjust text font size">
+                <button type="button" id="reader-font-decrease-btn" class="font-zoom-btn" aria-label="Decrease Font Size" title="Decrease Font Size (−)">−</button>
+                <span id="reader-font-size-label" class="font-zoom-level" title="Click to reset font size">100%</span>
+                <button type="button" id="reader-font-increase-btn" class="font-zoom-btn" aria-label="Increase Font Size" title="Increase Font Size (+)">+</button>
+              </div>
+              <button type="button" id="close-zim-viewer-btn" class="icon-btn cursor-pointer" aria-label="Close Reader" title="Close Reader">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+              </button>
+            </div>
           </div>
           <div id="zim-content-area" class="overlay-content"></div>
         </div>

@@ -1645,9 +1645,16 @@ function openExplanationNoteModal(q) {
                         ${window.escapeHTML(questionTitle)}
                     </h3>
                 </div>
-                <button type="button" id="close-exp-note-btn" class="p-1.5 text-muted hover:text-white rounded-lg glass-panel hover:bg-white/10 transition-colors cursor-pointer text-lg leading-none" title="Close (ESC)">
-                    ✕
-                </button>
+                <div class="flex items-center gap-3">
+                    <div class="font-zoom-ctrl-group" title="Adjust explanation font size">
+                        <button type="button" id="exp-font-decrease-btn" class="font-zoom-btn" aria-label="Decrease Font Size" title="Decrease Font Size (−)">−</button>
+                        <span id="exp-font-size-label" class="font-zoom-level" title="Click to reset font size">100%</span>
+                        <button type="button" id="exp-font-increase-btn" class="font-zoom-btn" aria-label="Increase Font Size" title="Increase Font Size (+)">+</button>
+                    </div>
+                    <button type="button" id="close-exp-note-btn" class="p-1.5 text-muted hover:text-white rounded-lg glass-panel hover:bg-white/10 transition-colors cursor-pointer text-lg leading-none" title="Close (ESC)">
+                        ✕
+                    </button>
+                </div>
             </div>
 
             <div class="overflow-y-auto flex-1 pr-2 space-y-4">
@@ -1679,6 +1686,54 @@ function openExplanationNoteModal(q) {
     } else if (bodyEl) {
         bodyEl.textContent = explanationText;
     }
+
+    // Font size zoom controls (+/-) for CSV Explanation popup
+    const MIN_EXP_FONT = 12;
+    const MAX_EXP_FONT = 24;
+    const DEFAULT_EXP_FONT = 14;
+    let currentExpFontSize = parseInt(localStorage.getItem('exp_modal_font_size') || String(DEFAULT_EXP_FONT), 10);
+    if (isNaN(currentExpFontSize) || currentExpFontSize < MIN_EXP_FONT || currentExpFontSize > MAX_EXP_FONT) {
+        currentExpFontSize = DEFAULT_EXP_FONT;
+    }
+
+    const applyExpFontSize = () => {
+        const card = document.getElementById('explanation-note-card');
+        if (card) {
+            card.style.setProperty('--csv-explanation-font-size', `${currentExpFontSize}px`);
+        }
+        const label = document.getElementById('exp-font-size-label');
+        if (label) {
+            const pct = Math.round((currentExpFontSize / DEFAULT_EXP_FONT) * 100);
+            label.textContent = `${pct}%`;
+        }
+        try {
+            localStorage.setItem('exp_modal_font_size', String(currentExpFontSize));
+        } catch (_) {}
+    };
+
+    applyExpFontSize();
+
+    document.getElementById('exp-font-decrease-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (currentExpFontSize > MIN_EXP_FONT) {
+            currentExpFontSize = Math.max(MIN_EXP_FONT, currentExpFontSize - 1);
+            applyExpFontSize();
+        }
+    });
+
+    document.getElementById('exp-font-increase-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (currentExpFontSize < MAX_EXP_FONT) {
+            currentExpFontSize = Math.min(MAX_EXP_FONT, currentExpFontSize + 1);
+            applyExpFontSize();
+        }
+    });
+
+    document.getElementById('exp-font-size-label')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        currentExpFontSize = DEFAULT_EXP_FONT;
+        applyExpFontSize();
+    });
 
     const closeModal = () => {
         if (modal) modal.remove();
