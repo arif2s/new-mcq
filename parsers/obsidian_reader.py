@@ -431,7 +431,7 @@ def extract_obsidian_metadata_and_clean_body(markdown_text: str) -> tuple[dict[_
 
     def _replace_wl(m: _re.Match) -> str:
         target = m.group(1).strip()
-        label = (m.group(2) or target).strip()
+        label = (m.group(len(m.groups())) or target).strip() if m.lastindex else target
         if target and target not in metadata["wikilinks"]:
             metadata["wikilinks"].append(target)
         return label

@@ -21,6 +21,120 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 from core.database import get_db_connection
 from core.reporter import generate_topic_report
 
+
+class AsyncQueueWorker:
+    """Non-blocking, prioritized async queue worker with transaction isolation."""
+
+    def __init__(self, poll_interval: float = 1.0) -> None:
+        self._poll_interval = poll_interval
+        self._is_running = False
+        self._current_task: Optional[asyncio.Task[None]] = None
+
+    async def start(self) -> None:
+        self._is_running = True
+        logger.info("Asynchronous queue worker initialized.")
+        while self._is_running:
+            try:
+                task_record = await asyncio.to_thread(self._fetch_and_claim_task)
+                if not task_record:
+                    await asyncio.sleep(self._poll_interval)
+                    continue
+
+                await self._dispatch_task(task_record)
+            except asyncio.CancelledError:
+                logger.info("Worker execution loop cancelled.")
+                break
+            except Exception as exc:
+                logger.error("Queue loop iteration failed: %s", exc, exc_info=True)
+                await asyncio.sleep(self._poll_interval)
+
+    async def stop(self) -> None:
+        self._is_running = False
+        if self._current_task and not self._current_task.done():
+            self._current_task.cancel()
+            try:
+                await self._current_task
+            except asyncio.CancelledError:
+                pass
+        logger.info("Asynchronous queue worker cleanly shut down.")
+
+    def _fetch_and_claim_task(self) -> Optional[Dict[str, Any]]:
+        from core.database import get_db_connection
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    """
+                    UPDATE task_queue
+                    SET status = 'processing', updated_at = unixepoch('now')
+                    WHERE task_id = (
+                        SELECT task_id FROM task_queue
+                        WHERE status = 'pending'
+                        ORDER BY priority ASC, task_id ASC
+                        LIMIT 1
+                    )
+                    RETURNING task_id, task_type, payload, session_id, mcq_id;
+                    """
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                return dict(row)
+            except Exception:
+                cursor.execute(
+                    """
+                    SELECT task_id, task_type, payload, session_id, mcq_id FROM task_queue
+                    WHERE status = 'pending'
+                    ORDER BY priority ASC, task_id ASC
+                    LIMIT 1
+                    """
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                t_id = row["task_id"]
+                cursor.execute(
+                    "UPDATE task_queue SET status = 'processing', updated_at = unixepoch('now') WHERE task_id = ?",
+                    (t_id,),
+                )
+                return dict(row)
+
+    async def _dispatch_task(self, task: Dict[str, Any]) -> None:
+        task_id = task["task_id"]
+        task_type = str(task.get("task_type", "")).upper()
+        session_id = task.get("session_id")
+
+        try:
+            raw_payload = task.get("payload")
+            payload = json_lib.loads(raw_payload) if isinstance(raw_payload, str) and raw_payload else (raw_payload or {})
+            if task_type in ("SESSION_PROCESSING", "PROCESS_SESSION"):
+                from agents.tema_q.session_processor import process_session_questions
+                if session_id:
+                    await process_session_questions(session_id, worker=self)
+            elif task_type in ("MCQ_EXPLAIN", "EXPLAIN_MCQ"):
+                from agents.tema_q.pipeline import generate_mcq_explanation
+                q_data = payload.get("question_data", {})
+                if q_data:
+                    await generate_mcq_explanation(q_data)
+            await asyncio.to_thread(self._finalize_task, task_id, "completed", None)
+        except Exception as exc:
+            logger.error("Task %d raised exception: %s", task_id, exc, exc_info=True)
+            await asyncio.to_thread(self._finalize_task, task_id, "failed", str(exc))
+
+    def _finalize_task(self, task_id: int, status: str, error_msg: Optional[str]) -> None:
+        from core.database import get_db_connection
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE task_queue
+                SET status = ?, error_message = ?, updated_at = unixepoch('now')
+                WHERE task_id = ?
+                """,
+                (status, error_msg, task_id),
+            )
+            conn.commit()
+
 try:
     from server.ws_manager import manager as ws_manager
 except ImportError:

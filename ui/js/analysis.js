@@ -940,4 +940,44 @@
         }
         _appendNextBatch();
     };
+
+    /**
+     * Safely parses Markdown and purifies generated HTML using DOMPurify before DOM insertion.
+     * @param {HTMLElement|string} targetElement - DOM element or element ID.
+     * @param {string} rawMarkdown - Unsanitized markdown payload.
+     */
+    window.renderMarkdownSafely = function (targetElement, rawMarkdown) {
+        const container = typeof targetElement === 'string'
+            ? document.getElementById(targetElement)
+            : targetElement;
+
+        if (!container) {
+            console.error("DOM container not found for safe markdown rendering.");
+            return;
+        }
+
+        if (!rawMarkdown || typeof rawMarkdown !== 'string') {
+            container.innerHTML = '';
+            return;
+        }
+
+        if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
+            container.textContent = rawMarkdown;
+            console.error("Required libraries (marked/DOMPurify) are missing. Fell back to plain text.");
+            return;
+        }
+
+        const rawHtml = marked.parse(rawMarkdown);
+        const cleanHtml = DOMPurify.sanitize(rawHtml, {
+            ALLOWED_TAGS: [
+                'p', 'b', 'i', 'em', 'strong', 'a', 'ul', 'ol', 'li',
+                'code', 'pre', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                'blockquote', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span'
+            ],
+            ALLOWED_ATTR: ['href', 'title', 'target', 'class'],
+            FORCE_BODY: true
+        });
+
+        container.innerHTML = cleanHtml;
+    };
 })();

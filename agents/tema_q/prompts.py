@@ -7,9 +7,6 @@ from __future__ import annotations
 
 import os
 
-# Enforce Invariant 1: Zero VRAM for backend processes
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
-
 # Stop sequences supporting common 4B/7B/8B GGUF architectures (Qwen, Llama 3, Mistral, Gemma, Phi)
 STOP_TOKENS: list[str] = [
     "<|im_end|>",

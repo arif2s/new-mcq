@@ -60,16 +60,85 @@ def get_db_connection() -> sqlite3.Connection:
     return configure_sqlite_wal(conn)
 
 
+import re
+from typing import Set
+
+_SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9_]+$")
+_ALLOWED_COLUMN_TYPES: Set[str] = {
+    "TEXT",
+    "INTEGER",
+    "REAL",
+    "BLOB",
+    "INTEGER DEFAULT 0",
+    "INTEGER DEFAULT 1",
+    "REAL DEFAULT 0.0",
+    "REAL DEFAULT 1.0",
+    "TEXT DEFAULT ''",
+    "TEXT DEFAULT '[]'",
+    "TEXT DEFAULT '{}'",
+    "TEXT DEFAULT 'none'",
+    "TEXT DEFAULT 'pending'",
+    "TEXT DEFAULT 'learn'",
+    "TEXT DEFAULT 'General'",
+    "TEXT DEFAULT 'docling_v2'",
+    "TEXT DEFAULT 'native_digital'",
+    "TEXT DEFAULT 'hybrid_toc'",
+    "TEXT DEFAULT NULL",
+    "INTEGER NOT NULL DEFAULT 0",
+    "INTEGER NOT NULL DEFAULT 1",
+    "REAL NOT NULL DEFAULT 0.0",
+    "REAL NOT NULL DEFAULT 1.0",
+    "TEXT NOT NULL DEFAULT ''",
+    "TEXT NOT NULL DEFAULT 'text'",
+    "INTEGER DEFAULT (UNIXEPOCH('NOW'))",
+    "REAL DEFAULT (UNIXEPOCH('NOW'))",
+}
+
+
+def add_column_safely(
+    conn: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    column_type: str,
+) -> None:
+    """Safely adds a column to an existing table using strict identifier whitelisting."""
+    if not _SAFE_IDENTIFIER_RE.match(table_name):
+        raise ValueError(f"Invalid table identifier rejected: {table_name}")
+    if not _SAFE_IDENTIFIER_RE.match(column_name):
+        raise ValueError(f"Invalid column identifier rejected: {column_name}")
+
+    normalized_type = " ".join(column_type.strip().split())
+    # Normalize keywords to uppercase while preserving quoted defaults if present
+    # Check normalized type representation against whitelist
+    upper_tokens = []
+    for token in normalized_type.split():
+        if token.startswith("'") or token.startswith('"'):
+            upper_tokens.append(token)
+        else:
+            upper_tokens.append(token.upper())
+    normalized_canonical = " ".join(upper_tokens)
+
+    if normalized_canonical not in _ALLOWED_COLUMN_TYPES:
+        raise ValueError(f"Unauthorized column definition rejected: {column_type}")
+
+    cursor = conn.cursor()
+    cursor.execute(f'PRAGMA table_info("{table_name}")')
+    existing_columns = {row["name"] for row in cursor.fetchall()}
+
+    if column_name not in existing_columns:
+        ddl = f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" {normalized_canonical}'
+        cursor.execute(ddl)
+        logger.info("Migrated table '%s': added column '%s' %s", table_name, column_name, normalized_canonical)
+
+
 def _safe_add_column(conn: sqlite3.Connection, table: str, col_def: str) -> None:
     """Safely adds a column to an existing SQLite table if it does not already exist."""
-    col_name = col_def.split()[0].strip()
+    parts = col_def.strip().split(maxsplit=1)
+    col_name = parts[0].strip()
+    col_type = parts[1].strip() if len(parts) > 1 else "TEXT"
     try:
-        cursor = conn.execute(f"PRAGMA table_info({table})")
-        existing_cols = {row["name"] for row in cursor.fetchall()}
-        if col_name not in existing_cols:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_def}")
-            logger.info("Migrated table '%s': added column '%s'", table, col_name)
-    except sqlite3.OperationalError as exc:
+        add_column_safely(conn, table, col_name, col_type)
+    except (ValueError, sqlite3.OperationalError) as exc:
         logger.warning(
             "Column addition skipped for table '%s', column '%s': %s", table, col_name, exc
         )
@@ -520,6 +589,8 @@ def initialize_database() -> None:
             CREATE INDEX IF NOT EXISTS idx_csv_topic ON csv_questions (topic_name);
             CREATE INDEX IF NOT EXISTS idx_csv_due ON csv_questions (due_timestamp, state);
             CREATE INDEX IF NOT EXISTS idx_task_priority ON task_queue (status, priority, task_id);
+            CREATE INDEX IF NOT EXISTS idx_task_queue_dispatch ON task_queue (status, priority ASC, task_id ASC);
+            CREATE INDEX IF NOT EXISTS idx_task_queue_active_lookup ON task_queue (topic_name, status, task_type);
             CREATE INDEX IF NOT EXISTS idx_task_session ON task_queue (session_id, status);
             CREATE INDEX IF NOT EXISTS idx_task_dedup ON task_queue (task_type, topic_name, status);
             CREATE INDEX IF NOT EXISTS idx_session_questions_sid ON session_questions (session_id);

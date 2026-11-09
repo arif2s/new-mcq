@@ -76,54 +76,116 @@ _RETENTION_MODIFIER = tuple(
 
 
 def map_fsrs_state_to_status(
-    state: int, stability: float = 0.0, reps: int = 0
+    state: int | float | str,
+    stability: int | float | str = 0.0,
+    reps: int | float | str = 0,
 ) -> str:
     """
-    Maps FSRS numeric state and stability to UI status labels (Section 3):
-    'new', 'learning', 'review', or 'mastered'.
+    Deterministically maps FSRS numeric states to UI lifecycle labels:
+    0: 'new', 1: 'learning', 2: 'review' (or 'mastered'), 3: 'relearning'.
     """
-    state_int = int(state or 0)
-    reps_int = int(reps or 0)
-    s_val = float(stability or 0.0)
+    try:
+        state_int = int(state)
+    except (ValueError, TypeError):
+        state_int = 0
 
-    if state_int == 0 or reps_int <= 0:
+    try:
+        reps_int = int(reps)
+    except (ValueError, TypeError):
+        reps_int = 0
+
+    try:
+        s_val = float(stability)
+        if math.isnan(s_val) or math.isinf(s_val):
+            s_val = 0.0
+    except (ValueError, TypeError):
+        s_val = 0.0
+
+    # Strict FSRS State Machine Invariants
+    if state_int == 0:
         return "new"
     if state_int in (1, 3):
         return "learning"
-    if s_val >= 21.0 and reps_int >= 2:
-        return "mastered"
-    return "review"
+    if state_int == 2:
+        if s_val >= 21.0 and reps_int >= 2:
+            return "mastered"
+        return "review"
+
+    return "new" if reps_int <= 0 else "review"
+
+
+from dataclasses import dataclass
+import json
+
+
+@dataclass(frozen=True)
+class FSRSConfig:
+    requested_retention: float
+    max_interval: int
+    easy_bonus: float = 1.3
+    hard_factor: float = 0.8
+
+
+class CachedFSRSConfigProvider:
+    """Thread-safe in-memory cache for spaced repetition parameters."""
+
+    _cached_config: Optional[FSRSConfig] = None
+    _last_fetched: float = 0.0
+    _CACHE_TTL_SECONDS: float = 300.0
+
+    @classmethod
+    def get_parameters(cls) -> FSRSConfig:
+        now = time.time()
+        if cls._cached_config is not None and (now - cls._last_fetched < cls._CACHE_TTL_SECONDS):
+            return cls._cached_config
+
+        from core.database import get_db_connection
+        retention = DEFAULT_REQUESTED_RETENTION
+        max_interval = DEFAULT_MAX_INTERVAL_DAYS
+        easy_bonus = 1.3
+        hard_factor = 0.8
+
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT value FROM user_state WHERE key = 'spaced_repetition_config' LIMIT 1"
+                )
+                row = cursor.fetchone()
+                if row and row["value"]:
+                    raw_val = row["value"]
+                    cfg = json.loads(raw_val) if isinstance(raw_val, str) else raw_val
+                    if isinstance(cfg, dict):
+                        retention = float(cfg.get("requested_retention", retention))
+                        max_interval = int(cfg.get("maximum_interval", cfg.get("max_interval_days", max_interval)))
+                        easy_bonus = float(cfg.get("easy_bonus", easy_bonus))
+                        hard_factor = float(cfg.get("hard_factor", hard_factor))
+        except Exception:
+            pass
+
+        cls._cached_config = FSRSConfig(
+            requested_retention=max(0.50, min(0.99, retention)),
+            max_interval=max(1, min(36500, max_interval)),
+            easy_bonus=easy_bonus,
+            hard_factor=hard_factor,
+        )
+        cls._last_fetched = now
+        return cls._cached_config
+
+    @classmethod
+    def invalidate(cls) -> None:
+        cls._cached_config = None
+        cls._last_fetched = 0.0
 
 
 def get_fsrs_parameters() -> Dict[str, Any]:
-    """Reads user-configured FSRS parameters from SQLite user_state with safe defaults."""
-    from core.database import get_db_connection
-    retention = DEFAULT_REQUESTED_RETENTION
-    max_interval = DEFAULT_MAX_INTERVAL_DAYS
-    easy_bonus = 1.3
-    hard_factor = 0.8
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT value FROM user_state WHERE key = 'spaced_repetition_config'")
-            row = cursor.fetchone()
-            if row and row["value"]:
-                import json
-                cfg = json.loads(row["value"]) if isinstance(row["value"], str) else row["value"]
-                if isinstance(cfg, dict):
-                    retention = float(cfg.get("requested_retention", retention))
-                    max_interval = int(cfg.get("max_interval_days", max_interval))
-                    easy_bonus = float(cfg.get("easy_bonus", easy_bonus))
-                    hard_factor = float(cfg.get("hard_factor", hard_factor))
-    except Exception:
-        pass
-    retention = max(0.70, min(0.99, retention))
-    max_interval = max(1, min(3650, max_interval))
+    """Reads user-configured FSRS parameters from SQLite user_state via thread-safe in-memory cache."""
+    cfg = CachedFSRSConfigProvider.get_parameters()
     return {
-        "requested_retention": retention,
-        "max_interval_days": max_interval,
-        "easy_bonus": easy_bonus,
-        "hard_factor": hard_factor,
+        "requested_retention": cfg.requested_retention,
+        "max_interval_days": cfg.max_interval,
+        "easy_bonus": cfg.easy_bonus,
+        "hard_factor": cfg.hard_factor,
     }
 
 

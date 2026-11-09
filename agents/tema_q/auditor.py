@@ -7,12 +7,24 @@ and balanced token Jaccard deduplication (>= 0.75) for clinical JSON node merges
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import os
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Generator, List, Optional, Set, Tuple
 
-# Enforce Invariant 1: Zero VRAM for backend processes
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+@contextmanager
+def enforce_cpu_context() -> Generator[None, None, None]:
+    """Scoped execution context that masks GPU devices without permanent process pollution."""
+    previous_cuda = os.environ.get("CUDA_VISIBLE_DEVICES")
+    try:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        yield
+    finally:
+        if previous_cuda is not None:
+            os.environ["CUDA_VISIBLE_DEVICES"] = previous_cuda
+        else:
+            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
 
 _VARIANCE_PATTERN = re.compile(
     r"\b(?:versus|vs\.?|contrast|differs?|controversy|disagree|variance|"
@@ -426,10 +438,71 @@ def merge_json_nodes(
     return merged
 
 
+import math as _math
+
+_WORD_PATTERN = re.compile(r"\w+")
+
+
+def _extract_tokens(text: str) -> Set[str]:
+    return set(_WORD_PATTERN.findall(text.lower()))
+
+
+def deduplicate_clinical_nodes(
+    nodes: List[Dict[str, Any]],
+    threshold: float = 0.75
+) -> List[Dict[str, Any]]:
+    """
+    Deduplicates clinical assertions using an inverted token index.
+    Reduces complexity from O(K^2 * L) to average-case O(K * L).
+    """
+    if not nodes:
+        return []
+
+    retained_nodes: List[Dict[str, Any]] = []
+    retained_token_sets: List[Set[str]] = []
+    inverted_index: Dict[str, List[int]] = {}
+
+    for node in nodes:
+        point_text = str(node.get("point", ""))
+        tokens = _extract_tokens(point_text)
+        if not tokens:
+            continue
+
+        token_count = len(tokens)
+        min_overlap_required = int(_math.ceil(threshold * token_count))
+
+        # Identify candidate node indices that share tokens
+        candidate_matches: Dict[int, int] = {}
+        for token in tokens:
+            if token in inverted_index:
+                for candidate_idx in inverted_index[token]:
+                    candidate_matches[candidate_idx] = candidate_matches.get(candidate_idx, 0) + 1
+
+        is_duplicate = False
+        for cand_idx, shared_count in candidate_matches.items():
+            if shared_count >= min_overlap_required:
+                candidate_tokens = retained_token_sets[cand_idx]
+                intersection_size = len(tokens.intersection(candidate_tokens))
+                union_size = token_count + len(candidate_tokens) - intersection_size
+                if union_size > 0 and (intersection_size / union_size) >= threshold:
+                    is_duplicate = True
+                    break
+
+        if not is_duplicate:
+            new_idx = len(retained_nodes)
+            retained_nodes.append(node)
+            retained_token_sets.append(tokens)
+            for token in tokens:
+                inverted_index.setdefault(token, []).append(new_idx)
+
+    return retained_nodes
+
+
 __all__ = [
     "detect_clinical_variances",
     "merge_json_nodes",
     "filter_novel_secondary_sentences",
+    "deduplicate_clinical_nodes",
 ]
 
 
@@ -473,3 +546,57 @@ def deterministic_mcq_sanity_check(mcq: dict[str, _Any]) -> tuple[bool, str]:
     if not answer:
         return False, "MCQ is missing a designated correct_answer."
     return True, "OK"
+
+
+from typing import Callable as _Callable
+
+
+def run_audited_generation_with_retry(
+    generate_fn: _Callable[[Optional[str]], Dict[str, Any]],
+    audit_fn: _Callable[[Dict[str, Any]], str],
+    max_retries: int = 1,
+) -> Dict[str, Any]:
+    """
+    Executes iterative generation with deterministic sanity checks and rubric audits.
+    Guarantees explicit audit verification flags and structured error boundaries.
+    """
+    critique: Optional[str] = None
+    last_candidate: Dict[str, Any] = {}
+
+    for attempt in range(max_retries + 1):
+        try:
+            candidate = generate_fn(critique)
+        except Exception as exc:
+            return {
+                "audit_passed": False,
+                "audit_critique": f"Generation exception raised: {str(exc)}",
+                "error": True,
+            }
+
+        last_candidate = candidate
+        is_sane, sanity_reason = deterministic_mcq_sanity_check(candidate)
+        if not is_sane:
+            critique = sanity_reason
+            candidate["audit_passed"] = False
+            candidate["audit_critique"] = critique
+            continue
+
+        try:
+            raw_audit = audit_fn(candidate)
+            verdict = evaluate_audit_verdict(raw_audit)
+            candidate["audit_passed"] = bool(verdict.overall_pass)
+            candidate["audit_critique"] = verdict.critique
+            candidate["audit_scores"] = verdict.model_dump()
+
+            if verdict.overall_pass:
+                return candidate
+            critique = verdict.critique
+        except Exception as exc:
+            candidate["audit_passed"] = False
+            candidate["audit_critique"] = f"Auditor exception raised: {str(exc)}"
+            return candidate
+
+    last_candidate["audit_passed"] = False
+    if "audit_critique" not in last_candidate:
+        last_candidate["audit_critique"] = "Maximum retries exceeded without satisfying audit criteria."
+    return last_candidate

@@ -812,6 +812,9 @@ def set_spaced_repetition_config(req: SpacedRepetitionConfigRequest) -> Dict[str
         )
         conn.commit()
 
+    from core.scheduler import CachedFSRSConfigProvider
+    CachedFSRSConfigProvider.invalidate()
+
     return {"status": "success", "config": cfg_dict}
 
 

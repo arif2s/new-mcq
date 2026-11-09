@@ -592,22 +592,39 @@ def route_and_prune_subtopics(
     # Build pruned RoutedSubtopicBucket list
     buckets: List[Tuple[float, RoutedSubtopicBucket]] = []
     for m_i, spec in enumerate(schema):
-        src_map = routed[m_i]
+        src_map = routed.get(m_i)
         if not src_map:
+            continue
+
+        # Filter out empty source lists and collect valid score entries
+        score_candidates: List[float] = [
+            score for s_list in src_map.values() if s_list for score, _ in s_list
+        ]
+        if not score_candidates:
             continue
 
         q_anchor = questions[m_i]
         # Boost subtopic priority if the active MCQ question directly asks about this subtopic
-        mcq_boost = 0.25 if (mcq_q and spec.heading_pattern.search(mcq_q)) else 0.0
-        bucket_max_sc = max(sc for s_list in src_map.values() for sc, _ in s_list) + mcq_boost
+        mcq_boost = 0.25 if (mcq_q and spec.heading_pattern and spec.heading_pattern.search(mcq_q)) else 0.0
+        bucket_max_sc = max(score_candidates) + mcq_boost
 
         # Anchor on the earliest source that has content for this subtopic
-        sorted_srcs = sorted(src_map.keys())
+        sorted_srcs = [src_key for src_key in sorted(src_map.keys()) if src_map[src_key]]
+        if not sorted_srcs:
+            continue
         primary_src_idx = sorted_srcs[0]
         primary_blocks = [b for _, b in sorted(src_map[primary_src_idx], key=lambda x: x[0], reverse=True)]
+        if not primary_blocks:
+            continue
+
         primary_sents: List[str] = []
         for pb in primary_blocks:
-            primary_sents.extend(_SENTENCE_SPLIT_RE.split(pb.text))
+            text = getattr(pb, "text", "")
+            if text:
+                primary_sents.extend(s.strip() for s in _SENTENCE_SPLIT_RE.split(text) if s.strip())
+
+        if not primary_sents:
+            continue
 
         pruned_primary = prune_solar_sentences(
             primary_sents,
@@ -623,16 +640,22 @@ def route_and_prune_subtopics(
             display_name=spec.display_name,
             question_anchor=q_anchor,
             primary_text=pruned_primary,
-            primary_source_label=primary_blocks[0].source_label,
-            primary_page=primary_blocks[0].page,
+            primary_source_label=getattr(primary_blocks[0], "source_label", "Unknown"),
+            primary_page=getattr(primary_blocks[0], "page", 1),
         )
 
         # Secondary sources for this exact subtopic (even if originally under a different heading!)
         for sec_src_idx in sorted_srcs[1:]:
             sec_blocks = [b for _, b in sorted(src_map[sec_src_idx], key=lambda x: x[0], reverse=True)]
+            if not sec_blocks:
+                continue
             sec_sents: List[str] = []
             for sb in sec_blocks:
-                sec_sents.extend(_SENTENCE_SPLIT_RE.split(sb.text))
+                text = getattr(sb, "text", "")
+                if text:
+                    sec_sents.extend(s.strip() for s in _SENTENCE_SPLIT_RE.split(text) if s.strip())
+            if not sec_sents:
+                continue
             pruned_sec = prune_solar_sentences(
                 sec_sents,
                 question_anchor=q_anchor,
@@ -643,8 +666,8 @@ def route_and_prune_subtopics(
                 bucket.secondary_entries.append(
                     {
                         "text": pruned_sec,
-                        "source_label": sec_blocks[0].source_label,
-                        "page": sec_blocks[0].page,
+                        "source_label": getattr(sec_blocks[0], "source_label", "Unknown"),
+                        "page": getattr(sec_blocks[0], "page", 1),
                     }
                 )
 
@@ -652,6 +675,64 @@ def route_and_prune_subtopics(
 
     buckets.sort(key=lambda x: x[0], reverse=True)
     return [b for _, b in buckets[:max_subtopics]]
+
+
+def route_subtopic_blocks(
+    spec: Any,
+    src_map: Dict[Any, List[Any]],
+    mcq_q: Optional[str],
+    q_anchor: Optional[str],
+    max_source1_input_words: int,
+) -> Optional[Any]:
+    """Guarded routing engine handling empty source collections and bounded iterations."""
+    if not src_map:
+        return None
+
+    score_candidates: List[float] = [
+        score for s_list in src_map.values() if s_list for score, _ in s_list
+    ]
+    if not score_candidates:
+        return None
+
+    mcq_boost = 0.25 if (mcq_q and getattr(spec, "heading_pattern", None) and spec.heading_pattern.search(mcq_q)) else 0.0
+    bucket_max_sc = max(score_candidates) + mcq_boost
+
+    sorted_srcs = [src_key for src_key in sorted(src_map.keys()) if src_map[src_key]]
+    if not sorted_srcs:
+        return None
+
+    primary_src_idx = sorted_srcs[0]
+    sorted_blocks = sorted(src_map[primary_src_idx], key=lambda x: x[0], reverse=True)
+    if not sorted_blocks:
+        return None
+
+    primary_blocks = [block for _, block in sorted_blocks]
+    primary_sents: List[str] = []
+    for block in primary_blocks:
+        text = getattr(block, "text", "")
+        if text:
+            primary_sents.extend(s.strip() for s in _SENTENCE_SPLIT_RE.split(text) if s.strip())
+
+    if not primary_sents:
+        return None
+
+    pruned_primary = prune_solar_sentences(
+        primary_sents,
+        question_anchor=q_anchor or "",
+        signal_keywords=getattr(spec, "signal_keywords", ()),
+        max_words=max_source1_input_words,
+    )
+    if not pruned_primary:
+        return None
+
+    return RoutedSubtopicBucket(
+        subtopic_id=getattr(spec, "subtopic_id", "general"),
+        display_name=getattr(spec, "display_name", "General"),
+        question_anchor=q_anchor or "",
+        primary_text=pruned_primary,
+        primary_source_label=getattr(primary_blocks[0], "source_label", "Unknown"),
+        primary_page=getattr(primary_blocks[0], "page", 1),
+    )
 
 
 __all__ = [
@@ -662,6 +743,7 @@ __all__ = [
     "sanitize_clinical_prose",
     "prune_solar_sentences",
     "route_and_prune_subtopics",
+    "route_subtopic_blocks",
 ]
 
 
