@@ -1731,6 +1731,12 @@ function handleSelectOption(q, option, isTimeout = false) {
         submitFsrsScore(q, autoRating);
     }
 
+    // Notify Focus Mode Engine of active MCQ answering interaction
+    window.dispatchEvent(new CustomEvent('quiz:answer_submitted', { detail: { questionId: q.id, isCorrect } }));
+    if (window.focusModeEngine && typeof window.focusModeEngine.markActiveInteraction === 'function') {
+        window.focusModeEngine.markActiveInteraction();
+    }
+
     renderQuestion();
 
     if (quizConfig.mode === 'target' && scores.correct >= quizConfig.count) {

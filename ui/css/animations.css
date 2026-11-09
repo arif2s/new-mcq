@@ -79,6 +79,55 @@
   animation: bannerEncouragementGlow 4s infinite ease-in-out;
 }
 
+/* ui/css/animations.css - Big Green Tick, SVG Line Draw & Focus Mode Micro-Interactions */
+@keyframes tickStrokeDraw {
+  0% {
+    stroke-dasharray: 32;
+    stroke-dashoffset: 32;
+    transform: scale(0.7);
+  }
+  70% {
+    stroke-dasharray: 32;
+    stroke-dashoffset: 0;
+    transform: scale(1.15);
+  }
+  100% {
+    stroke-dasharray: 32;
+    stroke-dashoffset: 0;
+    transform: scale(1);
+  }
+}
+
+.tick-svg-animated polyline {
+  stroke-dasharray: 32;
+  stroke-dashoffset: 0;
+  animation: tickStrokeDraw 0.42s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes chartPolylineDraw {
+  from {
+    stroke-dasharray: 1200;
+    stroke-dashoffset: 1200;
+  }
+  to {
+    stroke-dasharray: 1200;
+    stroke-dashoffset: 0;
+  }
+}
+
+.chart-line-draw {
+  animation: chartPolylineDraw 0.85s ease-out forwards;
+}
+
+@keyframes bounceOnce {
+  0%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-4px); }
+}
+
+.animate-bounce-once {
+  animation: bounceOnce 0.5s ease-out 1;
+}
+
 /* --- Phase 7 Reduced-Motion Guard & Composited Transitions --- */
 @media (prefers-reduced-motion: reduce) {
     *,

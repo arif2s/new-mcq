@@ -1,3 +1,4 @@
+import asyncio
 from collections import defaultdict
 from contextlib import closing
 from datetime import datetime, timedelta
@@ -11,7 +12,7 @@ from typing import Any, Dict, List, Optional, Set
 # Enforce Invariant 1: Zero VRAM for backend processes
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from agents.tema_q.topic_extractor import (
@@ -30,6 +31,134 @@ from core.queue_manager import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+
+
+@router.get("/checklist-analytics")
+async def get_checklist_analytics(
+    scope_type: str = Query("all", description="all | subject | topic | keyword"),
+    scope_value: str = Query("", description="Subject name, topic name, or keyword string"),
+    date_str: str = Query("", description="YYYY-MM-DD for today's filter, defaults to local today"),
+):
+    """
+    Returns today's aggregated MCQ stats (attempted, correct, accuracy, time_spent_seconds)
+    plus historical session-by-session data points for rendering the Current vs. Earlier
+    Performance Line Graph when a Daily Checklist item is expanded.
+    """
+    def _query_analytics():
+        now_local = datetime.now()
+        today_prefix = date_str.strip() or now_local.strftime("%Y-%m-%d")
+        start_of_day = datetime(now_local.year, now_local.month, now_local.day).timestamp()
+
+        s_type = (scope_type or "all").strip().lower()
+        s_val = (scope_value or "").strip()
+        like_pattern = f"%{s_val}%"
+
+        with closing(get_db_connection()) as conn:
+            cursor = conn.cursor()
+
+            # Base query joining session_questions with quiz_sessions
+            where_clauses = ["1=1"]
+            params = []
+
+            if s_type == "subject" and s_val:
+                where_clauses.append("(LOWER(qs.subject_name) LIKE LOWER(?) OR LOWER(qs.custom_title) LIKE LOWER(?))")
+                params.extend([like_pattern, like_pattern])
+            elif s_type == "topic" and s_val:
+                where_clauses.append("(LOWER(sq.topic) LIKE LOWER(?) OR LOWER(sq.question_topics_json) LIKE LOWER(?))")
+                params.extend([like_pattern, like_pattern])
+            elif s_type == "keyword" and s_val:
+                where_clauses.append(
+                    "(LOWER(sq.question_text) LIKE LOWER(?) OR LOWER(sq.topic) LIKE LOWER(?) "
+                    "OR LOWER(sq.question_topics_json) LIKE LOWER(?))"
+                )
+                params.extend([like_pattern, like_pattern, like_pattern])
+
+            where_sql = " AND ".join(where_clauses)
+
+            # 1. Fetch per-session historical trend (up to last 30 sessions matching scope)
+            cursor.execute(
+                f"""
+                SELECT
+                    qs.id AS session_id,
+                    qs.subject_name,
+                    qs.custom_title,
+                    qs.date,
+                    qs.timestamp,
+                    COUNT(sq.question_id) AS attempted,
+                    SUM(CASE WHEN sq.is_correct = 1 THEN 1 ELSE 0 END) AS correct,
+                    SUM(COALESCE(sq.time_spent_ms, 0)) / 1000.0 AS time_spent_sec
+                FROM session_questions sq
+                JOIN quiz_sessions qs ON qs.id = sq.session_id
+                WHERE {where_sql} AND sq.selected_option IS NOT NULL AND sq.selected_option != ''
+                GROUP BY qs.id
+                ORDER BY qs.timestamp ASC
+                LIMIT 30
+                """,
+                tuple(params),
+            )
+            session_rows = cursor.fetchall()
+
+            history_series = []
+            today_attempted = 0
+            today_correct = 0
+            today_time_sec = 0.0
+
+            for r in session_rows:
+                att = int(r["attempted"] or 0)
+                corr = int(r["correct"] or 0)
+                t_sec = round(float(r["time_spent_sec"] or 0.0), 1)
+                acc = round((corr / att) * 100.0, 1) if att > 0 else 0.0
+                ts = float(r["timestamp"] or 0.0)
+                # Timestamp might be in ms
+                ts_sec = ts / 1000.0 if ts > 1e11 else ts
+                r_date = str(r["date"] or "")
+
+                is_today = (ts_sec >= start_of_day) or r_date.startswith(today_prefix)
+                if is_today:
+                    today_attempted += att
+                    today_correct += corr
+                    today_time_sec += t_sec
+
+                history_series.append({
+                    "session_id": r["session_id"],
+                    "label": r["custom_title"] or r["subject_name"] or r_date,
+                    "date": r_date,
+                    "timestamp": ts,
+                    "attempted": att,
+                    "correct": corr,
+                    "accuracy": acc,
+                    "time_spent_sec": t_sec,
+                    "is_today": is_today,
+                })
+
+            today_accuracy = (
+                round((today_correct / today_attempted) * 100.0, 1)
+                if today_attempted > 0
+                else 0.0
+            )
+
+            # Calculate earlier baseline average vs today's performance
+            earlier_points = [p for p in history_series if not p["is_today"]]
+            earlier_avg_acc = (
+                round(sum(p["accuracy"] for p in earlier_points) / len(earlier_points), 1)
+                if earlier_points
+                else 0.0
+            )
+
+            return {
+                "scope_type": s_type,
+                "scope_value": s_val,
+                "today": {
+                    "attempted": today_attempted,
+                    "correct": today_correct,
+                    "accuracy": today_accuracy,
+                    "time_spent_sec": round(today_time_sec, 1),
+                },
+                "earlier_baseline_accuracy": earlier_avg_acc,
+                "history_series": history_series,
+            }
+
+    return await asyncio.to_thread(_query_analytics)
 
 
 def _to_synthesis_key(text: str) -> str:

@@ -3,6 +3,254 @@
 // Central Chart & Canvas Lifecycle Registry
 const chartRegistry = new Map();
 
+// Homepage Focus & Daily Checklist Banner with Rotating Messages
+class DashboardStudyBanner {
+  constructor(containerEl, focusEngine, getChecklistSummaryFn) {
+    this.container = containerEl;
+    this.focusEngine = focusEngine || window.focusModeEngine;
+    this.getChecklistSummary = getChecklistSummaryFn;
+    this.customMessages = [
+      "Consistency beats intensity — master one clinical mechanism at a time.",
+      "Review every distractor rationale: knowing why options B, C, and D fail wins board exams.",
+      "High-yield tip: Combine textbook reading in Focus Mode with targeted 20-MCQ sets."
+    ];
+    this.msgIndex = 0;
+    this.rotationTimer = null;
+    this._loadPersistedMessages();
+  }
+
+  async _loadPersistedMessages() {
+    try {
+      const res = await fetch('/api/state/app_persistence');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.customBannerMessages) && data.customBannerMessages.length > 0) {
+          this.customMessages = data.customBannerMessages;
+        }
+      }
+    } catch (_) {}
+  }
+
+  mount() {
+    if (!this.container) return;
+    const summary = this.getChecklistSummary ? this.getChecklistSummary() : { listName: 'Daily Checklist', done: 0, total: 0 };
+    const focusState = this.focusEngine ? {
+      isRunning: this.focusEngine.isRunning,
+      isPausedByTimeout: this.focusEngine.isPausedByTimeout,
+      todayFocusSeconds: this.focusEngine.todayFocusSeconds
+    } : { isRunning: false, isPausedByTimeout: false, todayFocusSeconds: 0 };
+
+    const formatHMS = (sec) => {
+      if (window.FocusModeEngine && typeof window.FocusModeEngine.formatHMS === 'function') {
+        return window.FocusModeEngine.formatHMS(sec);
+      }
+      const s = Math.max(0, Math.floor(sec || 0));
+      return [Math.floor(s/3600), Math.floor((s%3600)/60), s%60].map(v => String(v).padStart(2,'0')).join(':');
+    };
+
+    this.container.innerHTML = `
+      <div class="relative overflow-hidden rounded-2xl border border-slate-700/70 bg-gradient-to-r from-slate-900/90 via-slate-900/80 to-indigo-950/70 p-4 sm:p-5 shadow-xl backdrop-blur-md mb-6">
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <!-- Left: Rotating Message & Wellness Ticker -->
+          <div class="flex items-start gap-3.5 flex-1 min-w-0">
+            <div id="banner-Dynamic-icon" class="w-10 h-10 rounded-xl bg-sky-500/15 border border-sky-400/30 flex items-center justify-center text-xl shrink-0">
+              🎯
+            </div>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2">
+                <span id="banner-checklist-title" class="text-xs font-extrabold uppercase tracking-wider text-sky-400">
+                  ${summary.listName || 'Daily Study Plan'}
+                </span>
+                <span id="banner-checklist-badge" class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 cursor-pointer" title="Jump to Habit Tracker Daily Checklist">
+                  ${summary.done} / ${summary.total} Goals Done
+                </span>
+                <button type="button" id="btn-edit-banner-messages" class="text-[10px] text-slate-400 hover:text-sky-300 ml-1 bg-transparent border-none cursor-pointer" title="Edit Custom Messages">
+                  ✏️ Edit
+                </button>
+              </div>
+              <p id="banner-rotating-text" class="text-sm text-slate-200 font-medium mt-1 transition-all duration-500">
+                ${this.customMessages[0]}
+              </p>
+            </div>
+          </div>
+
+          <!-- Right: Live Focus Mode Control & Today's Telemetry -->
+          <div class="flex flex-wrap items-center gap-3 shrink-0">
+            <div class="px-3.5 py-2 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center gap-2.5">
+              <span id="banner-focus-dot" class="${
+                focusState.isRunning ? 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping' :
+                focusState.isPausedByTimeout ? 'w-2.5 h-2.5 rounded-full bg-amber-400' : 'w-2.5 h-2.5 rounded-full bg-slate-500'
+              }"></span>
+              <div>
+                <div class="text-[10px] uppercase tracking-wider text-slate-400">Focus Timer</div>
+                <div id="banner-focus-timer" class="text-sm font-mono font-bold text-white">${formatHMS(focusState.todayFocusSeconds)}</div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              id="banner-focus-toggle-btn"
+              class="px-4 py-2.5 rounded-xl font-bold text-xs transition-all shadow-lg ${
+                focusState.isRunning
+                  ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                  : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
+              }"
+            >
+              ${focusState.isRunning ? '⏸ Pause Focus' : '▶ Start Focus Mode'}
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    this.container.querySelector('#banner-focus-toggle-btn')?.addEventListener('click', () => {
+      if (this.focusEngine) {
+        this.focusEngine.toggle();
+      } else if (window.focusModeEngine) {
+        window.focusModeEngine.toggle();
+      }
+    });
+
+    this.container.querySelector('#banner-checklist-badge')?.addEventListener('click', () => {
+      const habitNav = document.querySelector('.nav-btn[data-target="habit-tracker-view"]');
+      if (habitNav) habitNav.click();
+    });
+
+    this.container.querySelector('#btn-edit-banner-messages')?.addEventListener('click', () => {
+      this.openMessageEditorModal();
+    });
+
+    this.startMessageRotation();
+  }
+
+  openMessageEditorModal() {
+    let modal = document.getElementById('banner-msg-editor-modal');
+    if (modal) modal.remove();
+
+    modal = document.createElement('div');
+    modal.id = 'banner-msg-editor-modal';
+    modal.className = 'modal-backdrop fade-enter';
+    modal.style.zIndex = '300';
+    modal.innerHTML = `
+      <div class="glass-modal w-full max-w-md p-6 rounded-2xl border border-sky-500/30 text-left shadow-2xl">
+        <div class="flex items-center justify-between pb-3 mb-4 border-b border-gray-700/50">
+          <h3 class="text-base font-bold text-white flex items-center gap-2">
+            <span>✏️</span> Edit Rotating Banner Messages
+          </h3>
+          <button type="button" id="close-msg-modal-btn" class="text-slate-400 hover:text-white bg-transparent border-none text-base cursor-pointer">✕</button>
+        </div>
+        <p class="text-xs text-slate-400 mb-3">Enter one motivational/exam message per line to rotate across your homepage banner:</p>
+        <textarea id="banner-messages-input" class="w-full h-36 glass-input rounded-xl p-3 text-xs font-medium leading-relaxed resize-none focus:outline-none focus:ring-1 focus:ring-sky-400">${this.customMessages.join('\n')}</textarea>
+        <div class="flex items-center justify-end gap-3 mt-4 pt-3 border-t border-gray-700/50">
+          <button type="button" id="cancel-msg-btn" class="secondary-btn px-4 py-2 rounded-xl text-xs cursor-pointer">Cancel</button>
+          <button type="button" id="save-msg-btn" class="primary-btn px-5 py-2 rounded-xl text-xs font-bold cursor-pointer">Save Messages</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const close = () => modal.remove();
+    modal.querySelector('#close-msg-modal-btn').onclick = close;
+    modal.querySelector('#cancel-msg-btn').onclick = close;
+
+    modal.querySelector('#save-msg-btn').onclick = async () => {
+      const lines = modal.querySelector('#banner-messages-input').value
+        .split('\n')
+        .map(s => s.trim())
+        .filter(Boolean);
+      if (lines.length > 0) {
+        this.customMessages = lines;
+        close();
+        if (window.AppState && typeof window.AppState.update === 'function') {
+          await window.AppState.update({ customBannerMessages: lines });
+        }
+      }
+    };
+  }
+
+  updateLiveFocusState(focusState) {
+    if (!this.container) return;
+    const timerEl = this.container.querySelector('#banner-focus-timer');
+    const dotEl = this.container.querySelector('#banner-focus-dot');
+    const btnEl = this.container.querySelector('#banner-focus-toggle-btn');
+
+    const formatHMS = (sec) => {
+      if (window.FocusModeEngine && typeof window.FocusModeEngine.formatHMS === 'function') {
+        return window.FocusModeEngine.formatHMS(sec);
+      }
+      const s = Math.max(0, Math.floor(sec || 0));
+      return [Math.floor(s/3600), Math.floor((s%3600)/60), s%60].map(v => String(v).padStart(2,'0')).join(':');
+    };
+
+    if (timerEl) {
+      timerEl.textContent = formatHMS(focusState.todayFocusSeconds);
+    }
+    if (dotEl) {
+      dotEl.className = focusState.isRunning
+        ? 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping'
+        : focusState.isPausedByTimeout
+        ? 'w-2.5 h-2.5 rounded-full bg-amber-400'
+        : 'w-2.5 h-2.5 rounded-full bg-slate-500';
+    }
+    if (btnEl) {
+      btnEl.textContent = focusState.isRunning ? '⏸ Pause Focus' : '▶ Start Focus Mode';
+      btnEl.className = focusState.isRunning
+        ? 'px-4 py-2.5 rounded-xl font-bold text-xs transition-all shadow-lg bg-amber-500 hover:bg-amber-400 text-slate-950'
+        : 'px-4 py-2.5 rounded-xl font-bold text-xs transition-all shadow-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950';
+    }
+  }
+
+  startMessageRotation() {
+    if (this.rotationTimer) clearInterval(this.rotationTimer);
+    this.rotationTimer = setInterval(() => {
+      const textEl = this.container?.querySelector('#banner-rotating-text');
+      const iconEl = this.container?.querySelector('#banner-Dynamic-icon');
+      if (!textEl || !iconEl) return;
+
+      const pool = [...this.customMessages.map((m) => ({ icon: '🎯', text: m }))];
+
+      // Dynamic item from Daily Checklist if available
+      const summary = this.getChecklistSummary ? this.getChecklistSummary() : null;
+      if (summary && summary.goals && summary.goals.length > 0) {
+        const nextPending = summary.goals.find(g => !g.completed);
+        if (nextPending) {
+          const needed = Math.max(0, Number(nextPending.targetValue) - Number(nextPending.currentValue || 0));
+          pool.push({
+            icon: '📋',
+            text: `Next up in '${summary.listName}': ${needed} more needed on ${nextPending.title} to hit your goal!`
+          });
+        }
+      }
+
+      if (this.focusEngine?.isRunning) {
+        const w = this.focusEngine.getWellnessRecommendation();
+        if (w) {
+          pool.push({ icon: w.icon, text: `${w.title}: ${w.message}` });
+        }
+      }
+      if (this.focusEngine?.isPausedByTimeout) {
+        pool.unshift({
+          icon: '⏸️',
+          text: 'Focus Timer was auto-paused after 10s of inactivity. Click "Start Focus Mode" to resume!'
+        });
+      }
+
+      this.msgIndex = (this.msgIndex + 1) % pool.length;
+      const nextItem = pool[this.msgIndex];
+
+      textEl.classList.add('opacity-0', 'translate-y-1');
+      setTimeout(() => {
+        iconEl.textContent = nextItem.icon;
+        textEl.textContent = nextItem.text;
+        textEl.classList.remove('opacity-0', 'translate-y-1');
+      }, 240);
+    }, 8000);
+  }
+}
+
+window.DashboardStudyBanner = DashboardStudyBanner;
+
 function renderExpertiseChart(canvasId, rawClusters, renderBuilderFn) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return null;
@@ -184,6 +432,7 @@ function simulateRank(config, correct, wrong, actualQuestions) {
 
 let _dueSummaryData = { total_due: 0, session_id: null };
 let _dashboardBanners = [];
+let _dashboardStudyBanner = null;
 let _activeBannerIndex = 0;
 let _bannerAutoCycleTimer = null;
 let _bannerRotationIntervalTimer = null;
@@ -687,6 +936,11 @@ async function initDashboard() {
             <p class="subtitle">Your learning analytics at a glance</p>
         </div>
 
+        <!-- Live Study & Daily Checklist Banner with Rotating Messages -->
+        <div id="dash-study-banner-container" class="mb-6">
+            <!-- Rendered by DashboardStudyBanner -->
+        </div>
+
         <!-- Dynamic Multi-Banner Recommendations & Encouragement Carousel -->
         <div id="dash-banner-carousel-container" class="mb-8">
             <!-- Rendered by renderBannerCarousel() -->
@@ -947,6 +1201,31 @@ async function initDashboard() {
     `;
 
     attachRankEditorListeners();
+
+    // Mount Live Study & Daily Checklist Banner at Homepage Top
+    const studyBannerContainer = document.getElementById('dash-study-banner-container');
+    if (studyBannerContainer) {
+        if (!_dashboardStudyBanner) {
+            _dashboardStudyBanner = new DashboardStudyBanner(
+                studyBannerContainer,
+                window.focusModeEngine,
+                () => {
+                    const dt = (window.AppState ? window.AppState.get() : {})?.dailyTargets || {};
+                    const list = Array.isArray(dt.dailyChecklist) ? dt.dailyChecklist : [];
+                    return {
+                        listName: dt.checklistTitle || dt.dailyChecklistTitle || 'Daily Study Plan',
+                        done: list.filter(g => g.completed).length,
+                        total: list.length,
+                        goals: list
+                    };
+                }
+            );
+        } else {
+            _dashboardStudyBanner.container = studyBannerContainer;
+            _dashboardStudyBanner.focusEngine = window.focusModeEngine;
+        }
+        _dashboardStudyBanner.mount();
+    }
 
     renderBannerCarousel();
     startBannerAutoCycle();
@@ -1427,6 +1706,11 @@ function renderRankEditor() {
 
 // Bind to event lifecycle
 document.addEventListener('stateUpdated', initDashboard);
+window.addEventListener('focusModeUpdated', (e) => {
+    if (_dashboardStudyBanner) {
+        _dashboardStudyBanner.updateLiveFocusState(e.detail);
+    }
+});
 document.addEventListener('DOMContentLoaded', () => {
     initDashboard();
 });

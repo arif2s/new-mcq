@@ -104,6 +104,584 @@ class PrecisionCounterController {
 
 window.PrecisionCounterController = PrecisionCounterController;
 
+// Activity-Aware Focus Mode & Wellness Break Engine
+class FocusModeEngine {
+  static CHECK_IN_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  static AUTO_PAUSE_TIMEOUT_MS = 10 * 1000;    // 10 seconds to respond
+  static APP_ACTIVE_GRACE_MS = 4.5 * 60 * 1000; // If user interacted in-app within 4.5m, skip popup
+
+  static CHECK_IN_PROMPTS = [
+    "Still locked into your hardcopy textbook or notes?",
+    "Quick check-in! Are you still actively reviewing your clinical material?",
+    "5-minute textbook pulse check — still studying strong?",
+    "Reading printed notes? Tap 'Yes' to keep your Focus Timer uninterrupted!",
+    "Clinical mastery in progress! Confirm you're still at your desk:"
+  ];
+
+  static WELLNESS_TIPS = [
+    {
+      minMinutes: 0,
+      maxMinutes: 20,
+      type: "hydration",
+      icon: "💧",
+      title: "Hydration Micro-Check",
+      message: "Take a quick sip of water. Even mild dehydration reduces working memory and MCQ recall speed."
+    },
+    {
+      minMinutes: 20,
+      maxMinutes: 40,
+      type: "eyes",
+      icon: "👁️",
+      title: "20-20-20 Visual Reset",
+      message: "Rest your eyes: look at something 20 feet away for 20 seconds to relieve ciliary muscle strain."
+    },
+    {
+      minMinutes: 40,
+      maxMinutes: 60,
+      type: "music",
+      icon: "🎵",
+      title: "Auditory / Music Breather",
+      message: "You've sustained 40+ mins of focus. A 2-minute lo-fi or instrumental music break can reset attention."
+    },
+    {
+      minMinutes: 60,
+      maxMinutes: 9999,
+      type: "exercise",
+      icon: "🚶",
+      title: "Short Walk & Thoracic Stretch",
+      message: "60+ minutes of deep study! Stand up for a 2-minute walk, neck rolls, or light stretching to boost circulation."
+    }
+  ];
+
+  constructor(onStateChangeCallback) {
+    this.onStateChange = onStateChangeCallback;
+    this.isRunning = false;
+    this.isPausedByTimeout = false;
+    this.sessionContinuousMs = 0;
+    this.todayFocusSeconds = 0;
+    this.lastTickTs = null;
+    this.lastAppInteractionTs = Date.now();
+    this.lastCheckInTs = Date.now();
+
+    this.tickIntervalId = null;
+    this.modalCountdownId = null;
+    this.modalRemainingMs = 0;
+    this.activeModalEl = null;
+
+    this._persistedDateStr = _getHabitLocalDateStr(new Date());
+    this._saveDebounceTimer = null;
+
+    this._bindGlobalActivityListeners();
+    this._loadPersistedTodayFocus();
+  }
+
+  async _loadPersistedTodayFocus() {
+    try {
+      const res = await fetch('/api/state/habit_focus_tracker_v2');
+      if (res.ok) {
+        const data = await res.json();
+        const todayStr = _getHabitLocalDateStr(new Date());
+        if (data && data.date === todayStr && typeof data.todayFocusSeconds === 'number') {
+          this.todayFocusSeconds = data.todayFocusSeconds;
+          this._emitChange();
+        }
+      }
+    } catch (_) {}
+  }
+
+  _persistFocusData() {
+    if (this._saveDebounceTimer) clearTimeout(this._saveDebounceTimer);
+    this._saveDebounceTimer = setTimeout(async () => {
+      const todayStr = _getHabitLocalDateStr(new Date());
+      const payload = {
+        date: todayStr,
+        todayFocusSeconds: Math.floor(this.todayFocusSeconds),
+        updatedAt: Date.now()
+      };
+      try {
+        await fetch('/api/state/habit_focus_tracker_v2', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      } catch (_) {}
+    }, 500);
+  }
+
+  _bindGlobalActivityListeners() {
+    let throttleTs = 0;
+    const markActivity = () => {
+      const now = Date.now();
+      if (now - throttleTs > 1500) {
+        throttleTs = now;
+        this.lastAppInteractionTs = now;
+      }
+    };
+
+    ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach((evt) => {
+      window.addEventListener(evt, markActivity, { passive: true });
+    });
+    // Capture scroll inside nested containers (reader, dossier, quiz)
+    document.addEventListener('scroll', markActivity, { capture: true, passive: true });
+
+    // Custom app events
+    window.addEventListener('quiz:answer_submitted', markActivity, { passive: true });
+    window.addEventListener('reader:scroll', markActivity, { passive: true });
+  }
+
+  markActiveInteraction() {
+    this.lastAppInteractionTs = Date.now();
+  }
+
+  getWellnessRecommendation() {
+    const mins = Math.floor(this.sessionContinuousMs / 60000);
+    return (
+      FocusModeEngine.WELLNESS_TIPS.find((w) => mins >= w.minMinutes && mins < w.maxMinutes) ||
+      FocusModeEngine.WELLNESS_TIPS[0]
+    );
+  }
+
+  startOrResume() {
+    if (this.isRunning) return;
+    const now = Date.now();
+    this.isRunning = true;
+    this.isPausedByTimeout = false;
+    this.lastTickTs = now;
+    this.lastCheckInTs = now;
+    this.lastAppInteractionTs = now;
+
+    if (this.tickIntervalId) clearInterval(this.tickIntervalId);
+    this.tickIntervalId = setInterval(() => this._onTick(), 250);
+    this._emitChange();
+  }
+
+  pause(reason = 'manual') {
+    if (!this.isRunning) return;
+    this._syncElapsedMs();
+    this.isRunning = false;
+    this.isPausedByTimeout = reason === 'timeout';
+    this.lastTickTs = null;
+    if (this.tickIntervalId) {
+      clearInterval(this.tickIntervalId);
+      this.tickIntervalId = null;
+    }
+    if (reason === 'manual') {
+      this.sessionContinuousMs = 0;
+    }
+    this._closeCheckInModal();
+    this._persistFocusData();
+    this._emitChange();
+  }
+
+  toggle() {
+    if (this.isRunning) {
+      this.pause('manual');
+    } else {
+      this.startOrResume();
+    }
+  }
+
+  _syncElapsedMs() {
+    if (!this.isRunning || !this.lastTickTs) return;
+    const now = Date.now();
+    const deltaMs = Math.max(0, now - this.lastTickTs);
+    this.lastTickTs = now;
+    this.sessionContinuousMs += deltaMs;
+    this.todayFocusSeconds += deltaMs / 1000;
+  }
+
+  _onTick() {
+    this._syncElapsedMs();
+    const now = Date.now();
+
+    // Check if 5 minutes have elapsed since last check-in
+    if (!this.activeModalEl && now - this.lastCheckInTs >= FocusModeEngine.CHECK_IN_INTERVAL_MS) {
+      const idleDurationMs = now - this.lastAppInteractionTs;
+
+      // If user was actively answering MCQs or scrolling notes inside the app, do NOT interrupt!
+      if (idleDurationMs < FocusModeEngine.APP_ACTIVE_GRACE_MS) {
+        this.lastCheckInTs = now;
+      } else {
+        // User has not touched the app for ~5 minutes (e.g., reading hardcopy notes) -> Show 10s check-in popup
+        this._openCheckInModal();
+      }
+    }
+    this._emitChange();
+  }
+
+  _playSubtleChime() {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.18); // A5
+      gain.gain.setValueAtTime(0.08, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.45);
+    } catch (_) {
+      // Ignore if browser autoplay policy blocks audio
+    }
+  }
+
+  _openCheckInModal() {
+    if (this.activeModalEl) return;
+    this._playSubtleChime();
+
+    const promptText =
+      FocusModeEngine.CHECK_IN_PROMPTS[
+        Math.floor(Math.random() * FocusModeEngine.CHECK_IN_PROMPTS.length)
+      ];
+    const wellness = this.getWellnessRecommendation();
+    const deadlineTs = Date.now() + FocusModeEngine.AUTO_PAUSE_TIMEOUT_MS;
+
+    const modal = document.createElement('div');
+    modal.id = 'focus-checkin-modal';
+    modal.className =
+      'fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/75 backdrop-blur-md animate-fade-in';
+    modal.innerHTML = `
+      <div class="relative w-full max-w-md p-6 rounded-2xl bg-slate-900/95 border border-emerald-500/40 shadow-2xl text-slate-100 transform transition-all scale-100">
+        <div class="flex items-center justify-between mb-3">
+          <span class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+            5-Minute Focus Check-In
+          </span>
+          <span id="focus-countdown-badge" class="text-sm font-mono font-bold text-amber-400">10.0s</span>
+        </div>
+
+        <h3 class="text-lg font-bold text-white mb-1">${promptText}</h3>
+        <p class="text-xs text-slate-400 mb-4">
+          Timer continues seamlessly when you confirm. Auto-pauses if unconfirmed in 10 seconds.
+        </p>
+
+        <div class="p-3.5 rounded-xl bg-sky-950/40 border border-sky-500/30 mb-5 flex items-start gap-3">
+          <span class="text-2xl leading-none">${wellness.icon}</span>
+          <div>
+            <div class="text-xs font-bold text-sky-300 uppercase tracking-wider">${wellness.title}</div>
+            <p class="text-xs text-slate-300 mt-0.5 leading-relaxed">${wellness.message}</p>
+          </div>
+        </div>
+
+        <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden mb-5">
+          <div id="focus-countdown-bar" class="h-full bg-gradient-to-r from-emerald-400 to-amber-400 transition-all duration-100" style="width: 100%"></div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <button type="button" id="btn-focus-confirm-yes" class="flex-1 py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm shadow-lg shadow-emerald-500/25 transition transform active:scale-95">
+            Yes, Still Studying! (Keep Timer Running)
+          </button>
+          <button type="button" id="btn-focus-pause-now" class="py-2.5 px-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition">
+            Take a Break
+          </button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+    this.activeModalEl = modal;
+
+    const confirmBtn = modal.querySelector('#btn-focus-confirm-yes');
+    const pauseBtn = modal.querySelector('#btn-focus-pause-now');
+    const badgeEl = modal.querySelector('#focus-countdown-badge');
+    const barEl = modal.querySelector('#focus-countdown-bar');
+
+    confirmBtn?.focus();
+
+    confirmBtn?.addEventListener('click', () => {
+      // Seamless continuation: timer never stopped!
+      this.lastCheckInTs = Date.now();
+      this.lastAppInteractionTs = Date.now();
+      this._closeCheckInModal();
+      this._emitChange();
+    });
+
+    pauseBtn?.addEventListener('click', () => {
+      this.pause('manual');
+    });
+
+    this.modalCountdownId = setInterval(() => {
+      const remMs = Math.max(0, deadlineTs - Date.now());
+      const pct = (remMs / FocusModeEngine.AUTO_PAUSE_TIMEOUT_MS) * 100;
+      if (badgeEl) badgeEl.textContent = `${(remMs / 1000).toFixed(1)}s`;
+      if (barEl) barEl.style.width = `${pct}%`;
+
+      if (remMs <= 0) {
+        // Deduct the 10-second unconfirmed wait window and auto-pause
+        this.todayFocusSeconds = Math.max(0, this.todayFocusSeconds - 10);
+        this.pause('timeout');
+      }
+    }, 100);
+  }
+
+  _closeCheckInModal() {
+    if (this.modalCountdownId) {
+      clearInterval(this.modalCountdownId);
+      this.modalCountdownId = null;
+    }
+    if (this.activeModalEl) {
+      this.activeModalEl.remove();
+      this.activeModalEl = null;
+    }
+  }
+
+  static formatHMS(totalSeconds) {
+    const sec = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    return [h, m, s].map((v) => String(v).padStart(2, '0')).join(':');
+  }
+
+  _emitChange() {
+    if (typeof this.onStateChange === 'function') {
+      this.onStateChange({
+        isRunning: this.isRunning,
+        isPausedByTimeout: this.isPausedByTimeout,
+        todayFocusSeconds: Math.floor(this.todayFocusSeconds),
+        sessionContinuousMs: this.sessionContinuousMs,
+        wellness: this.getWellnessRecommendation()
+      });
+    }
+    window.dispatchEvent(new CustomEvent('focusModeUpdated', {
+      detail: {
+        isRunning: this.isRunning,
+        isPausedByTimeout: this.isPausedByTimeout,
+        todayFocusSeconds: Math.floor(this.todayFocusSeconds),
+        sessionContinuousMs: this.sessionContinuousMs,
+        wellness: this.getWellnessRecommendation()
+      }
+    }));
+  }
+}
+
+window.FocusModeEngine = FocusModeEngine;
+if (!window.focusModeEngine) {
+  window.focusModeEngine = new FocusModeEngine();
+}
+
+// Named Daily Checklist Builder, Big Green Tick & Historical SVG Line Graph
+function renderHistoricalPerformanceSvgChart(historySeries = [], targetAccuracy = null) {
+  if (!Array.isArray(historySeries) || historySeries.length === 0) {
+    return `
+      <div class="h-36 flex items-center justify-center rounded-xl bg-slate-950/60 border border-slate-800/80 text-xs text-slate-500">
+        No quiz sessions recorded for this Subject / Topic / Keyword yet. Complete a set to unlock trend comparison!
+      </div>
+    `;
+  }
+
+  const width = 560;
+  const height = 160;
+  const padLeft = 36;
+  const padRight = 20;
+  const padTop = 18;
+  const padBottom = 28;
+  const plotW = width - padLeft - padRight;
+  const plotH = height - padTop - padBottom;
+
+  const points = historySeries.map((item, idx) => {
+    const x =
+      historySeries.length === 1
+        ? padLeft + plotW / 2
+        : padLeft + (idx / (historySeries.length - 1)) * plotW;
+    const acc = Math.max(0, Math.min(100, Number(item.accuracy) || 0));
+    const y = padTop + plotH - (acc / 100) * plotH;
+    return { x: Number(x.toFixed(1)), y: Number(y.toFixed(1)), item };
+  });
+
+  const polylinePoints = points.map((p) => `${p.x},${p.y}`).join(' ');
+  const areaPoints = `${points[0].x},${padTop + plotH} ${polylinePoints} ${points[points.length - 1].x},${padTop + plotH}`;
+
+  const targetY =
+    targetAccuracy && targetAccuracy > 0
+      ? Number((padTop + plotH - (Math.min(100, targetAccuracy) / 100) * plotH).toFixed(1))
+      : null;
+
+  return `
+    <div class="relative rounded-xl bg-slate-950/70 border border-slate-800/90 p-3">
+      <div class="flex items-center justify-between text-[11px] text-slate-400 mb-1">
+        <span class="font-semibold text-slate-300">Performance Trajectory (Earlier Sessions vs. Today)</span>
+        <span class="flex items-center gap-3">
+          <span class="inline-flex items-center gap-1"><i class="w-2 h-2 rounded-full bg-sky-400 inline-block"></i> Earlier</span>
+          <span class="inline-flex items-center gap-1"><i class="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block"></i> Today</span>
+        </span>
+      </div>
+      <svg viewBox="0 0 ${width} ${height}" class="w-full h-36 overflow-visible">
+        <defs>
+          <linearGradient id="goalChartGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#10b981" stop-opacity="0.35"/>
+            <stop offset="100%" stop-color="#0ea5e9" stop-opacity="0.0"/>
+          </linearGradient>
+        </defs>
+
+        <!-- Horizontal Grid Lines (0%, 50%, 100%) -->
+        ${[0, 50, 100].map((pct) => {
+          const gy = (padTop + plotH - (pct / 100) * plotH).toFixed(1);
+          return `
+            <line x1="${padLeft}" y1="${gy}" x2="${width - padRight}" y2="${gy}" stroke="rgba(148,163,184,0.12)" stroke-dasharray="3,3" />
+            <text x="${padLeft - 6}" y="${Number(gy) + 3}" text-anchor="end" fill="#64748b" font-size="9">${pct}%</text>
+          `;
+        }).join('')}
+
+        ${targetY !== null ? `
+          <line x1="${padLeft}" y1="${targetY}" x2="${width - padRight}" y2="${targetY}" stroke="#f59e0b" stroke-width="1.2" stroke-dasharray="4,4" />
+          <text x="${width - padRight}" y="${targetY - 4}" text-anchor="end" fill="#fbbf24" font-size="9">Goal ${targetAccuracy}%</text>
+        ` : ''}
+
+        <!-- Shaded Area & Animated Trend Line -->
+        <polygon points="${areaPoints}" fill="url(#goalChartGrad)" />
+        <polyline
+          fill="none"
+          stroke="#38bdf8"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="chart-line-draw"
+          points="${polylinePoints}"
+        />
+
+        <!-- Data Nodes -->
+        ${points.map((p, idx) => {
+          const isToday = Boolean(p.item.is_today);
+          const color = isToday ? '#10b981' : '#38bdf8';
+          const radius = isToday ? 5 : 3.5;
+          const shortDate = (p.item.date || '').slice(5) || `#${idx + 1}`;
+          return `
+            <g class="group cursor-pointer">
+              <circle cx="${p.x}" cy="${p.y}" r="${radius}" fill="${color}" stroke="#0f172a" stroke-width="1.5" />
+              <text x="${p.x}" y="${height - 6}" text-anchor="middle" fill="#64748b" font-size="8.5">${shortDate}</text>
+              <title>${p.item.label} (${p.item.date}): ${p.item.accuracy}% (${p.item.correct}/${p.item.attempted}) in ${Math.round(p.item.time_spent_sec)}s</title>
+            </g>
+          `;
+        }).join('')}
+      </svg>
+    </div>
+  `;
+}
+
+window.renderHistoricalPerformanceSvgChart = renderHistoricalPerformanceSvgChart;
+
+// Expanded Checklist Goal Card Markup
+function renderDailyChecklistItemCard(goal, analyticsData, isExpanded = false) {
+  const isCompleted = Boolean(goal.completed);
+  const todayStats = analyticsData?.today || { attempted: 0, correct: 0, accuracy: 0, time_spent_sec: 0 };
+  const earlierAvg = analyticsData?.earlier_baseline_accuracy ?? 0;
+  const diffDelta = (todayStats.accuracy - earlierAvg).toFixed(1);
+  const progressPct = Math.min(100, Math.round(((Number(goal.currentValue) || 0) / Math.max(1, Number(goal.targetValue) || 1)) * 100));
+
+  return `
+    <div class="checklist-card rounded-2xl border transition-all duration-300 ${
+      isCompleted
+        ? 'bg-emerald-950/25 border-emerald-500/50 shadow-lg shadow-emerald-500/10'
+        : 'bg-slate-900/70 border-slate-800 hover:border-slate-700'
+    }" data-goal-id="${goal.id}">
+      <div class="p-4 flex items-center justify-between gap-4 cursor-pointer select-none checklist-card-header">
+        <!-- Big Green Tick Checkbox Button -->
+        <button
+          type="button"
+          class="goal-check-toggle relative flex items-center justify-center w-9 h-9 rounded-xl border-2 transition-all duration-300 shrink-0 ${
+            isCompleted
+              ? 'bg-emerald-500 border-emerald-400 shadow-md shadow-emerald-500/30 scale-105'
+              : 'bg-slate-950 border-slate-600 hover:border-emerald-400/60'
+          }"
+          aria-label="Toggle goal completion"
+          data-goal-id="${goal.id}"
+        >
+          <svg class="w-6 h-6 text-slate-950 ${isCompleted ? 'tick-svg-animated opacity-100' : 'opacity-0'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        </button>
+
+        <!-- Goal Title, Scope Pill & Progress Bar -->
+        <div class="flex-1 min-w-0">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="font-bold text-sm ${isCompleted ? 'line-through text-emerald-300' : 'text-slate-100'}">
+              ${goal.title}
+            </span>
+            ${goal.scopeValue ? `
+              <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wide bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                ${goal.scopeType}:${goal.scopeValue}
+              </span>
+            ` : ''}
+            ${isCompleted ? `
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 animate-bounce-once">
+                ✓ Goal Achieved
+              </span>
+            ` : ''}
+          </div>
+
+          <div class="mt-2 flex items-center gap-3">
+            <div class="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
+              <div class="h-full rounded-full transition-all duration-500 ${
+                isCompleted ? 'bg-emerald-400' : 'bg-gradient-to-r from-sky-500 to-violet-500'
+              }" style="width: ${isCompleted ? 100 : progressPct}%"></div>
+            </div>
+            <span class="text-xs font-mono text-slate-300 shrink-0">
+              ${goal.currentValue ?? 0} / ${goal.targetValue}${goal.metricType === 'accuracy_pct' ? '%' : (goal.metricType === 'focus_minutes' ? 'm' : '')}
+            </span>
+          </div>
+        </div>
+
+        <!-- Controls: Delete & Expand Chevron -->
+        <div class="flex items-center gap-2 shrink-0">
+          <button type="button" class="btn-delete-checklist-goal text-slate-400 hover:text-rose-400 p-1 bg-transparent border-none cursor-pointer transition text-xs" data-goal-id="${goal.id}" title="Remove Goal">
+            ✕
+          </button>
+          <div class="text-slate-400 text-xs flex items-center gap-1 cursor-pointer">
+            <span class="hidden sm:inline text-[11px]">${isExpanded ? 'Hide Stats' : 'Analytics'}</span>
+            <svg class="w-4 h-4 transition-transform duration-300 ${isExpanded ? 'rotate-180 text-sky-400' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- Expandable Analytics & Historical Line Graph Drawer -->
+      <div class="checklist-card-drawer overflow-hidden transition-all duration-300 ${
+        isExpanded ? 'max-h-[460px] opacity-100 border-t border-slate-800/80 p-4 pt-3' : 'max-h-0 opacity-0'
+      }">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-3">
+          <div class="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800">
+            <div class="text-[10px] uppercase text-slate-400">MCQs Attempted</div>
+            <div class="text-base font-bold text-white mt-0.5">${todayStats.attempted}</div>
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800">
+            <div class="text-[10px] uppercase text-slate-400">Correct Answers</div>
+            <div class="text-base font-bold text-emerald-400 mt-0.5">${todayStats.correct}</div>
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800">
+            <div class="text-[10px] uppercase text-slate-400">Today vs. Earlier</div>
+            <div class="text-base font-bold text-sky-400 mt-0.5">
+              ${todayStats.accuracy}%
+              <span class="text-[11px] font-normal ${Number(diffDelta) >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
+                (${Number(diffDelta) >= 0 ? '+' : ''}${diffDelta}%)
+              </span>
+            </div>
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800">
+            <div class="text-[10px] uppercase text-slate-400">Time on Topic</div>
+            <div class="text-base font-bold text-amber-300 mt-0.5">
+              ${Math.floor(todayStats.time_spent_sec / 60)}m ${Math.round(todayStats.time_spent_sec % 60)}s
+            </div>
+          </div>
+        </div>
+
+        ${renderHistoricalPerformanceSvgChart(
+          analyticsData?.history_series || [],
+          goal.metricType === 'accuracy_pct' ? goal.targetValue : null
+        )}
+      </div>
+    </div>
+  `;
+}
+
+window.renderDailyChecklistItemCard = renderDailyChecklistItemCard;
+
 function _getHabitLocalDateStr(dateObj = new Date()) {
     const year = dateObj.getFullYear();
     const month = String(dateObj.getMonth() + 1).padStart(2, '0');
@@ -111,7 +689,36 @@ function _getHabitLocalDateStr(dateObj = new Date()) {
     return `${year}-${month}-${day}`;
 }
 
-function initHabits() {
+// In-memory cache for expanded checklist items and analytics
+const _expandedGoalsMap = new Set();
+const _analyticsCache = new Map();
+
+async function fetchGoalAnalytics(scopeType = 'all', scopeValue = '') {
+  const cacheKey = `${scopeType}::${scopeValue}`;
+  if (_analyticsCache.has(cacheKey)) {
+    return _analyticsCache.get(cacheKey);
+  }
+  try {
+    const params = new URLSearchParams({ scope_type: scopeType, scope_value: scopeValue });
+    const res = await fetch(`/api/sessions/checklist-analytics?${params.toString()}`);
+    if (res.ok) {
+      const data = await res.json();
+      _analyticsCache.set(cacheKey, data);
+      return data;
+    }
+  } catch (e) {
+    console.warn("Failed fetching checklist analytics:", e);
+  }
+  return {
+    scope_type: scopeType,
+    scope_value: scopeValue,
+    today: { attempted: 0, correct: 0, accuracy: 0, time_spent_sec: 0 },
+    earlier_baseline_accuracy: 0,
+    history_series: []
+  };
+}
+
+async function initHabits() {
     if (!window.AppState || typeof window.AppState.get !== 'function') return;
     const state = window.AppState.get();
     if (!state) return;
@@ -129,7 +736,21 @@ function initHabits() {
     const totalQuestionsEver = Math.max(Number(state.totalQuestionsEver || 0), sumFromResults);
     const dailyTargets = state.dailyTargets || { questionsTarget: 50, correctTarget: 40, reviewTarget: 20, customGoals: [] };
     const targetQuestions = Math.max(1, Number(dailyTargets.questionsTarget || 50));
-    const customGoals = Array.isArray(dailyTargets.customGoals) ? dailyTargets.customGoals : [];
+
+    // Daily Checklist Support: named plan and goals list
+    const checklistTitle = dailyTargets.checklistTitle || dailyTargets.dailyChecklistTitle || "Daily Study Plan";
+    const rawChecklistGoals = Array.isArray(dailyTargets.dailyChecklist)
+      ? dailyTargets.dailyChecklist
+      : (Array.isArray(dailyTargets.customGoals) ? dailyTargets.customGoals.map(cg => ({
+          id: cg.id || `goal_${Date.now()}_${Math.random()}`,
+          title: cg.name || `${cg.targetType || 'subject'}: ${cg.value || ''}`,
+          metricType: 'mcq_count',
+          targetValue: cg.targetQuestions || 10,
+          currentValue: cg.currentCount || 0,
+          scopeType: cg.targetType || 'all',
+          scopeValue: cg.value || '',
+          completed: Boolean(cg.completed)
+        })) : []);
 
     // 1. Data Aggregation & O(1) Lookups (Local Calendar Dates)
     const habitMap = new Map();
@@ -141,47 +762,87 @@ function initHabits() {
     const todayStr = _getHabitLocalDateStr(today);
     const todayCount = Number(habitMap.get(todayStr)?.questionsAnswered || 0);
 
-    // Calculate progress for custom goals today (Requirement 4)
-    const customGoalsProgress = customGoals.map((cg, idx) => {
-        const cTarget = Math.max(1, Number(cg.targetQuestions || 10));
-        let cCount = 0;
-        const filterVal = (cg.value || '').toLowerCase().trim();
-        const targetType = cg.targetType || 'subject';
-
-        const todayTests = testResults.filter(r => {
-            if (r.date && String(r.date).slice(0, 10) === todayStr) return true;
-            const ts = r.timestamp || r.lastAttempted || r.last_attempted;
-            const tsMs = Number(ts || 0) < 1e11 ? Number(ts || 0) * 1000 : Number(ts || 0);
-            return tsMs && _getHabitLocalDateStr(new Date(tsMs)) === todayStr;
-        });
-
-        todayTests.forEach(r => {
-            const subj = String(r.subjectName || r.subject_name || '').toLowerCase();
-            const customT = String(r.customTitle || r.custom_title || '').toLowerCase();
-            const topicsList = Array.isArray(r.topicList) ? r.topicList.map(t => typeof t === 'string' ? t.toLowerCase() : String(t.name || '').toLowerCase()) : [];
-            const qCount = Number(r.totalQuestions ?? r.total_questions ?? 0);
-
-            if (targetType === 'subject' && subj.includes(filterVal)) {
-                cCount += qCount;
-            } else if (targetType === 'topic' && (customT.includes(filterVal) || topicsList.some(t => t.includes(filterVal)))) {
-                cCount += qCount;
-            } else if (targetType === 'keyword' && (subj.includes(filterVal) || customT.includes(filterVal) || topicsList.some(t => t.includes(filterVal)))) {
-                cCount += qCount;
-            } else if (!targetType && (subj.includes(filterVal) || customT.includes(filterVal))) {
-                cCount += qCount;
-            }
-        });
-
-        const pct = Math.min(100, Math.round((cCount / cTarget) * 100));
-        return {
-            ...cg,
-            index: idx,
-            currentCount: cCount,
-            targetQuestions: cTarget,
-            progressPct: pct,
-            completed: cCount >= cTarget
-        };
+    // Active MCQ Solving Time for Today from testResults / session_questions
+    let todayMcqSeconds = 0;
+    let todayMcqAttempted = 0;
+    let todayMcqCorrect = 0;
+    testResults.forEach(r => {
+      const rDate = r.date ? String(r.date).slice(0, 10) : '';
+      const ts = r.timestamp || r.lastAttempted || r.last_attempted;
+      const tsMs = Number(ts || 0) < 1e11 ? Number(ts || 0) * 1000 : Number(ts || 0);
+      const isToday = rDate === todayStr || (tsMs && _getHabitLocalDateStr(new Date(tsMs)) === todayStr);
+      if (isToday) {
+        todayMcqSeconds += Number(r.timeUsedSeconds ?? r.time_used_seconds ?? 0);
+        todayMcqAttempted += Number(r.totalQuestions ?? r.total_questions ?? 0);
+        todayMcqCorrect += Number(r.correctAnswers ?? r.correct_answers ?? 0);
+      }
     });
+
+    // If habitLog had records, merge
+    const todayHabitRec = habitMap.get(todayStr);
+    if (todayHabitRec) {
+      if (todayHabitRec.timeSpentSeconds && todayHabitRec.timeSpentSeconds > todayMcqSeconds) {
+        todayMcqSeconds = todayHabitRec.timeSpentSeconds;
+      }
+      if (todayHabitRec.questionsAnswered && todayHabitRec.questionsAnswered > todayMcqAttempted) {
+        todayMcqAttempted = todayHabitRec.questionsAnswered;
+      }
+      if (todayHabitRec.correctAnswers && todayHabitRec.correctAnswers > todayMcqCorrect) {
+        todayMcqCorrect = todayHabitRec.correctAnswers;
+      }
+    }
+
+    const todayFocusSec = window.focusModeEngine ? window.focusModeEngine.todayFocusSeconds : 0;
+    const combinedStudySec = Math.floor(todayFocusSec + todayMcqSeconds);
+    const todayAccuracyPct = todayMcqAttempted > 0 ? Math.round((todayMcqCorrect / todayMcqAttempted) * 100) : 0;
+
+    // Evaluate goals against live metrics
+    // Fetch analytics for each goal concurrently
+    const evaluatedGoals = await Promise.all(
+      rawChecklistGoals.map(async (g) => {
+        const goal = { ...g };
+        let curVal = Number(goal.currentValue) || 0;
+        let isDone = Boolean(goal.completed);
+
+        if (goal.metricType === 'focus_minutes') {
+          curVal = Math.floor(todayFocusSec / 60);
+          if (curVal >= Number(goal.targetValue || 0)) isDone = true;
+        } else if (goal.metricType === 'manual') {
+          // Keep manual boolean toggle
+          curVal = isDone ? Number(goal.targetValue || 1) : 0;
+        } else {
+          // MCQ metrics: query analytics for this scope
+          const analytics = await fetchGoalAnalytics(goal.scopeType || 'all', goal.scopeValue || '');
+          const att = analytics?.today?.attempted || 0;
+          const corr = analytics?.today?.correct || 0;
+          const acc = analytics?.today?.accuracy || 0;
+
+          if (goal.metricType === 'mcq_count') {
+            curVal = att;
+            if (curVal >= Number(goal.targetValue || 1)) isDone = true;
+          } else if (goal.metricType === 'correct_count') {
+            curVal = corr;
+            if (curVal >= Number(goal.targetValue || 1)) isDone = true;
+          } else if (goal.metricType === 'accuracy_pct') {
+            curVal = acc;
+            const minAtt = Number(goal.minQuestions || 5);
+            if (att >= minAtt && acc >= Number(goal.targetValue || 0)) isDone = true;
+          }
+        }
+
+        goal.currentValue = curVal;
+        goal.completed = isDone;
+        return goal;
+      })
+    );
+
+    // Save evaluated goals back to state if changed
+    const checklistSummary = {
+      listName: checklistTitle,
+      done: evaluatedGoals.filter(g => g.completed).length,
+      total: evaluatedGoals.length
+    };
+    window._lastChecklistSummary = checklistSummary;
 
     const calendarData = [];
     const iterDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 364);
@@ -262,25 +923,7 @@ function initHabits() {
     const motivation = getMotivation();
     const goalProgress = Math.min((todayCount / targetQuestions) * 100, 100);
 
-    // 3. Intelligent Recommendations
-    const recentSlice = testResults.slice(-5);
-    const recentAccuracy = recentSlice.length > 0
-        ? recentSlice.reduce((a, r) => a + Number(r.accuracy || 0), 0) / recentSlice.length
-        : 0;
-    let recommendationHtml = '';
-    if (wQuestions > 0) {
-        if (recentSlice.length > 0 && recentAccuracy < 50) {
-            recommendationHtml = `<div class="bg-danger-500/10 border border-danger-500/30 rounded-xl p-4 mb-8">
-                <p class="text-sm text-danger-400 flex items-center gap-2 font-medium">💡 Recommendation: Accuracy is dipping. Try switching to 'Learn Mode' and focus on explanations.</p>
-            </div>`;
-        } else if (state.reviewQueue && state.reviewQueue.filter(r => !r.reviewed).length > 20) {
-            recommendationHtml = `<div class="bg-brand-500/10 border border-brand-500/30 rounded-xl p-4 mb-8">
-                <p class="text-sm text-brand-400 flex items-center gap-2 font-medium">💡 Recommendation: You have a large backlog of missed questions. Clear your Review Queue today!</p>
-            </div>`;
-        }
-    }
-
-    // 4. Heatmap Generator (Requirement 8)
+    // 3. Heatmap Generator
     const getIntensity = (count) => {
         if (count === 0) return 'heatmap-cell-0';
         if (count <= 5) return 'heatmap-cell-1';
@@ -300,7 +943,7 @@ function initHabits() {
         return `<div class="flex flex-col gap-1">${cellsHtml}</div>`;
     }).join('');
 
-    // 5. Recent Activity List
+    // 4. Recent Activity List
     const recentActivity = [...habitLog]
         .filter(h => h && h.date)
         .sort((a, b) => String(b.date).localeCompare(String(a.date)))
@@ -320,7 +963,7 @@ function initHabits() {
             </div>
         `).join('');
 
-    // 6. Milestones Array
+    // 5. Milestones Array
     const milestones = [
         { label: 'First Quiz', target: 1, current: testResults.length, icon: '🌱' },
         { label: '10 Quizzes', target: 10, current: testResults.length, icon: '📚' },
@@ -352,7 +995,20 @@ function initHabits() {
         target: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400 mb-2 mx-auto"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>`
     };
 
-    // 7. Render DOM
+    // Build checklist cards HTML
+    const checklistCardsHtml = evaluatedGoals.map(g => {
+      const isExpanded = _expandedGoalsMap.has(g.id);
+      const analytics = _analyticsCache.get(`${g.scopeType || 'all'}::${g.scopeValue || ''}`);
+      return renderDailyChecklistItemCard(g, analytics, isExpanded);
+    }).join('');
+
+    const focusEngine = window.focusModeEngine;
+    const isFocusRunning = focusEngine ? focusEngine.isRunning : false;
+    const focusTimerFormatted = FocusModeEngine.formatHMS(todayFocusSec);
+    const mcqTimeFormatted = FocusModeEngine.formatHMS(todayMcqSeconds);
+    const combinedTimeFormatted = FocusModeEngine.formatHMS(combinedStudySec);
+
+    // 6. Render DOM
     container.innerHTML = `
       <div class="w-full p-6 animate-fade-in">
         <div class="flex items-center justify-between flex-wrap gap-4 mb-8">
@@ -360,9 +1016,66 @@ function initHabits() {
                 <h1 class="text-3xl font-bold mb-2">📅 Habit Tracker</h1>
                 <p class="subtitle">Track your daily learning consistency and build unbreakable momentum.</p>
             </div>
-            <button type="button" id="btn-edit-daily-goal" class="secondary-btn px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer">
-                🎯 Daily Goal: ${targetQuestions} Qs
-            </button>
+            <!-- Dual-Location Focus Control in Habit Tracker -->
+            <div class="flex items-center gap-3">
+              <div class="px-4 py-2 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center gap-3">
+                <span id="habit-focus-dot" class="w-2.5 h-2.5 rounded-full ${isFocusRunning ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}"></span>
+                <div>
+                  <div class="text-[10px] uppercase tracking-wider text-slate-400">Focus Mode</div>
+                  <div id="habit-focus-timer-text" class="text-sm font-mono font-bold text-white">${focusTimerFormatted}</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                id="habit-focus-toggle-btn"
+                class="px-4 py-2 rounded-xl font-bold text-xs shadow-lg transition-all ${
+                  isFocusRunning ? 'bg-amber-500 hover:bg-amber-400 text-slate-950' : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
+                }"
+              >
+                ${isFocusRunning ? '⏸ Pause Focus' : '▶ Start Focus'}
+              </button>
+            </div>
+        </div>
+
+        <!-- Four Unified Daily Telemetry Cards -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <div class="glass-card card-shade-1 p-4 rounded-2xl border border-sky-500/20">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs uppercase tracking-wider text-sky-400 font-bold">Focus Mode Time</span>
+                    <span class="text-lg">⏱️</span>
+                </div>
+                <p id="kpi-focus-time" class="text-2xl font-bold font-mono text-white mt-1">${focusTimerFormatted}</p>
+                <p class="text-[11px] text-slate-400 mt-1">Devoted to textbook & deep reading</p>
+            </div>
+            <div class="glass-card card-shade-1 p-4 rounded-2xl border border-violet-500/20">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs uppercase tracking-wider text-violet-400 font-bold">MCQ Solving Time</span>
+                    <span class="text-lg">🎯</span>
+                </div>
+                <p id="kpi-mcq-time" class="text-2xl font-bold font-mono text-white mt-1">${mcqTimeFormatted}</p>
+                <p class="text-[11px] text-slate-400 mt-1">Aggregated question solving time</p>
+            </div>
+            <div class="glass-card card-shade-1 p-4 rounded-2xl border border-emerald-500/20">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs uppercase tracking-wider text-emerald-400 font-bold">Combined Study Time</span>
+                    <span class="text-lg">⚡</span>
+                </div>
+                <p id="kpi-combined-time" class="text-2xl font-bold font-mono text-emerald-300 mt-1">${combinedTimeFormatted}</p>
+                <p class="text-[11px] text-slate-400 mt-1">Total focus + active question blocks</p>
+            </div>
+            <div class="glass-card card-shade-1 p-4 rounded-2xl border border-amber-500/20">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs uppercase tracking-wider text-amber-400 font-bold">MCQs Completed</span>
+                    <span class="text-lg">📝</span>
+                </div>
+                <div class="flex items-baseline gap-2 mt-1">
+                    <span id="kpi-mcqs-done" class="text-2xl font-bold font-mono text-white">${todayMcqAttempted}</span>
+                    <span class="text-xs px-2 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        ${todayAccuracyPct}% Acc
+                    </span>
+                </div>
+                <p class="text-[11px] text-slate-400 mt-1">${todayMcqCorrect} correct answers recorded today</p>
+            </div>
         </div>
 
         <!-- Motivation Banner -->
@@ -389,62 +1102,42 @@ function initHabits() {
             </div>
         </div>
 
-        <!-- Custom Daily Goals Section (Requirement 4) -->
+        <!-- NAMED DAILY CHECKLIST SECTION -->
         <div class="glass-card card-shade-2 p-6 mb-8">
-            <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
-                <div class="flex items-center gap-2">
-                    <h3 class="text-lg font-semibold opacity-90 flex items-center gap-2">
-                        🎯 Daily Custom Goals
-                    </h3>
-                    <span class="text-xs px-2 py-0.5 rounded-full bg-brand-500/20 text-brand-300 border border-brand-500/30">
-                        ${customGoalsProgress.length} Active
-                    </span>
+            <div class="flex items-center justify-between flex-wrap gap-3 mb-5 border-b border-gray-700/50 pb-4">
+                <div class="flex items-center gap-3 flex-1 min-w-[240px]">
+                    <span class="text-2xl">📋</span>
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2">
+                            <input
+                              type="text"
+                              id="input-checklist-title"
+                              value="${escapeHTML(checklistTitle)}"
+                              class="text-lg font-bold bg-transparent border-b border-dashed border-sky-400/50 text-white focus:border-sky-400 outline-none px-1 py-0.5 rounded transition"
+                              title="Click to rename today's checklist"
+                            />
+                            <span class="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold">
+                                ${checklistSummary.done} / ${checklistSummary.total} Completed
+                            </span>
+                        </div>
+                        <p class="text-xs text-slate-400 mt-1">Rule-based MCQ & focus goals evaluated in real-time. Click any card to expand analytics.</p>
+                    </div>
                 </div>
-                <button type="button" id="btn-add-custom-goal" class="secondary-btn px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer flex items-center gap-1.5">
-                    ➕ Add Custom Goal
+                <button type="button" id="btn-add-checklist-goal" class="primary-btn px-4 py-2 rounded-xl text-xs font-bold shadow-lg flex items-center gap-2 cursor-pointer">
+                    <span>➕</span> Add Goal to Checklist
                 </button>
             </div>
 
-            ${customGoalsProgress.length === 0 ? `
-                <div class="text-center py-6 glass-panel rounded-xl border border-gray-700/50 text-muted text-xs">
-                    No custom goals added for today. Click <strong>+ Add Custom Goal</strong> to focus questions on a specific Subject, CSV Topic, or Keyword!
+            ${evaluatedGoals.length === 0 ? `
+                <div class="text-center py-8 glass-panel rounded-xl border border-gray-700/50 text-muted text-xs">
+                    No goals added to today's checklist yet. Click <strong>+ Add Goal to Checklist</strong> to set target MCQs, accuracy, or focus reading minutes!
                 </div>
             ` : `
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    ${customGoalsProgress.map(cg => `
-                        <div class="glass-panel p-4 rounded-xl border ${cg.completed ? 'border-success-500/40 bg-success-500/5' : 'border-gray-700/50'} flex flex-col justify-between relative group">
-                            <div>
-                                <div class="flex items-center justify-between mb-2">
-                                    <span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${cg.completed ? 'bg-success-500/20 text-success-300 border border-success-500/30' : 'bg-brand-500/20 text-brand-300 border border-brand-500/30'}">
-                                        ${escapeHTML(cg.targetType)}
-                                    </span>
-                                    <button type="button" class="btn-delete-custom-goal text-muted hover:text-danger-400 opacity-60 group-hover:opacity-100 transition-opacity text-xs bg-transparent border-none cursor-pointer p-1" data-index="${cg.index}" title="Remove Goal">
-                                        ✕
-                                    </button>
-                                </div>
-                                <h4 class="text-sm font-bold truncate mb-1" title="${escapeHTML(cg.name || cg.value)}">
-                                    ${escapeHTML(cg.name || cg.value)}
-                                </h4>
-                                <p class="text-xs text-muted mb-3">
-                                    Filter: <code class="font-mono text-[11px] text-brand-300">${escapeHTML(cg.value)}</code>
-                                </p>
-                            </div>
-                            <div>
-                                <div class="flex justify-between items-center mb-1 text-[11px]">
-                                    <span class="text-muted font-medium">${cg.currentCount}/${cg.targetQuestions} Qs</span>
-                                    <span class="${cg.completed ? 'text-success-400 font-bold' : 'text-muted'}">${cg.progressPct}%</span>
-                                </div>
-                                <div class="w-full glass-panel rounded-full h-1.5 shadow-inner border border-gray-700/50 overflow-hidden">
-                                    <div class="h-1.5 rounded-full ${cg.completed ? 'bg-success-500' : 'bg-brand-500'}" style="width: ${cg.progressPct}%"></div>
-                                </div>
-                            </div>
-                        </div>
-                    `).join('')}
+                <div class="space-y-3" id="checklist-items-container">
+                    ${checklistCardsHtml}
                 </div>
             `}
         </div>
-
-        ${recommendationHtml}
 
         <!-- Stats Grid -->
         <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-8">
@@ -533,78 +1226,266 @@ function initHabits() {
       </div>
     `;
 
-    document.getElementById('btn-edit-daily-goal')?.addEventListener('click', () => {
-        const input = prompt("Enter your general daily questions goal:", String(targetQuestions));
-        if (input !== null) {
-            const parsed = parseInt(input.trim(), 10);
-            if (!isNaN(parsed) && parsed > 0) {
-                window.AppState.update({
-                    dailyTargets: {
-                        ...dailyTargets,
-                        questionsTarget: parsed
-                    }
-                });
-            }
-        }
+    // Habit Focus Button Toggle
+    document.getElementById('habit-focus-toggle-btn')?.addEventListener('click', () => {
+      window.focusModeEngine?.toggle();
     });
 
-    // Custom Goal Handlers (Requirement 4)
-    document.getElementById('btn-add-custom-goal')?.addEventListener('click', () => {
-        const typeChoice = prompt(
-            "Select goal target type:\n1 = Subject\n2 = CSV Topic\n3 = Custom Keyword\n\nEnter 1, 2, or 3:",
-            "1"
-        );
-        if (!typeChoice) return;
-
-        let targetType = 'subject';
-        if (typeChoice.trim() === '2') targetType = 'topic';
-        else if (typeChoice.trim() === '3') targetType = 'keyword';
-
-        const filterVal = prompt(`Enter ${targetType} name or keyword (e.g., Cardiology, Pharmacology, ECG):`);
-        if (!filterVal || !filterVal.trim()) return;
-
-        const countStr = prompt(`Enter number of questions to attempt for "${filterVal.trim()}":`, "20");
-        const parsedCount = parseInt(countStr ? countStr.trim() : "20", 10);
-        if (isNaN(parsedCount) || parsedCount <= 0) return;
-
-        const newGoal = {
-            id: `cg_${Date.now()}`,
-            name: `${filterVal.trim()} (${parsedCount} Qs)`,
-            targetType,
-            value: filterVal.trim(),
-            targetQuestions: parsedCount
-        };
-
-        const updatedCustomGoals = [...customGoals, newGoal];
+    // Rename Checklist Title Inline
+    const titleInput = document.getElementById('input-checklist-title');
+    if (titleInput) {
+      titleInput.addEventListener('change', (e) => {
+        const val = e.target.value.trim() || 'Daily Study Plan';
         window.AppState.update({
-            dailyTargets: {
-                ...dailyTargets,
-                customGoals: updatedCustomGoals
-            }
+          dailyTargets: {
+            ...dailyTargets,
+            checklistTitle: val,
+            dailyChecklistTitle: val
+          }
         });
+      });
+    }
+
+    // Toggle Goal Completion (Big Green Tick button click)
+    container.querySelectorAll('.goal-check-toggle').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const goalId = btn.getAttribute('data-goal-id');
+        const updatedList = evaluatedGoals.map(g => {
+          if (g.id === goalId) {
+            return { ...g, completed: !g.completed };
+          }
+          return g;
+        });
+        window.AppState.update({
+          dailyTargets: {
+            ...dailyTargets,
+            dailyChecklist: updatedList
+          }
+        });
+      });
     });
 
-    document.querySelectorAll('.btn-delete-custom-goal').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const idx = parseInt(btn.getAttribute('data-index'), 10);
-            if (!isNaN(idx) && idx >= 0 && idx < customGoals.length) {
-                const updatedCustomGoals = customGoals.filter((_, i) => i !== idx);
-                window.AppState.update({
-                    dailyTargets: {
-                        ...dailyTargets,
-                        customGoals: updatedCustomGoals
-                    }
-                });
-            }
+    // Delete Checklist Goal
+    container.querySelectorAll('.btn-delete-checklist-goal').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const goalId = btn.getAttribute('data-goal-id');
+        const updatedList = evaluatedGoals.filter(g => g.id !== goalId);
+        window.AppState.update({
+          dailyTargets: {
+            ...dailyTargets,
+            dailyChecklist: updatedList
+          }
         });
+      });
     });
+
+    // Click to Expand Analytics Drawer
+    container.querySelectorAll('.checklist-card').forEach(card => {
+      const header = card.querySelector('.checklist-card-header');
+      header?.addEventListener('click', (e) => {
+        if (e.target.closest('.goal-check-toggle') || e.target.closest('.btn-delete-checklist-goal')) {
+          return;
+        }
+        const goalId = card.getAttribute('data-goal-id');
+        if (_expandedGoalsMap.has(goalId)) {
+          _expandedGoalsMap.delete(goalId);
+        } else {
+          _expandedGoalsMap.add(goalId);
+        }
+        initHabits();
+      });
+    });
+
+    // Add Goal Modal Trigger
+    document.getElementById('btn-add-checklist-goal')?.addEventListener('click', () => {
+      openChecklistGoalBuilderModal(dailyTargets, evaluatedGoals);
+    });
+}
+
+function openChecklistGoalBuilderModal(dailyTargets, currentGoals) {
+  let modal = document.getElementById('goal-builder-modal');
+  if (modal) modal.remove();
+
+  modal = document.createElement('div');
+  modal.id = 'goal-builder-modal';
+  modal.className = 'modal-backdrop fade-enter';
+  modal.style.zIndex = '250';
+  modal.innerHTML = `
+    <div class="glass-modal w-full max-w-lg text-left p-6 rounded-2xl border border-sky-500/30 shadow-2xl">
+      <div class="flex items-center justify-between pb-3 mb-4 border-b border-gray-700/50">
+        <h3 class="text-lg font-bold text-white flex items-center gap-2">
+          <span>🎯</span> Create Goal for Daily Checklist
+        </h3>
+        <button type="button" id="btn-close-goal-builder" class="text-slate-400 hover:text-white bg-transparent border-none text-base cursor-pointer">✕</button>
+      </div>
+
+      <div class="space-y-4 text-xs">
+        <div>
+          <label class="block text-slate-300 font-semibold mb-1">Goal Metric Type:</label>
+          <select id="gb-metric-type" class="w-full glass-select rounded-xl px-3 py-2 text-xs">
+            <option value="mcq_count">Attempt N Questions (MCQ Count)</option>
+            <option value="correct_count">Get N MCQs Correct</option>
+            <option value="accuracy_pct">Achieve Accuracy >= X% (with min 5 questions)</option>
+            <option value="focus_minutes">Focus / Study Mode Minutes</option>
+            <option value="manual">Custom Manual Checkbox Task</option>
+          </select>
+        </div>
+
+        <div id="gb-scope-container">
+          <label class="block text-slate-300 font-semibold mb-1">Target Filter Scope:</label>
+          <div class="grid grid-cols-4 gap-2 mb-2">
+            <button type="button" class="gb-scope-btn active py-1.5 px-2 rounded-lg border text-center font-bold text-[11px] bg-sky-500/20 text-sky-300 border-sky-500/40" data-scope="all">All</button>
+            <button type="button" class="gb-scope-btn py-1.5 px-2 rounded-lg border text-center font-bold text-[11px] glass-panel border-gray-700 text-slate-300" data-scope="subject">Subject</button>
+            <button type="button" class="gb-scope-btn py-1.5 px-2 rounded-lg border text-center font-bold text-[11px] glass-panel border-gray-700 text-slate-300" data-scope="topic">CSV Topic</button>
+            <button type="button" class="gb-scope-btn py-1.5 px-2 rounded-lg border text-center font-bold text-[11px] glass-panel border-gray-700 text-slate-300" data-scope="keyword">Keyword</button>
+          </div>
+          <input type="text" id="gb-scope-val" placeholder="Subject / topic / keyword (e.g. Pathology, Amyloidosis, Heart)..." class="w-full glass-input rounded-xl px-3 py-2 text-xs hidden" />
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label id="gb-target-label" class="block text-slate-300 font-semibold mb-1">Target Number:</label>
+            <input type="number" id="gb-target-val" value="20" min="1" class="w-full glass-input rounded-xl px-3 py-2 text-xs font-mono" />
+          </div>
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">Custom Title (Optional):</label>
+            <input type="text" id="gb-title" placeholder="e.g. Anatomy Arm 20 Qs" class="w-full glass-input rounded-xl px-3 py-2 text-xs" />
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end gap-3 mt-6 pt-3 border-t border-gray-700/50">
+        <button type="button" id="btn-cancel-goal-builder" class="secondary-btn px-4 py-2 rounded-xl text-xs font-medium cursor-pointer">Cancel</button>
+        <button type="button" id="btn-save-goal-builder" class="primary-btn px-5 py-2 rounded-xl text-xs font-bold cursor-pointer">Add to Checklist</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  let selectedScope = 'all';
+  const metricSelect = modal.querySelector('#gb-metric-type');
+  const scopeContainer = modal.querySelector('#gb-scope-container');
+  const scopeValInput = modal.querySelector('#gb-scope-val');
+  const targetLabel = modal.querySelector('#gb-target-label');
+  const targetValInput = modal.querySelector('#gb-target-val');
+
+  metricSelect.addEventListener('change', () => {
+    const val = metricSelect.value;
+    if (val === 'focus_minutes') {
+      scopeContainer.classList.add('hidden');
+      targetLabel.textContent = 'Minutes to Study:';
+      targetValInput.value = '30';
+    } else if (val === 'manual') {
+      scopeContainer.classList.add('hidden');
+      targetLabel.textContent = 'Checkmark Target:';
+      targetValInput.value = '1';
+    } else {
+      scopeContainer.classList.remove('hidden');
+      if (val === 'accuracy_pct') {
+        targetLabel.textContent = 'Target Accuracy %:';
+        targetValInput.value = '65';
+      } else {
+        targetLabel.textContent = 'Target Questions:';
+        targetValInput.value = '20';
+      }
+    }
+  });
+
+  modal.querySelectorAll('.gb-scope-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      modal.querySelectorAll('.gb-scope-btn').forEach(x => {
+        x.className = 'gb-scope-btn py-1.5 px-2 rounded-lg border text-center font-bold text-[11px] glass-panel border-gray-700 text-slate-300';
+      });
+      b.className = 'gb-scope-btn active py-1.5 px-2 rounded-lg border text-center font-bold text-[11px] bg-sky-500/20 text-sky-300 border-sky-500/40';
+      selectedScope = b.getAttribute('data-scope');
+      if (selectedScope === 'all') {
+        scopeValInput.classList.add('hidden');
+      } else {
+        scopeValInput.classList.remove('hidden');
+        scopeValInput.placeholder = `Enter ${selectedScope} name or filter pattern...`;
+        scopeValInput.focus();
+      }
+    });
+  });
+
+  const closeModal = () => modal.remove();
+  modal.querySelector('#btn-close-goal-builder').addEventListener('click', closeModal);
+  modal.querySelector('#btn-cancel-goal-builder').addEventListener('click', closeModal);
+
+  modal.querySelector('#btn-save-goal-builder').addEventListener('click', () => {
+    const mType = metricSelect.value;
+    const tVal = Number(targetValInput.value) || 1;
+    const sVal = (selectedScope === 'all' || mType === 'focus_minutes' || mType === 'manual') ? '' : scopeValInput.value.trim();
+    const customTitle = modal.querySelector('#gb-title').value.trim();
+
+    let defTitle = '';
+    if (mType === 'focus_minutes') {
+      defTitle = `Focus Mode: ${tVal} Minutes`;
+    } else if (mType === 'accuracy_pct') {
+      defTitle = `Accuracy >= ${tVal}%${sVal ? ` (${selectedScope}: ${sVal})` : ''}`;
+    } else if (mType === 'correct_count') {
+      defTitle = `Get ${tVal} Correct${sVal ? ` (${selectedScope}: ${sVal})` : ''}`;
+    } else if (mType === 'manual') {
+      defTitle = customTitle || 'Complete reading assignment';
+    } else {
+      defTitle = `Attempt ${tVal} MCQs${sVal ? ` (${selectedScope}: ${sVal})` : ''}`;
+    }
+
+    const newGoal = {
+      id: `goal_${Date.now()}`,
+      title: customTitle || defTitle,
+      metricType: mType,
+      targetValue: tVal,
+      currentValue: 0,
+      scopeType: selectedScope,
+      scopeValue: sVal,
+      minQuestions: 5,
+      completed: false
+    };
+
+    closeModal();
+    const updatedGoals = [...currentGoals, newGoal];
+    window.AppState.update({
+      dailyTargets: {
+        ...dailyTargets,
+        dailyChecklist: updatedGoals
+      }
+    });
+  });
 }
 
 window.initHabits = initHabits;
 
 // Bind to event lifecycle
 document.addEventListener('stateUpdated', initHabits);
+window.addEventListener('focusModeUpdated', (e) => {
+  const dot = document.getElementById('habit-focus-dot');
+  const timer = document.getElementById('habit-focus-timer-text');
+  const btn = document.getElementById('habit-focus-toggle-btn');
+  const kpiFocus = document.getElementById('kpi-focus-time');
+  const kpiCombined = document.getElementById('kpi-combined-time');
+
+  if (timer) timer.textContent = FocusModeEngine.formatHMS(e.detail.todayFocusSeconds);
+  if (kpiFocus) kpiFocus.textContent = FocusModeEngine.formatHMS(e.detail.todayFocusSeconds);
+
+  if (dot) {
+    dot.className = e.detail.isRunning
+      ? 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping'
+      : e.detail.isPausedByTimeout
+      ? 'w-2.5 h-2.5 rounded-full bg-amber-400'
+      : 'w-2.5 h-2.5 rounded-full bg-slate-500';
+  }
+  if (btn) {
+    btn.textContent = e.detail.isRunning ? '⏸ Pause Focus' : '▶ Start Focus';
+    btn.className = e.detail.isRunning
+      ? 'px-4 py-2 rounded-xl font-bold text-xs shadow-lg transition-all bg-amber-500 hover:bg-amber-400 text-slate-950'
+      : 'px-4 py-2 rounded-xl font-bold text-xs shadow-lg transition-all bg-emerald-500 hover:bg-emerald-400 text-slate-950';
+  }
+});
+
 document.addEventListener('DOMContentLoaded', () => {
     const navBtns = document.querySelectorAll('.nav-btn');
     navBtns.forEach(btn => {
