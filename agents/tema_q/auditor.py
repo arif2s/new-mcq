@@ -92,6 +92,8 @@ def filter_novel_secondary_sentences(
     secondary_text: str,
     base_points: List[Dict[str, Any]],
     max_words: int = 400,
+    telemetry: Optional[Any] = None,
+    source_label: str = "",
 ) -> str:
     """
     CPU pre-filter for Tema_Q Pass 2: strips sentences from secondary_text that are
@@ -122,15 +124,30 @@ def filter_novel_secondary_sentences(
         s_nums = {val.lower() for val, _ in _NUMERIC_DOSAGE_PATTERN.findall(s_clean)}
         has_new_numbers = bool(s_nums - base_nums) or bool(_VARIANCE_PATTERN.search(s_clean))
 
-        is_covered = any(
-            _calculate_token_jaccard(s_norm, bn) >= 0.72 or _token_containment(s_norm, bn) >= 0.80
-            for bn in base_norms
-        )
+        max_jaccard = max((_calculate_token_jaccard(s_norm, bn) for bn in base_norms), default=0.0)
+        max_containment = max((_token_containment(s_norm, bn) for bn in base_norms), default=0.0)
+        is_covered = max_jaccard >= 0.72 or max_containment >= 0.80
+
         if is_covered and not has_new_numbers:
+            if telemetry is not None and hasattr(telemetry, "pass2_pre_filtered_sentences"):
+                telemetry.pass2_pre_filtered_sentences.append({
+                    "sentence": s_clean,
+                    "reason": "duplicate_or_subsumed",
+                    "source_label": source_label,
+                    "jaccard_score": round(max_jaccard, 3),
+                    "containment_score": round(max_containment, 3),
+                })
             continue
 
         w_cnt = len(s_clean.split())
         if used_words + w_cnt > max_words and novel_sents:
+            if telemetry is not None and hasattr(telemetry, "pass2_pre_filtered_sentences"):
+                telemetry.pass2_pre_filtered_sentences.append({
+                    "sentence": s_clean,
+                    "reason": "budget_exceeded",
+                    "source_label": source_label,
+                    "word_count": w_cnt,
+                })
             break
         novel_sents.append(s_clean)
         used_words += w_cnt

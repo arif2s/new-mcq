@@ -191,9 +191,16 @@ def truncate_to_token_limit(text: str, max_tokens: int) -> str:
 
 
 async def call_llm_async(
-    system_prompt: str, user_prompt: str, max_tokens: int = 500
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int = 500,
+    model_id: Optional[str] = None,
+    telemetry_meta: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Async chat completion against local LM Studio server with hard 4096-token budget (Invariant 4)."""
+    import time
+    t0 = time.perf_counter()
+    active_model = str(model_id or DEFAULT_MODEL).strip() or DEFAULT_MODEL
     safe_max_out = max(16, min(int(max_tokens or 500), 1500))
     sys_str = str(system_prompt or "").strip()
     sys_tokens = count_tokens(sys_str)
@@ -201,10 +208,11 @@ async def call_llm_async(
     # Enforce Invariant 4: Total prompt + completion tokens must never exceed MAX_CONTEXT_TOKENS (4096)
     available_user_tokens = max(128, MAX_CONTEXT_TOKENS - sys_tokens - safe_max_out - 64)
     bounded_user_prompt = truncate_to_token_limit(str(user_prompt or ""), available_user_tokens)
+    user_tokens = count_tokens(bounded_user_prompt)
 
     url = f"{LM_STUDIO_URL}/chat/completions"
     payload = {
-        "model": DEFAULT_MODEL,
+        "model": active_model,
         "messages": [
             {"role": "system", "content": sys_str},
             {"role": "user", "content": bounded_user_prompt},
@@ -219,7 +227,21 @@ async def call_llm_async(
     response.raise_for_status()
     data = response.json()
     raw_content = data["choices"][0]["message"]["content"]
-    return _strip_reasoning_tags(raw_content)
+    cleaned = _strip_reasoning_tags(raw_content)
+    elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+    out_tokens = count_tokens(cleaned)
+
+    if isinstance(telemetry_meta, dict):
+        telemetry_meta.update({
+            "model_id": active_model,
+            "prompt_tokens": sys_tokens + user_tokens,
+            "completion_tokens": out_tokens,
+            "latency_ms": elapsed_ms,
+            "tokens_per_sec": round(out_tokens / max(0.001, elapsed_ms / 1000.0), 2),
+            "raw_unstripped_content": raw_content,
+            "bounded_user_prompt": bounded_user_prompt,
+        })
+    return cleaned
 
 
 async def call_vlm_page_images_async(
@@ -523,11 +545,15 @@ async def resolve_documents(
             continue
         seen_pdf_pages.add(dedup_key)
 
-        content = (
-            await asyncio.to_thread(_extract_pdf_sync, pdf_path, start_page)
-            if pdf_path
-            else ""
-        )
+        content = ""
+        if pdf_path:
+            pages_to_extract = list(range(start_page, min(end_page, start_page + 2) + 1)) if end_page > start_page else [start_page]
+            page_texts = []
+            for p_num in pages_to_extract:
+                p_text = await asyncio.to_thread(_extract_pdf_sync, pdf_path, p_num)
+                if p_text:
+                    page_texts.append(p_text)
+            content = "\n\n".join(page_texts)
 
         page_images: List[Tuple[int, str]] = []
         if pdf_path:
@@ -693,6 +719,9 @@ async def run_tema_q_synthesis(
     search_results: dict,
     mcq_context: Optional[dict] = None,
     skip_lm: bool = False,
+    model_id: Optional[str] = None,
+    heading_wise: bool = True,
+    collect_telemetry: bool = False,
 ) -> dict:
     """Executes multi-pass clinical synthesis and variance auditing across resolved sources."""
     topic_key = re.sub(r"[\s_]+", "-", (topic or "").lower().strip())
@@ -731,11 +760,53 @@ async def run_tema_q_synthesis(
         }
 
     lm_available = True
+    active_model = str(model_id or DEFAULT_MODEL).strip() or DEFAULT_MODEL
+
+    from agents.tema_q.telemetry import (
+        HeadingDispatchTrace,
+        PipelineDiagnosticTrace,
+        extract_clinical_numbers_and_stages,
+    )
+    import time
+    t_pipeline_start = time.perf_counter()
+
+    trace: Optional[PipelineDiagnosticTrace] = None
+    if collect_telemetry:
+        import uuid
+        trace = PipelineDiagnosticTrace(
+            trace_id=f"trace_{int(time.time())}_{uuid.uuid4().hex[:6]}",
+            topic=topic,
+            model_id=active_model,
+        )
+        grouped_hits = _group_search_results_polymorphic(search_results)
+        trace.circle2_raw_hits_summary = {
+            "zim": len(grouped_hits.get("zim", [])),
+            "pdf": len(grouped_hits.get("pdf", [])),
+            "obsidian": len(grouped_hits.get("obsidian", [])),
+        }
+        trace.circle2_resolved_documents = [
+            {
+                "source_type": d.get("source_type"),
+                "source_label": d.get("source_label"),
+                "page": d.get("page", 1),
+                "words": len(str(d.get("raw_text") or "").split()),
+            }
+            for d in documents
+        ]
+        if mcq_context and isinstance(mcq_context, dict):
+            trace.circle1_extracted_topics = {
+                "question": mcq_context.get("question", ""),
+                "target_topic": topic,
+            }
 
     # Fast CPU Question-Anchored Subtopic Router & Pruner
+    t_route_0 = time.perf_counter()
     subtopic_buckets = await asyncio.to_thread(
-        route_and_prune_subtopics, topic, documents, mcq_context
+        route_and_prune_subtopics, topic, documents, mcq_context, 5, 650, 450, trace
     )
+    t_route_ms = round((time.perf_counter() - t_route_0) * 1000.0, 2)
+    if trace:
+        trace.stage_timings_ms["circle2_5_subtopic_routing"] = t_route_ms
 
     synthesized_subtopic_nodes: List[Dict[str, Any]] = []
 
@@ -744,117 +815,188 @@ async def run_tema_q_synthesis(
             sub_title = bucket.display_name
             pass2_sys_prompt = PASS2_AUDIT_SYSTEM_PROMPT.replace("{subtopic}", sub_title)
 
-            # Pass 1: Primary Source Bulletization (<= 500 words)
-            pass1_user_msg = (
-                f"Clinical Topic: {topic}\n"
-                f"Target Subtopic: {bucket.display_name} ({bucket.question_anchor})\n\n"
-                f"Primary Reference:\n{bucket.primary_text}"
-            )
+            # Determine sections to dispatch for Pass 1
+            if heading_wise and getattr(bucket, "primary_heading_sections", None):
+                sections_to_dispatch = bucket.primary_heading_sections
+            else:
+                sections_to_dispatch = [
+                    {
+                        "heading_breadcrumb": bucket.display_name,
+                        "text": bucket.primary_text,
+                        "source_label": bucket.primary_source_label,
+                        "source_type": "ref",
+                        "page": bucket.primary_page,
+                        "word_count": len(bucket.primary_text.split()),
+                    }
+                ]
 
-            base_note_json: Dict[str, Any] = {}
-            if lm_available:
-                try:
-                    matched_doc = next(
-                        (
-                            d for d in documents
-                            if d.get("source_type") == "pdf"
-                            and d.get("page_images")
-                            and (d.get("source_label") == bucket.primary_source_label or d.get("page") == bucket.primary_page)
-                        ),
-                        None,
-                    )
-                    if matched_doc and matched_doc.get("page_images"):
-                        base_note_str = await call_vlm_page_images_async(
-                            system_prompt=VLM_PAGE_SYNTHESIS_SYSTEM_PROMPT,
-                            topic=topic,
-                            subtopic=sub_title,
-                            heading_path=str(matched_doc.get("heading_path") or f"{topic} > {sub_title}"),
-                            page_images=matched_doc["page_images"],
-                            source_label=bucket.primary_source_label,
-                            fallback_text=bucket.primary_text,
-                            max_tokens=600,
-                        )
-                    else:
+            subtopic_node: Optional[Dict[str, Any]] = None
+
+            for sec_item in sections_to_dispatch:
+                sec_text = sec_item.get("text") or ""
+                sec_heading = sec_item.get("heading_breadcrumb") or bucket.display_name
+                sec_src = sec_item.get("source_label") or bucket.primary_source_label
+                sec_pg = sec_item.get("page") or bucket.primary_page
+                sec_type = sec_item.get("source_type") or "ref"
+
+                pass1_user_msg = (
+                    f"Clinical Topic: {topic}\n"
+                    f"Target Subtopic: {bucket.display_name} ({bucket.question_anchor})\n"
+                    f"Source Document: {sec_src} (Page {sec_pg})\n"
+                    f"Article Heading Breadcrumb: {sec_heading}\n\n"
+                    f"Heading Text:\n{sec_text}"
+                )
+
+                call_meta: Dict[str, Any] = {}
+                base_note_str = ""
+                heading_json: Dict[str, Any] = {}
+
+                if lm_available:
+                    try:
                         base_note_str = await call_llm_async(
-                            PASS1_CLINICAL_SYSTEM_PROMPT, pass1_user_msg, max_tokens=600
+                            PASS1_CLINICAL_SYSTEM_PROMPT,
+                            pass1_user_msg,
+                            max_tokens=600,
+                            model_id=active_model,
+                            telemetry_meta=call_meta,
                         )
-                    parsed_base = parse_llm_json(base_note_str)
-                    if isinstance(parsed_base, list):
-                        base_note_json = {
-                            "section": "Clinical Summary",
-                            "subtopic": sub_title,
-                            "conditional_context": "",
-                            "clinical_points": parsed_base,
-                            "discrepancies": "",
-                        }
-                    elif isinstance(parsed_base, dict):
-                        base_note_json = parsed_base
-                        base_note_json["subtopic"] = sub_title
-                    else:
-                        base_note_json = {
-                            "section": "Clinical Summary",
-                            "subtopic": sub_title,
-                            "conditional_context": "",
-                            "clinical_points": [
-                                {
-                                    "point": str(base_note_str)[:500],
-                                    "source": bucket.primary_source_label,
-                                    "page": bucket.primary_page,
-                                }
-                            ],
-                            "discrepancies": "",
-                        }
-                except (httpx.ConnectError, httpx.ConnectTimeout, httpx.HTTPError) as net_err:
-                    logger.warning("LM Studio offline during Pass 1: %s", net_err)
-                    lm_available = False
-                except Exception as exc:
-                    logger.error("Pass 1 LLM synthesis failed for subtopic '%s': %s", sub_title, exc)
+                        parsed_base = parse_llm_json(base_note_str)
+                        if isinstance(parsed_base, list):
+                            heading_json = {
+                                "section": "Clinical Summary",
+                                "subtopic": sub_title,
+                                "conditional_context": "",
+                                "clinical_points": parsed_base,
+                                "discrepancies": "",
+                            }
+                        elif isinstance(parsed_base, dict):
+                            heading_json = parsed_base
+                            heading_json["subtopic"] = sub_title
+                        else:
+                            heading_json = {
+                                "section": "Clinical Summary",
+                                "subtopic": sub_title,
+                                "conditional_context": "",
+                                "clinical_points": [
+                                    {
+                                        "point": str(base_note_str)[:500],
+                                        "source": sec_src,
+                                        "page": sec_pg,
+                                    }
+                                ],
+                                "discrepancies": "",
+                            }
+                    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.HTTPError) as net_err:
+                        logger.warning("LM Studio offline during Pass 1: %s", net_err)
+                        lm_available = False
+                    except Exception as exc:
+                        logger.error("Pass 1 LLM synthesis failed for heading '%s': %s", sec_heading, exc)
 
-            if not base_note_json:
-                base_note_json = {
+                if not heading_json:
+                    heading_json = {
+                        "section": "Clinical Summary",
+                        "subtopic": sub_title,
+                        "conditional_context": "",
+                        "clinical_points": [
+                            {
+                                "point": sec_text[:500],
+                                "source": sec_src,
+                                "page": sec_pg,
+                            }
+                        ],
+                        "discrepancies": "",
+                    }
+
+                # Record Telemetry for this Heading Dispatch
+                if trace:
+                    src_dosages_stages = extract_clinical_numbers_and_stages(sec_text)
+                    llm_pts_str = " ".join(
+                        str(pt.get("point", "")) for pt in heading_json.get("clinical_points", []) if isinstance(pt, dict)
+                    )
+                    retained_ds = [ds for ds in src_dosages_stages if ds in llm_pts_str.lower()]
+                    missing_ds = [ds for ds in src_dosages_stages if ds not in llm_pts_str.lower()]
+                    ret_score = (len(retained_ds) / len(src_dosages_stages)) if src_dosages_stages else 1.0
+
+                    trace.llm_dispatches.append(
+                        HeadingDispatchTrace(
+                            subtopic_id=bucket.subtopic_id,
+                            subtopic_name=bucket.display_name,
+                            heading_breadcrumb=sec_heading,
+                            source_label=sec_src,
+                            source_type=sec_type,
+                            page=sec_pg,
+                            pass_number=1,
+                            model_id=active_model,
+                            input_word_count=len(sec_text.split()),
+                            input_token_count=call_meta.get("prompt_tokens", count_tokens(pass1_user_msg)),
+                            prompt_sent=pass1_user_msg,
+                            raw_llm_response=base_note_str or json.dumps(heading_json),
+                            parsed_points_count=len(heading_json.get("clinical_points", [])),
+                            output_word_count=len(llm_pts_str.split()),
+                            json_repaired_or_fallback=bool(not base_note_str or "{" not in base_note_str),
+                            latency_ms=call_meta.get("latency_ms", 0.0),
+                            tokens_per_sec=call_meta.get("tokens_per_sec", 0.0),
+                            source_dosages_and_stages=src_dosages_stages,
+                            retained_dosages_and_stages=retained_ds,
+                            missing_dosages_and_stages=missing_ds,
+                            retention_score=round(ret_score, 2),
+                        )
+                    )
+
+                subtopic_node = merge_json_nodes(
+                    subtopic_node,
+                    heading_json,
+                    metadata={"source": sec_src, "page": sec_pg},
+                    primary_max_words=500,
+                )
+
+            if subtopic_node is None:
+                subtopic_node = {
                     "section": "Clinical Summary",
                     "subtopic": sub_title,
                     "conditional_context": "",
-                    "clinical_points": [
-                        {
-                            "point": bucket.primary_text[:500],
-                            "source": bucket.primary_source_label,
-                            "page": bucket.primary_page,
-                        }
-                    ],
+                    "clinical_points": [],
                     "discrepancies": "",
                 }
-
-            subtopic_node = merge_json_nodes(
-                None,
-                base_note_json,
-                metadata={"source": bucket.primary_source_label, "page": bucket.primary_page},
-                primary_max_words=500,
-            )
 
             # Pass 2+: Secondary Sources Delta Micro-Editing (<= 1000 words combined)
             for sec_entry in bucket.secondary_entries:
                 sec_text = sec_entry.get("text") or ""
                 sec_src = sec_entry.get("source_label") or "Secondary Reference"
                 sec_page = sec_entry.get("page") or 1
+                sec_breadcrumb = sec_entry.get("heading_breadcrumb") or bucket.display_name
+                sec_type = sec_entry.get("source_type") or "ref"
 
                 novel_sec_text = filter_novel_secondary_sentences(
-                    sec_text, subtopic_node.get("clinical_points", []), max_words=400
+                    sec_text,
+                    subtopic_node.get("clinical_points", []),
+                    max_words=400,
+                    telemetry=trace,
+                    source_label=sec_src,
                 )
                 if not novel_sec_text:
                     continue
 
                 sec_json: Dict[str, Any] = {}
+                sec_call_meta: Dict[str, Any] = {}
+                sec_json_str = ""
+
                 if lm_available:
                     sec_msg = (
                         f"Clinical Topic: {topic}\n"
                         f"Target Subtopic: {sub_title} ({bucket.question_anchor})\n"
+                        f"Source Document: {sec_src} (Page {sec_page})\n"
+                        f"Article Heading Breadcrumb: {sec_breadcrumb}\n"
                         f"Primary Baseline Points:\n{json.dumps(subtopic_node.get('clinical_points', []))}\n\n"
                         f"Secondary Reference:\n{novel_sec_text}"
                     )
                     try:
                         sec_json_str = await call_llm_async(
-                            pass2_sys_prompt, sec_msg, max_tokens=500
+                            pass2_sys_prompt,
+                            sec_msg,
+                            max_tokens=500,
+                            model_id=active_model,
+                            telemetry_meta=sec_call_meta,
                         )
                         sec_parsed = parse_llm_json(sec_json_str)
                         if isinstance(sec_parsed, list):
@@ -887,6 +1029,41 @@ async def run_tema_q_synthesis(
                         ],
                         "discrepancies": "",
                     }
+
+                if trace:
+                    sec_dosages_stages = extract_clinical_numbers_and_stages(novel_sec_text)
+                    sec_pts_str = " ".join(
+                        str(pt.get("point", "")) for pt in sec_json.get("clinical_points", []) if isinstance(pt, dict)
+                    )
+                    retained_ds = [ds for ds in sec_dosages_stages if ds in sec_pts_str.lower()]
+                    missing_ds = [ds for ds in sec_dosages_stages if ds not in sec_pts_str.lower()]
+                    ret_score = (len(retained_ds) / len(sec_dosages_stages)) if sec_dosages_stages else 1.0
+
+                    trace.llm_dispatches.append(
+                        HeadingDispatchTrace(
+                            subtopic_id=bucket.subtopic_id,
+                            subtopic_name=bucket.display_name,
+                            heading_breadcrumb=sec_breadcrumb,
+                            source_label=sec_src,
+                            source_type=sec_type,
+                            page=sec_page,
+                            pass_number=2,
+                            model_id=active_model,
+                            input_word_count=len(novel_sec_text.split()),
+                            input_token_count=sec_call_meta.get("prompt_tokens", count_tokens(sec_msg)),
+                            prompt_sent=sec_msg,
+                            raw_llm_response=sec_json_str or json.dumps(sec_json),
+                            parsed_points_count=len(sec_json.get("clinical_points", [])),
+                            output_word_count=len(sec_pts_str.split()),
+                            json_repaired_or_fallback=bool(not sec_json_str or "{" not in sec_json_str),
+                            latency_ms=sec_call_meta.get("latency_ms", 0.0),
+                            tokens_per_sec=sec_call_meta.get("tokens_per_sec", 0.0),
+                            source_dosages_and_stages=sec_dosages_stages,
+                            retained_dosages_and_stages=retained_ds,
+                            missing_dosages_and_stages=missing_ds,
+                            retention_score=round(ret_score, 2),
+                        )
+                    )
 
                 subtopic_node = merge_json_nodes(
                     subtopic_node,
@@ -975,7 +1152,7 @@ async def run_tema_q_synthesis(
 
     enhanced_markdown = _format_article_as_markdown(final_article, topic)
 
-    return {
+    result_payload: Dict[str, Any] = {
         "topic_key": topic_key,
         "display_title": topic,
         "enhanced_explanation": enhanced_markdown,
@@ -985,6 +1162,18 @@ async def run_tema_q_synthesis(
         "top_references": flat_refs or search_results,
         "reference_links": search_results,
     }
+
+    if trace:
+        trace.detected_variances = variance_text
+        trace.finalize_and_analyze()
+        try:
+            saved_trace_path = trace.save_to_disk()
+            result_payload["trace_log_path"] = saved_trace_path
+        except Exception as exc:
+            logger.warning("Failed to save pipeline diagnostic trace to disk: %s", exc)
+        result_payload["pipeline_telemetry"] = trace.to_dict()
+
+    return result_payload
 
 
 # --- Phase 5 Audited Self-Correction Loop Helper ---

@@ -68,6 +68,17 @@ def sanitize_clinical_prose(raw_text: str) -> str:
         return ""
 
     text = _HTML_TABLE_FIG_RE.sub("\n", str(raw_text))
+
+    # Convert HTML <h1>..<h6> tags into Markdown # headings before stripping HTML tags
+    for level in range(1, 7):
+        hashes = "#" * level
+        text = re.sub(
+            rf"<h{level}\b[^>]*>(.*?)</h{level}>",
+            lambda m, h=hashes: f"\n{h} {re.sub(r'<[^>]+>', ' ', m.group(1)).strip()}\n",
+            text,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+
     text = _MD_IMAGE_RE.sub("", text)
     text = _INLINE_FIG_REF_RE.sub("", text)
     text = _HTML_TAG_RE.sub(" ", text)
@@ -384,14 +395,14 @@ class RoutedSubtopicBucket:
     primary_source_label: str = ""
     primary_page: int = 1
     secondary_entries: List[Dict[str, Any]] = field(default_factory=list)
+    primary_heading_sections: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def _split_into_headed_prose_blocks(
     doc: Dict[str, Any], source_idx: int
 ) -> List[RawProseBlock]:
-    """Splits sanitized document text into headed paragraph blocks."""
+    """Splits sanitized document text into headed paragraph blocks with hierarchical breadcrumbs."""
     raw = str(doc.get("raw_text") or doc.get("header") or "")
-    # Remove synthetic "Source (...):" wrapper line if present
     raw = re.sub(r"^Source\s*\([^\)]+\)\s*:\s*\n?", "", raw, flags=re.I)
     clean_text = sanitize_clinical_prose(raw)
     if not clean_text:
@@ -400,10 +411,20 @@ def _split_into_headed_prose_blocks(
     source_label = str(doc.get("source_label") or "Reference")
     source_type = str(doc.get("source_type") or "ref")
     page = max(1, int(doc.get("page") or 1))
+    doc_heading_path = str(doc.get("heading_path") or "").strip()
 
     blocks: List[RawProseBlock] = []
-    cur_heading = "Overview"
+    heading_stack: Dict[int, str] = {}
+    if doc_heading_path:
+        heading_stack[1] = doc_heading_path
+    cur_heading = doc_heading_path or "Overview"
     cur_paras: List[str] = []
+
+    def _current_breadcrumb() -> str:
+        if not heading_stack:
+            return cur_heading
+        ordered = [heading_stack[k] for k in sorted(heading_stack.keys()) if heading_stack[k]]
+        return " > ".join(dict.fromkeys(ordered)) or cur_heading
 
     def _flush() -> None:
         if not cur_paras:
@@ -417,7 +438,7 @@ def _split_into_headed_prose_blocks(
                     source_label=source_label,
                     source_type=source_type,
                     page=page,
-                    heading=cur_heading,
+                    heading=_current_breadcrumb(),
                     text=joined,
                     word_count=words,
                 )
@@ -427,22 +448,32 @@ def _split_into_headed_prose_blocks(
     for line in clean_text.splitlines():
         s = line.strip()
         if not s:
-            if sum(len(p.split()) for p in cur_paras) >= 90:
+            if sum(len(p.split()) for p in cur_paras) >= 160:
                 _flush()
             continue
 
-        # Detect Markdown headings (# Heading) or short standalone ALL-CAPS/Colon section headers
-        if s.startswith("#"):
+        # Detect Markdown headings (# .. ######) and update hierarchy stack
+        md_match = re.match(r"^(#{1,6})\s+(.+)$", s)
+        if md_match:
             _flush()
-            cur_heading = s.lstrip("#").strip()
+            lvl = len(md_match.group(1))
+            h_text = md_match.group(2).strip()
+            for deeper in [k for k in heading_stack if k >= lvl]:
+                del heading_stack[deeper]
+            heading_stack[lvl] = h_text
+            cur_heading = _current_breadcrumb()
             continue
+
+        # Detect short standalone ALL-CAPS or trailing-colon section headers
         if (
             len(s.split()) <= 7
             and not s.endswith(".")
             and (s.isupper() or (s.endswith(":") and s[0].isupper()))
         ):
             _flush()
-            cur_heading = s.rstrip(":").strip()
+            h_text = s.rstrip(":").strip()
+            heading_stack[3] = h_text
+            cur_heading = _current_breadcrumb()
             continue
 
         cur_paras.append(s)
@@ -464,6 +495,9 @@ def prune_solar_sentences(
     signal_keywords: Sequence[str],
     max_words: int,
     min_relevance: float = 0.20,
+    telemetry: Optional[Any] = None,
+    source_label: str = "",
+    heading_breadcrumb: str = "",
 ) -> str:
     """
     Scores individual sentences against the canonical subtopic question + lexical signals,
@@ -503,6 +537,16 @@ def prune_solar_sentences(
         # Drop 'solar' (stray/off-subtopic) sentences unless only 1-2 sentences exist
         if total_sc >= min_relevance or len(clean_sents) <= 2:
             scored_sents.append((idx, total_sc, sent, w_cnt))
+        else:
+            if telemetry is not None and hasattr(telemetry, "solar_pruned_sentences"):
+                telemetry.solar_pruned_sentences.append({
+                    "sentence": sent,
+                    "relevance_score": round(total_sc, 3),
+                    "min_relevance": min_relevance,
+                    "source_label": source_label,
+                    "heading_breadcrumb": heading_breadcrumb,
+                    "reason": "below_min_relevance",
+                })
 
     if not scored_sents:
         scored_sents = [(i, 0.5, s, len(s.split())) for i, s in enumerate(clean_sents[:5])]
@@ -515,6 +559,14 @@ def prune_solar_sentences(
 
     for idx, sc, sent, w_cnt in scored_sents:
         if used_words + w_cnt > max_words and selected_indices:
+            if telemetry is not None and hasattr(telemetry, "solar_pruned_sentences"):
+                telemetry.solar_pruned_sentences.append({
+                    "sentence": sent,
+                    "relevance_score": round(sc, 3),
+                    "source_label": source_label,
+                    "heading_breadcrumb": heading_breadcrumb,
+                    "reason": "budget_exceeded",
+                })
             continue
         toks = set(re.findall(r"\w{3,}", sent.lower()))
         # Intra-subtopic sentence deduplication (Jaccard >= 0.78)
@@ -522,6 +574,14 @@ def prune_solar_sentences(
             len(toks & prev_t) / max(1, len(toks | prev_t)) >= 0.78
             for prev_t in selected_token_sets
         ):
+            if telemetry is not None and hasattr(telemetry, "solar_pruned_sentences"):
+                telemetry.solar_pruned_sentences.append({
+                    "sentence": sent,
+                    "relevance_score": round(sc, 3),
+                    "source_label": source_label,
+                    "heading_breadcrumb": heading_breadcrumb,
+                    "reason": "intra_subtopic_duplicate",
+                })
             continue
         selected_indices.append(idx)
         if toks:
@@ -539,6 +599,7 @@ def route_and_prune_subtopics(
     max_subtopics: int = 5,
     max_source1_input_words: int = 650,
     max_sec_input_words: int = 450,
+    telemetry: Optional[Any] = None,
 ) -> List[RoutedSubtopicBucket]:
     """
     Routes paragraphs from all resolved documents into aligned medical subtopic buckets
@@ -555,7 +616,20 @@ def route_and_prune_subtopics(
     # Extract all pure-prose blocks across all documents
     all_blocks: List[RawProseBlock] = []
     for s_idx, doc in enumerate(documents):
-        all_blocks.extend(_split_into_headed_prose_blocks(doc, s_idx))
+        doc_blocks = _split_into_headed_prose_blocks(doc, s_idx)
+        all_blocks.extend(doc_blocks)
+        if telemetry is not None and hasattr(telemetry, "extracted_headings_per_doc"):
+            unique_headings = list(dict.fromkeys(b.heading for b in doc_blocks))
+            total_doc_words = sum(b.word_count for b in doc_blocks)
+            telemetry.extracted_headings_per_doc.append({
+                "source_idx": s_idx,
+                "source_label": doc.get("source_label", "Unknown"),
+                "source_type": doc.get("source_type", "ref"),
+                "page": doc.get("page", 1),
+                "headings_count": len(unique_headings),
+                "total_words": total_doc_words,
+                "headings": unique_headings,
+            })
 
     if not all_blocks:
         return []
@@ -618,6 +692,40 @@ def route_and_prune_subtopics(
             continue
 
         primary_sents: List[str] = []
+        heading_sections: List[Dict[str, Any]] = []
+
+        # Group primary blocks by heading breadcrumb
+        heading_to_blocks: Dict[str, List[RawProseBlock]] = {}
+        for pb in primary_blocks:
+            heading_to_blocks.setdefault(pb.heading, []).append(pb)
+
+        for h_bc, h_blocks in heading_to_blocks.items():
+            h_sents: List[str] = []
+            for blk in h_blocks:
+                t = getattr(blk, "text", "")
+                if t:
+                    h_sents.extend(s.strip() for s in _SENTENCE_SPLIT_RE.split(t) if s.strip())
+            if not h_sents:
+                continue
+            pruned_h_text = prune_solar_sentences(
+                h_sents,
+                question_anchor=q_anchor,
+                signal_keywords=spec.signal_keywords,
+                max_words=max_source1_input_words,
+                telemetry=telemetry,
+                source_label=getattr(h_blocks[0], "source_label", "Unknown"),
+                heading_breadcrumb=h_bc,
+            )
+            if pruned_h_text:
+                heading_sections.append({
+                    "heading_breadcrumb": h_bc,
+                    "text": pruned_h_text,
+                    "source_label": getattr(h_blocks[0], "source_label", "Unknown"),
+                    "source_type": getattr(h_blocks[0], "source_type", "ref"),
+                    "page": getattr(h_blocks[0], "page", 1),
+                    "word_count": len(pruned_h_text.split()),
+                })
+
         for pb in primary_blocks:
             text = getattr(pb, "text", "")
             if text:
@@ -631,17 +739,21 @@ def route_and_prune_subtopics(
             question_anchor=q_anchor,
             signal_keywords=spec.signal_keywords,
             max_words=max_source1_input_words,
+            telemetry=telemetry,
+            source_label=getattr(primary_blocks[0], "source_label", "Unknown"),
+            heading_breadcrumb=getattr(primary_blocks[0], "heading", "Overview"),
         )
-        if not pruned_primary:
+        if not pruned_primary and not heading_sections:
             continue
 
         bucket = RoutedSubtopicBucket(
             subtopic_id=spec.subtopic_id,
             display_name=spec.display_name,
             question_anchor=q_anchor,
-            primary_text=pruned_primary,
+            primary_text=pruned_primary or ("\n\n".join(sec["text"] for sec in heading_sections)),
             primary_source_label=getattr(primary_blocks[0], "source_label", "Unknown"),
             primary_page=getattr(primary_blocks[0], "page", 1),
+            primary_heading_sections=heading_sections,
         )
 
         # Secondary sources for this exact subtopic (even if originally under a different heading!)
@@ -661,12 +773,17 @@ def route_and_prune_subtopics(
                 question_anchor=q_anchor,
                 signal_keywords=spec.signal_keywords,
                 max_words=max_sec_input_words,
+                telemetry=telemetry,
+                source_label=getattr(sec_blocks[0], "source_label", "Unknown"),
+                heading_breadcrumb=getattr(sec_blocks[0], "heading", "Overview"),
             )
             if pruned_sec:
                 bucket.secondary_entries.append(
                     {
                         "text": pruned_sec,
                         "source_label": getattr(sec_blocks[0], "source_label", "Unknown"),
+                        "source_type": getattr(sec_blocks[0], "source_type", "ref"),
+                        "heading_breadcrumb": getattr(sec_blocks[0], "heading", bucket.display_name),
                         "page": getattr(sec_blocks[0], "page", 1),
                     }
                 )
@@ -674,7 +791,21 @@ def route_and_prune_subtopics(
         buckets.append((bucket_max_sc, bucket))
 
     buckets.sort(key=lambda x: x[0], reverse=True)
-    return [b for _, b in buckets[:max_subtopics]]
+    selected_buckets = [b for _, b in buckets[:max_subtopics]]
+
+    if telemetry is not None and hasattr(telemetry, "routed_buckets_summary"):
+        for b in selected_buckets:
+            telemetry.routed_buckets_summary.append({
+                "subtopic_id": b.subtopic_id,
+                "display_name": b.display_name,
+                "question_anchor": b.question_anchor,
+                "primary_source_label": b.primary_source_label,
+                "primary_headings_count": len(b.primary_heading_sections),
+                "primary_words": len(b.primary_text.split()),
+                "secondary_sources_count": len(b.secondary_entries),
+            })
+
+    return selected_buckets
 
 
 def route_subtopic_blocks(

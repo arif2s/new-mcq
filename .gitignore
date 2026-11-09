@@ -49,3 +49,4 @@ storage/reports/*.html
 
 data/models/
 *.onnx
+storage/reports/pipeline_traces/

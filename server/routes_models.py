@@ -1218,6 +1218,37 @@ async def get_linkers_build_progress() -> Dict[str, Any]:
 
 
 # -----------------------------------------------------------------------------
+# LM Studio Available Models Endpoint
+# -----------------------------------------------------------------------------
+@router.get("/lm-studio-available")
+async def get_lm_studio_available_models() -> Dict[str, Any]:
+    """Returns availability and model ID list from local LM Studio server."""
+    from agents.tema_q.pipeline import get_http_client
+    from config import DEFAULT_MODEL, LM_STUDIO_URL
+
+    url = f"{LM_STUDIO_URL}/models"
+    try:
+        client = get_http_client()
+        response = await client.get(url, timeout=3.0)
+        if response.status_code == 200:
+            data = response.json()
+            models_list = [m["id"] for m in data.get("data", []) if isinstance(m, dict) and "id" in m]
+            return {
+                "online": True,
+                "models": models_list,
+                "default_model": DEFAULT_MODEL,
+            }
+    except Exception as exc:
+        logger.debug("LM Studio is offline: %s", exc)
+
+    return {
+        "online": False,
+        "models": [],
+        "default_model": DEFAULT_MODEL,
+    }
+
+
+# -----------------------------------------------------------------------------
 # System Diagnostics Endpoints
 # -----------------------------------------------------------------------------
 @router.get("/diagnostic/lm_studio")

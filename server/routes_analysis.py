@@ -1102,6 +1102,160 @@ async def finalize_analysis(req: FinalizeAnalysisRequest):
     }
 
 
+# ---------------------------------------------------------------------------
+# 1-2-3 RAG Pipeline Benchmark Endpoint
+# ---------------------------------------------------------------------------
+class PipelineBenchmarkRequest(BaseModel):
+    topic: Optional[str] = Field("", description="Target clinical topic (or extracted from question)")
+    question: Optional[str] = Field("", description="Optional MCQ question stem")
+    options: Optional[Dict[str, str]] = Field(default_factory=dict, description="Optional MCQ options A-D")
+    explanation: Optional[str] = Field("", description="Optional baseline explanation")
+    model_ids: Optional[List[str]] = Field(default_factory=list, description="List of LM Studio models to benchmark sequentially")
+    heading_wise: bool = Field(True, description="Enable heading-wise prompt dispatch")
+    limit_per_source: int = Field(3, ge=1, le=10, description="Max documents to retrieve per source")
+
+
+@router.post("/pipeline-benchmark")
+async def run_pipeline_benchmark(req: PipelineBenchmarkRequest):
+    """
+    Executes sequential multi-model benchmarking of the 1-2-3 RAG Synthesis Pipeline.
+    Strictly conforms to Invariant 1 (Zero VRAM) and Invariant 5 (Sequential Model Benchmarking).
+    """
+    from agents.tema_q.pipeline import extract_topics_from_mcq, run_tema_q_synthesis
+    from parsers.tantivy_engine import search_index
+    from config import DEFAULT_MODEL
+
+    target_topic = (req.topic or "").strip()
+    mcq_ctx: Optional[dict] = None
+    if req.question and req.question.strip():
+        mcq_ctx = {
+            "question": req.question.strip(),
+            "options": req.options or {},
+            "explanation": req.explanation or "",
+        }
+
+    # Step 1 (Circle 1): Topic Extraction if topic is empty
+    circle1_info: Dict[str, Any] = {}
+    if not target_topic and mcq_ctx:
+        extracted = await extract_topics_from_mcq(
+            mcq_ctx["question"], mcq_ctx.get("options", {}), mcq_ctx.get("explanation", "")
+        )
+        target_topic = str(extracted.get("main_topic") or (extracted.get("all_topics", [""])[0]))
+        circle1_info = extracted
+
+    if not target_topic:
+        target_topic = "Clinical Case Review"
+
+    # Step 2 (Circle 2): Multi-Source Retrieval (Shared across all benchmarked models)
+    search_results = await asyncio.to_thread(search_index, target_topic, limit_per_source=req.limit_per_source)
+
+    models_to_test = [m.strip() for m in (req.model_ids or []) if m and m.strip()]
+    if not models_to_test:
+        models_to_test = [DEFAULT_MODEL]
+
+    model_results: List[Dict[str, Any]] = []
+
+    # Step 3 (Circle 3): Sequential Model Benchmark Loop
+    for m_id in models_to_test:
+        try:
+            synth = await run_tema_q_synthesis(
+                topic=target_topic,
+                search_results=search_results,
+                mcq_context=mcq_ctx,
+                skip_lm=False,
+                model_id=m_id,
+                heading_wise=req.heading_wise,
+                collect_telemetry=True,
+            )
+            telemetry = synth.get("pipeline_telemetry") or {}
+            dispatches = telemetry.get("llm_dispatches") or []
+
+            total_latency_ms = round(sum(d.get("latency_ms", 0.0) for d in dispatches), 2)
+            avg_tokens_per_sec = (
+                round(sum(d.get("tokens_per_sec", 0.0) for d in dispatches) / len(dispatches), 2)
+                if dispatches
+                else 0.0
+            )
+            success_count = sum(1 for d in dispatches if not d.get("json_repaired_or_fallback", False))
+            json_success_rate = (success_count / len(dispatches)) if dispatches else 1.0
+
+            dosage_retention_avg = (
+                sum(d.get("retention_score", 1.0) for d in dispatches) / len(dispatches)
+                if dispatches
+                else 1.0
+            )
+
+            # Parse unified article for clinical points count
+            pts_count = 0
+            try:
+                art = json.loads(synth.get("unified_article", "{}"))
+                pts_count = len(art.get("clinical_points", []))
+            except Exception:
+                pts_count = sum(d.get("parsed_points_count", 0) for d in dispatches)
+
+            anomalies = telemetry.get("anomaly_flags", [])
+
+            composite_score = round(
+                0.40 * (json_success_rate * 100)
+                + 0.40 * (dosage_retention_avg * 100)
+                + 0.20 * min(100.0, avg_tokens_per_sec * 2.5),
+                1,
+            )
+
+            scorecard = {
+                "model_id": m_id,
+                "total_latency_ms": total_latency_ms,
+                "avg_tokens_per_sec": avg_tokens_per_sec,
+                "json_success_rate": round(json_success_rate * 100, 1),
+                "dosage_staging_retention_rate": round(dosage_retention_avg * 100, 1),
+                "clinical_points_extracted": pts_count,
+                "anomaly_count": len(anomalies),
+                "composite_score": composite_score,
+            }
+
+            model_results.append({
+                "model_id": m_id,
+                "scorecard": scorecard,
+                "synthesis": synth,
+            })
+        except Exception as exc:
+            logger.error("Benchmarking model %s failed: %s", m_id, exc)
+            model_results.append({
+                "model_id": m_id,
+                "scorecard": {
+                    "model_id": m_id,
+                    "total_latency_ms": 0.0,
+                    "avg_tokens_per_sec": 0.0,
+                    "json_success_rate": 0.0,
+                    "dosage_staging_retention_rate": 0.0,
+                    "clinical_points_extracted": 0,
+                    "anomaly_count": 1,
+                    "composite_score": 0.0,
+                    "error": str(exc),
+                },
+                "error": str(exc),
+            })
+
+    # Sort results by composite_score descending
+    model_results.sort(key=lambda r: r.get("scorecard", {}).get("composite_score", 0.0), reverse=True)
+    winner_model_id = model_results[0]["model_id"] if model_results else None
+
+    # Search summary
+    search_summary = {
+        "zim_count": len(search_results.get("zim", [])),
+        "pdf_count": len(search_results.get("pdf", [])),
+        "obsidian_count": len(search_results.get("obsidian", [])),
+    }
+
+    return {
+        "topic": target_topic,
+        "circle1_info": circle1_info,
+        "search_summary": search_summary,
+        "model_results": model_results,
+        "winner_model_id": winner_model_id,
+    }
+
+
 # --- Phase 6 Non-Blocking Thread Offload for Synchronous PDF Analysis ---
 import asyncio as _asyncio
 from typing import Any as _Any, Callable as _Callable

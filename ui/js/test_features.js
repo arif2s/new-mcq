@@ -962,124 +962,458 @@ When $E = mc^2$, the clinical relevance of $\\alpha + \\beta = \\gamma$ is prese
     }
 
     // =========================================================
-    // 6. Pipeline Runner View
+    // 6. Pipeline Runner View (1-2-3 Pipeline Inspector & Multi-Model Benchmark)
     // =========================================================
     function renderPipelineRunnerView(container) {
         container.innerHTML = `
             <div class="card glass-card mb-6">
-                <div class="flex gap-4 items-end">
-                    <div class="flex-1">
-                        <label for="pipeline-topic-input" class="text-xs font-bold text-muted mb-1 block">Topic for Synthesis Pipeline Step Trace</label>
-                        <input type="text" id="pipeline-topic-input" class="glass-input text-xs w-full py-2" value="Amyloidosis" placeholder="Enter clinical topic..." />
+                <div class="flex flex-col gap-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="pipeline-topic-input" class="text-xs font-bold text-muted mb-1 block">Clinical Topic / Query</label>
+                            <input type="text" id="pipeline-topic-input" class="glass-input text-xs w-full py-2" value="Falciparum Malaria" placeholder="Enter clinical topic (e.g. Falciparum Malaria)..." />
+                        </div>
+                        <div>
+                            <div class="flex items-center justify-between mb-1">
+                                <label class="text-xs font-bold text-muted block">Available LM Studio Models</label>
+                                <button type="button" id="refresh-lm-models-btn" class="text-[10px] text-brand-400 hover:text-brand-300 underline cursor-pointer">Refresh Models</button>
+                            </div>
+                            <div id="lm-models-checkbox-container" class="flex flex-wrap gap-2 p-2 rounded bg-gray-900/60 border border-gray-700/50 min-h-9 items-center text-xs">
+                                <span class="text-gray-500 text-[11px]">Loading LM Studio models...</span>
+                            </div>
+                        </div>
                     </div>
-                    <button type="button" id="run-pipeline-trace-btn" class="primary-btn text-xs py-2 px-6 cursor-pointer">Trace All Steps</button>
+
+                    <div class="flex flex-wrap items-center justify-between gap-4 pt-2 border-t border-gray-800">
+                        <label class="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
+                            <input type="checkbox" id="pipeline-heading-wise-chk" checked class="rounded bg-gray-800 border-gray-700 text-brand-500 focus:ring-brand-500" />
+                            <span>Heading-Wise LM Studio Dispatch (H1 > H2 > H3 Breadcrumbs)</span>
+                        </label>
+                        <div class="flex gap-2">
+                            <button type="button" id="run-pipeline-trace-btn" class="secondary-btn text-xs py-2 px-4 cursor-pointer">Run Single-Model Pipeline Trace</button>
+                            <button type="button" id="run-pipeline-benchmark-btn" class="primary-btn text-xs py-2 px-4 cursor-pointer font-bold">Benchmark Selected LM Studio Models</button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <!-- Steps Progress Breakdown -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <!-- Step 1 -->
+            <!-- Leaderboard / Model Scorecard Table (Benchmark Mode) -->
+            <div id="pipeline-leaderboard-card" class="card glass-card mb-6 hidden">
+                <h4 class="text-xs font-bold text-brand-300 mb-3 flex items-center justify-between">
+                    <span>🏆 Multi-Model Benchmark Leaderboard</span>
+                    <span id="benchmark-winner-badge" class="text-[10px] px-2.5 py-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold"></span>
+                </h4>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-xs text-left text-gray-300">
+                        <thead class="text-[10px] uppercase bg-gray-800/80 text-gray-400 border-b border-gray-700">
+                            <tr>
+                                <th class="py-2 px-3">Rank</th>
+                                <th class="py-2 px-3">Model ID</th>
+                                <th class="py-2 px-3 text-right">Composite Score</th>
+                                <th class="py-2 px-3 text-right">JSON Valid %</th>
+                                <th class="py-2 px-3 text-right">Dosage / Staging Ret %</th>
+                                <th class="py-2 px-3 text-right">Points</th>
+                                <th class="py-2 px-3 text-right">Speed (tok/s)</th>
+                                <th class="py-2 px-3 text-right">Time (ms)</th>
+                                <th class="py-2 px-3 text-center">Anomalies</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pipeline-leaderboard-tbody" class="divide-y divide-gray-800 font-mono">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Anomalies Alert Banner -->
+            <div id="pipeline-anomalies-banner" class="mb-6 hidden"></div>
+
+            <!-- 5-Stage Interactive Pipeline Waterfall -->
+            <div class="space-y-4">
+                <!-- Stage 1 & 2: Retrieval & Document Resolution -->
                 <div class="card glass-card">
-                    <h4 class="text-xs font-bold text-brand-300 mb-2 flex items-center justify-between">
-                        <span>Step 1: Hybrid Retrieval &amp; Rerank</span>
-                        <span id="p-step1-status" class="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-muted">Ready</span>
-                    </h4>
-                    <div id="p-step1-box" class="text-xs text-muted p-3 rounded bg-gray-900/40 border border-gray-700/50 min-h-32">
-                        Click "Trace All Steps" to execute.
+                    <div class="flex items-center justify-between cursor-pointer" onclick="document.getElementById('stage-retrieval-body').classList.toggle('hidden')">
+                        <h4 class="text-xs font-bold text-brand-300 flex items-center gap-2">
+                            <span>🔍</span> Stage 1 &amp; 2: Multi-Source Retrieval &amp; Document Resolution
+                        </h4>
+                        <span id="stage-retrieval-badge" class="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-gray-400">Ready</span>
+                    </div>
+                    <div id="stage-retrieval-body" class="mt-3 pt-3 border-t border-gray-800 text-xs hidden">
+                        <div id="stage-retrieval-content" class="text-gray-400">No retrieval run yet.</div>
                     </div>
                 </div>
 
-                <!-- Step 2 -->
+                <!-- Stage 3: Extracted Heading Tree & CPU Solar Pruning -->
                 <div class="card glass-card">
-                    <h4 class="text-xs font-bold text-brand-300 mb-2 flex items-center justify-between">
-                        <span>Step 2: Prompt Assembly</span>
-                        <span id="p-step2-status" class="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-muted">Ready</span>
-                    </h4>
-                    <div id="p-step2-box" class="text-xs text-muted p-3 rounded bg-gray-900/40 border border-gray-700/50 min-h-32">
-                        Awaiting Step 1...
+                    <div class="flex items-center justify-between cursor-pointer" onclick="document.getElementById('stage-headings-body').classList.toggle('hidden')">
+                        <h4 class="text-xs font-bold text-brand-300 flex items-center gap-2">
+                            <span>🌲</span> Stage 3: Hierarchical Heading Tree &amp; CPU Solar Sentence Pruning
+                        </h4>
+                        <span id="stage-headings-badge" class="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-gray-400">Ready</span>
+                    </div>
+                    <div id="stage-headings-body" class="mt-3 pt-3 border-t border-gray-800 text-xs hidden">
+                        <div id="stage-headings-content" class="text-gray-400">No heading segmentation run yet.</div>
                     </div>
                 </div>
 
-                <!-- Step 3 -->
+                <!-- Stage 4: Heading-Wise LM Studio Dispatches -->
                 <div class="card glass-card">
-                    <h4 class="text-xs font-bold text-brand-300 mb-2 flex items-center justify-between">
-                        <span>Step 3: Dossier Synthesis</span>
-                        <span id="p-step3-status" class="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-muted">Ready</span>
-                    </h4>
-                    <div id="p-step3-box" class="text-xs text-muted p-3 rounded bg-gray-900/40 border border-gray-700/50 min-h-32">
-                        Awaiting Step 2...
+                    <div class="flex items-center justify-between cursor-pointer" onclick="document.getElementById('stage-dispatches-body').classList.toggle('hidden')">
+                        <h4 class="text-xs font-bold text-brand-300 flex items-center gap-2">
+                            <span>⚡</span> Stage 4: Heading-Wise LM Studio Prompts, Responses &amp; Dosage Fidelity
+                        </h4>
+                        <span id="stage-dispatches-badge" class="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-gray-400">Ready</span>
+                    </div>
+                    <div id="stage-dispatches-body" class="mt-3 pt-3 border-t border-gray-800 text-xs hidden">
+                        <div id="stage-dispatches-content" class="text-gray-400">No LLM dispatches recorded yet.</div>
+                    </div>
+                </div>
+
+                <!-- Stage 5: Final Rendered Synthesis & Variance Audit -->
+                <div class="card glass-card">
+                    <div class="flex items-center justify-between cursor-pointer" onclick="document.getElementById('stage-synthesis-body').classList.toggle('hidden')">
+                        <h4 class="text-xs font-bold text-brand-300 flex items-center gap-2">
+                            <span>📄</span> Stage 5: Unified Clinical Synthesis &amp; Discrepancy Audit
+                        </h4>
+                        <div class="flex items-center gap-2">
+                            <button type="button" id="download-trace-json-btn" class="hidden text-[10px] px-2 py-0.5 rounded bg-brand-500/20 text-brand-300 hover:bg-brand-500/30">Download Trace JSON</button>
+                            <span id="stage-synthesis-badge" class="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-gray-400">Ready</span>
+                        </div>
+                    </div>
+                    <div id="stage-synthesis-body" class="mt-3 pt-3 border-t border-gray-800 text-xs hidden">
+                        <div id="stage-synthesis-content" class="text-gray-400">No synthesis output generated yet.</div>
                     </div>
                 </div>
             </div>
         `;
 
         const topicInput = document.getElementById('pipeline-topic-input');
+        const headingWiseChk = document.getElementById('pipeline-heading-wise-chk');
+        const refreshModelsBtn = document.getElementById('refresh-lm-models-btn');
+        const modelsCheckboxContainer = document.getElementById('lm-models-checkbox-container');
         const traceBtn = document.getElementById('run-pipeline-trace-btn');
+        const benchmarkBtn = document.getElementById('run-pipeline-benchmark-btn');
 
-        const step1Box = document.getElementById('p-step1-box');
-        const step2Box = document.getElementById('p-step2-box');
-        const step3Box = document.getElementById('p-step3-box');
+        const leaderboardCard = document.getElementById('pipeline-leaderboard-card');
+        const leaderboardTbody = document.getElementById('pipeline-leaderboard-tbody');
+        const winnerBadge = document.getElementById('benchmark-winner-badge');
+        const anomaliesBanner = document.getElementById('pipeline-anomalies-banner');
+        const downloadTraceBtn = document.getElementById('download-trace-json-btn');
 
-        const step1Status = document.getElementById('p-step1-status');
-        const step2Status = document.getElementById('p-step2-status');
-        const step3Status = document.getElementById('p-step3-status');
+        let activeTraceData = null;
+        let lastBenchmarkResults = null;
+
+        async function fetchAvailableModels() {
+            modelsCheckboxContainer.innerHTML = '<span class="text-gray-500 text-[11px] animate-pulse">Checking LM Studio...</span>';
+            try {
+                const res = await fetch('/api/models/lm-studio-available');
+                const data = await res.json();
+                if (!data.online || !data.models || data.models.length === 0) {
+                    modelsCheckboxContainer.innerHTML = `
+                        <span class="text-amber-400 text-[11px]">LM Studio offline or 0 models loaded. Using default: <b>${escapeHTML(data.default_model || 'local-model')}</b></span>
+                    `;
+                    return;
+                }
+                modelsCheckboxContainer.innerHTML = data.models.map((m, idx) => `
+                    <label class="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-[11px] cursor-pointer hover:border-brand-500/50">
+                        <input type="checkbox" name="lm-benchmark-model" value="${escapeHTML(m)}" ${idx === 0 ? 'checked' : ''} class="rounded bg-gray-900 border-gray-700 text-brand-500" />
+                        <span class="text-gray-200">${escapeHTML(m)}</span>
+                    </label>
+                `).join('');
+            } catch (err) {
+                modelsCheckboxContainer.innerHTML = `<span class="text-red-400 text-[11px]">Error loading models: ${escapeHTML(err.message)}</span>`;
+            }
+        }
+
+        refreshModelsBtn.onclick = fetchAvailableModels;
+        fetchAvailableModels();
+
+        function getSelectedModelIds() {
+            const checked = modelsCheckboxContainer.querySelectorAll('input[type="checkbox"]:checked');
+            return Array.from(checked).map(cb => cb.value);
+        }
+
+        function renderAnomalies(anomalies) {
+            if (!anomalies || anomalies.length === 0) {
+                anomaliesBanner.classList.add('hidden');
+                anomaliesBanner.innerHTML = '';
+                return;
+            }
+            anomaliesBanner.classList.remove('hidden');
+            anomaliesBanner.innerHTML = `
+                <div class="p-3 rounded-xl bg-amber-950/30 border border-amber-600/40 text-amber-200 text-xs">
+                    <p class="font-bold flex items-center gap-1.5 mb-1 text-amber-300">
+                        <span>⚠️</span> Pipeline Bottleneck &amp; Anomaly Warnings (${anomalies.length})
+                    </p>
+                    <div class="space-y-1 mt-2">
+                        ${anomalies.map(a => `
+                            <div class="flex items-start gap-2">
+                                <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold ${a.severity === 'critical' ? 'bg-red-500/20 text-red-300 border border-red-500/40' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'}">${escapeHTML(a.code)}</span>
+                                <span class="text-[11px] text-gray-300">${escapeHTML(a.detail)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function populateTelemetryWaterfall(telemetry, synthPayload) {
+            activeTraceData = telemetry;
+            if (!telemetry) return;
+
+            renderAnomalies(telemetry.anomaly_flags);
+
+            // Stage 1 & 2
+            const retBadge = document.getElementById('stage-retrieval-badge');
+            const retContent = document.getElementById('stage-retrieval-content');
+            const rawHits = telemetry.circle2_raw_hits_summary || {};
+            const resolvedDocs = telemetry.circle2_resolved_documents || [];
+            retBadge.textContent = `${resolvedDocs.length} Docs Resolved`;
+            retBadge.className = 'text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold';
+            retContent.innerHTML = `
+                <div class="grid grid-cols-3 gap-2 mb-3 text-center">
+                    <div class="p-2 rounded bg-gray-800/80 border border-gray-700">ZIM Hits: <span class="text-brand-300 font-bold">${rawHits.zim || 0}</span></div>
+                    <div class="p-2 rounded bg-gray-800/80 border border-gray-700">PDF Hits: <span class="text-brand-300 font-bold">${rawHits.pdf || 0}</span></div>
+                    <div class="p-2 rounded bg-gray-800/80 border border-gray-700">Obsidian Hits: <span class="text-brand-300 font-bold">${rawHits.obsidian || 0}</span></div>
+                </div>
+                <div class="space-y-1.5">
+                    ${resolvedDocs.map(d => `
+                        <div class="p-2 rounded bg-gray-900/60 border border-gray-800 flex justify-between items-center text-[11px]">
+                            <span class="font-bold text-gray-200">[${escapeHTML(d.source_type?.toUpperCase() || 'REF')}] ${escapeHTML(d.source_label || 'Document')} (p.${d.page || 1})</span>
+                            <span class="text-gray-400 font-mono">${d.words || 0} words</span>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            document.getElementById('stage-retrieval-body').classList.remove('hidden');
+
+            // Stage 3
+            const hBadge = document.getElementById('stage-headings-badge');
+            const hContent = document.getElementById('stage-headings-content');
+            const docHeadings = telemetry.extracted_headings_per_doc || [];
+            const solarPruned = telemetry.solar_pruned_sentences || [];
+            const pass2Pruned = telemetry.pass2_pre_filtered_sentences || [];
+            const totalHeadings = docHeadings.reduce((acc, dh) => acc + (dh.headings_count || 0), 0);
+            hBadge.textContent = `${totalHeadings} Headings | ${solarPruned.length} Pruned`;
+            hBadge.className = 'text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold';
+            hContent.innerHTML = `
+                <div class="space-y-2 mb-4">
+                    <p class="font-bold text-gray-300 text-[11px]">Extracted Heading Breadcrumbs per Source:</p>
+                    ${docHeadings.map(dh => `
+                        <div class="p-2 rounded bg-gray-900/60 border border-gray-800">
+                            <div class="flex justify-between font-bold text-gray-300 text-[11px] mb-1">
+                                <span>${escapeHTML(dh.source_label)}</span>
+                                <span class="text-brand-400 font-mono">${dh.headings_count} headings (${dh.total_words} words)</span>
+                            </div>
+                            <div class="flex flex-wrap gap-1">
+                                ${(dh.headings || []).map(h => `
+                                    <span class="px-2 py-0.5 rounded bg-gray-800 text-[10px] text-gray-300 font-mono">${escapeHTML(h)}</span>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+                ${(solarPruned.length > 0 || pass2Pruned.length > 0) ? `
+                    <details class="p-2 rounded bg-gray-900/40 border border-gray-800">
+                        <summary class="cursor-pointer text-[11px] font-bold text-amber-300">View CPU-Pruned Sentences (${solarPruned.length} Solar + ${pass2Pruned.length} Pass 2)</summary>
+                        <div class="mt-2 space-y-1 text-[10px] font-mono max-h-48 overflow-y-auto">
+                            ${solarPruned.map(s => `
+                                <div class="p-1 rounded bg-gray-800/60 text-gray-400 flex justify-between gap-2">
+                                    <span>${escapeHTML(s.sentence)}</span>
+                                    <span class="text-amber-400 whitespace-nowrap">Score: ${s.relevance_score} (${escapeHTML(s.reason)})</span>
+                                </div>
+                            `).join('')}
+                            ${pass2Pruned.map(p => `
+                                <div class="p-1 rounded bg-gray-800/60 text-gray-400 flex justify-between gap-2">
+                                    <span>${escapeHTML(p.sentence)}</span>
+                                    <span class="text-purple-400 whitespace-nowrap">Pass 2 (${escapeHTML(p.reason)})</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </details>
+                ` : '<p class="text-gray-500 text-[11px]">No sentences dropped during CPU filtering.</p>'}
+            `;
+            document.getElementById('stage-headings-body').classList.remove('hidden');
+
+            // Stage 4
+            const dispBadge = document.getElementById('stage-dispatches-badge');
+            const dispContent = document.getElementById('stage-dispatches-content');
+            const dispatches = telemetry.llm_dispatches || [];
+            dispBadge.textContent = `${dispatches.length} LM Studio Calls`;
+            dispBadge.className = 'text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold';
+            dispContent.innerHTML = dispatches.length === 0 ? '<p class="text-gray-500">No dispatches recorded.</p>' : `
+                <div class="space-y-3">
+                    ${dispatches.map((disp, idx) => `
+                        <div class="p-3 rounded-xl bg-gray-900/60 border border-gray-800">
+                            <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+                                <div class="flex items-center gap-2">
+                                    <span class="px-2 py-0.5 rounded text-[10px] font-bold font-mono ${disp.pass_number === 1 ? 'bg-blue-500/20 text-blue-300' : 'bg-purple-500/20 text-purple-300'}">Pass ${disp.pass_number}</span>
+                                    <span class="font-bold text-gray-200 text-xs">${escapeHTML(disp.heading_breadcrumb)}</span>
+                                </div>
+                                <div class="flex items-center gap-3 text-[10px] font-mono text-gray-400">
+                                    <span>Speed: <b class="text-emerald-400">${disp.tokens_per_sec} tok/s</b></span>
+                                    <span>Latency: <b class="text-brand-300">${disp.latency_ms} ms</b></span>
+                                    <span>Dosage Ret: <b class="${disp.retention_score >= 0.8 ? 'text-emerald-400' : 'text-amber-400'}">${Math.round(disp.retention_score * 100)}%</b></span>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-[10px] font-mono">
+                                <details class="bg-gray-800/80 p-2 rounded border border-gray-700">
+                                    <summary class="cursor-pointer text-gray-300 font-bold">Prompt Sent (${disp.input_word_count} words)</summary>
+                                    <pre class="mt-1 whitespace-pre-wrap text-gray-400 text-[10px] max-h-40 overflow-y-auto">${escapeHTML(disp.prompt_sent)}</pre>
+                                </details>
+                                <details class="bg-gray-800/80 p-2 rounded border border-gray-700">
+                                    <summary class="cursor-pointer text-gray-300 font-bold">Raw LLM Response (${disp.parsed_points_count} points extracted)</summary>
+                                    <pre class="mt-1 whitespace-pre-wrap text-emerald-300 text-[10px] max-h-40 overflow-y-auto">${escapeHTML(disp.raw_llm_response)}</pre>
+                                </details>
+                            </div>
+                            ${disp.source_dosages_and_stages && disp.source_dosages_and_stages.length > 0 ? `
+                                <div class="mt-2 pt-2 border-t border-gray-800 flex flex-wrap gap-1 items-center text-[10px]">
+                                    <span class="text-gray-400">Dosages/Stages:</span>
+                                    ${(disp.retained_dosages_and_stages || []).map(d => `<span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono">✓ ${escapeHTML(d)}</span>`).join('')}
+                                    ${(disp.missing_dosages_and_stages || []).map(d => `<span class="px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 font-mono">✗ ${escapeHTML(d)}</span>`).join('')}
+                                </div>
+                            ` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            document.getElementById('stage-dispatches-body').classList.remove('hidden');
+
+            // Stage 5
+            const synBadge = document.getElementById('stage-synthesis-badge');
+            const synContent = document.getElementById('stage-synthesis-content');
+            synBadge.textContent = 'Compiled';
+            synBadge.className = 'text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold';
+            const mdText = synthPayload?.enhanced_explanation || synthPayload?.unified_article || 'Synthesis complete.';
+            synContent.innerHTML = `
+                <div class="prose prose-invert max-w-none text-xs p-4 rounded-xl bg-gray-900/60 border border-gray-800 mb-3">
+                    ${window.marked ? window.marked.parse(mdText) : escapeHTML(mdText)}
+                </div>
+                ${synthPayload?.variance_audit ? `
+                    <div class="p-3 rounded-xl bg-amber-950/20 border border-amber-700/40 text-amber-200 text-xs mb-3">
+                        <p class="font-bold mb-1">⚖️ Clinical Variance &amp; Discrepancy Audit:</p>
+                        <div class="prose prose-invert text-xs">${window.marked ? window.marked.parse(synthPayload.variance_audit) : escapeHTML(synthPayload.variance_audit)}</div>
+                    </div>
+                ` : ''}
+            `;
+            document.getElementById('stage-synthesis-body').classList.remove('hidden');
+
+            downloadTraceBtn.classList.remove('hidden');
+            downloadTraceBtn.onclick = () => {
+                const blob = new Blob([JSON.stringify(telemetry, null, 2)], { type: 'application/json' });
+                const u = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = u;
+                a.download = `pipeline_trace_${telemetry.topic || 'topic'}_${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(u);
+            };
+        }
 
         traceBtn.onclick = async () => {
             const topic = topicInput.value.trim();
             if (!topic) return;
 
             traceBtn.disabled = true;
-            step1Status.textContent = 'Running...';
-            step1Status.className = 'text-[10px] px-2 py-0.5 rounded bg-brand-500/20 text-brand-300 font-bold';
-            step1Box.innerHTML = '<p class="text-brand-300 animate-pulse">Querying LanceDB + Tantivy + ZIM...</p>';
+            benchmarkBtn.disabled = true;
+            leaderboardCard.classList.add('hidden');
+
+            const selectedModels = getSelectedModelIds();
+            const modelToUse = selectedModels[0] || '';
 
             try {
-                const t0 = performance.now();
-                const res = await fetch(`/api/mcq/synthesis?topic=${encodeURIComponent(topic)}`);
-                const t1 = performance.now();
+                const res = await fetch('/api/analysis/pipeline-benchmark', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        topic: topic,
+                        model_ids: modelToUse ? [modelToUse] : [],
+                        heading_wise: headingWiseChk.checked,
+                        limit_per_source: 3
+                    })
+                });
                 const data = await res.json();
-
-                const refs = data.references || {};
-                const obsCnt = Array.isArray(refs.obsidian) ? refs.obsidian.length : 0;
-                const pdfCnt = Array.isArray(refs.pdf) ? refs.pdf.length : 0;
-                const zimCnt = Array.isArray(refs.zim) ? refs.zim.length : 0;
-
-                step1Status.textContent = `Done (${Math.round(t1 - t0)}ms)`;
-                step1Status.className = 'text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold';
-                step1Box.innerHTML = `
-                    <p class="text-emerald-400 font-bold">Resolved Chunks for ${escapeHTML(topic)}</p>
-                    <p class="mt-1">Display Title: ${escapeHTML(data.display_title || topic)}</p>
-                    <p class="mt-1 font-mono text-[11px]">PDF: ${pdfCnt} | Obsidian: ${obsCnt} | ZIM: ${zimCnt}</p>
-                    <p class="mt-1">Status: ${data.unified_article ? 'Synthesized' : 'References Resolved'}</p>
-                `;
-
-                step2Status.textContent = 'Done';
-                step2Status.className = 'text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold';
-                step2Box.innerHTML = `
-                    <p class="text-emerald-400 font-bold">Context-Augmented Prompt Constructed</p>
-                    <p class="mt-1 text-gray-300 font-mono text-[10px] break-all border p-1.5 rounded bg-gray-800">
-                        Pass 1: Strict Clinical Extraction (JSON)<br/>
-                        Pass 2: Staging &amp; Classification Variance Audit<br/>
-                        Topic: "${escapeHTML(topic)}"
-                    </p>
-                `;
-
-                step3Status.textContent = 'Done';
-                step3Status.className = 'text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold';
-                const formattedMd = window.formatUnifiedArticleToMarkdown
-                    ? window.formatUnifiedArticleToMarkdown(data.unified_article, data.enhanced_explanation, topic)
-                    : (data.enhanced_explanation || 'No synthesized content yet.');
-                if (window.renderMarkdownAndMath) {
-                    window.renderMarkdownAndMath(formattedMd || 'No synthesized content yet.', step3Box);
-                } else {
-                    step3Box.textContent = formattedMd;
+                if (data.model_results && data.model_results.length > 0) {
+                    const single = data.model_results[0];
+                    populateTelemetryWaterfall(single.synthesis?.pipeline_telemetry, single.synthesis);
                 }
             } catch (err) {
-                step1Status.textContent = 'Failed';
-                step1Status.className = 'text-[10px] px-2 py-0.5 rounded bg-danger-500/20 text-danger-300 font-bold';
-                step1Box.innerHTML = `<p class="text-danger-300">Error: ${escapeHTML(err.message)}</p>`;
+                alert(`Pipeline trace error: ${err.message}`);
             } finally {
                 traceBtn.disabled = false;
+                benchmarkBtn.disabled = false;
+            }
+        };
+
+        benchmarkBtn.onclick = async () => {
+            const topic = topicInput.value.trim();
+            if (!topic) return;
+
+            const selectedModels = getSelectedModelIds();
+            if (selectedModels.length === 0) {
+                alert('Please select at least one LM Studio model to benchmark.');
+                return;
+            }
+
+            benchmarkBtn.disabled = true;
+            traceBtn.disabled = true;
+            benchmarkBtn.textContent = 'Benchmarking Models Sequentially...';
+
+            try {
+                const res = await fetch('/api/analysis/pipeline-benchmark', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        topic: topic,
+                        model_ids: selectedModels,
+                        heading_wise: headingWiseChk.checked,
+                        limit_per_source: 3
+                    })
+                });
+                const data = await res.json();
+                lastBenchmarkResults = data;
+
+                leaderboardCard.classList.remove('hidden');
+                winnerBadge.textContent = `Winner: ${data.winner_model_id || 'None'}`;
+
+                leaderboardTbody.innerHTML = (data.model_results || []).map((mr, idx) => {
+                    const sc = mr.scorecard || {};
+                    return `
+                        <tr class="hover:bg-gray-800/50 cursor-pointer ${idx === 0 ? 'bg-amber-500/10' : ''}" data-model-idx="${idx}">
+                            <td class="py-2.5 px-3 font-bold ${idx === 0 ? 'text-amber-400' : 'text-gray-400'}">#${idx + 1}</td>
+                            <td class="py-2.5 px-3 font-bold text-gray-200">${escapeHTML(sc.model_id || mr.model_id)}</td>
+                            <td class="py-2.5 px-3 text-right font-bold ${idx === 0 ? 'text-amber-400' : 'text-brand-300'}">${sc.composite_score}</td>
+                            <td class="py-2.5 px-3 text-right text-gray-300">${sc.json_success_rate}%</td>
+                            <td class="py-2.5 px-3 text-right text-gray-300">${sc.dosage_staging_retention_rate}%</td>
+                            <td class="py-2.5 px-3 text-right text-gray-300">${sc.clinical_points_extracted}</td>
+                            <td class="py-2.5 px-3 text-right text-emerald-400">${sc.avg_tokens_per_sec}</td>
+                            <td class="py-2.5 px-3 text-right text-gray-400">${sc.total_latency_ms}</td>
+                            <td class="py-2.5 px-3 text-center">
+                                <span class="px-1.5 py-0.5 rounded text-[10px] ${sc.anomaly_count > 0 ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'}">${sc.anomaly_count}</span>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+
+                leaderboardTbody.querySelectorAll('tr[data-model-idx]').forEach(tr => {
+                    tr.onclick = () => {
+                        const idx = parseInt(tr.dataset.modelIdx, 10);
+                        const mr = data.model_results[idx];
+                        if (mr && mr.synthesis) {
+                            populateTelemetryWaterfall(mr.synthesis.pipeline_telemetry, mr.synthesis);
+                        }
+                    };
+                });
+
+                if (data.model_results && data.model_results.length > 0) {
+                    const topModel = data.model_results[0];
+                    populateTelemetryWaterfall(topModel.synthesis?.pipeline_telemetry, topModel.synthesis);
+                }
+            } catch (err) {
+                alert(`Benchmark error: ${err.message}`);
+            } finally {
+                benchmarkBtn.disabled = false;
+                traceBtn.disabled = false;
+                benchmarkBtn.textContent = 'Benchmark Selected LM Studio Models';
             }
         };
     }
