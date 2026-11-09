@@ -803,6 +803,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (targetId === 'layout-toc-screen' && typeof window.initTocWorkspace === 'function') {
             window.initTocWorkspace();
         }
+        if (targetId === 'my-notes-view') {
+            if (!window._myNotesInstance && window.MyNotesController) {
+                const notesContainer = document.getElementById('my-notes-view');
+                if (notesContainer) {
+                    window._myNotesInstance = new window.MyNotesController();
+                    window._myNotesInstance.init(notesContainer);
+                }
+            } else if (window._myNotesInstance && typeof window._myNotesInstance.loadNotes === 'function') {
+                window._myNotesInstance.loadNotes();
+            }
+        }
     }
 
     // Wrap switchTab to always invoke triggerViewActivation and chart cleanup

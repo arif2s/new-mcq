@@ -495,6 +495,33 @@ def initialize_database() -> None:
                 created_at REAL DEFAULT (unixepoch('now')),
                 updated_at REAL DEFAULT (unixepoch('now'))
             );
+
+            -- 18. User Lecture & Study Notes (Multi-Column Cards in "My Notes")
+            CREATE TABLE IF NOT EXISTS user_lecture_notes (
+                note_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL DEFAULT 'Untitled Note',
+                shade_index INTEGER DEFAULT 0,
+                is_pinned INTEGER DEFAULT 0,
+                created_at REAL DEFAULT (unixepoch('now')),
+                updated_at REAL DEFAULT (unixepoch('now'))
+            );
+
+            -- 19. Individual Locked Topic Lines Inside a Lecture Note
+            CREATE TABLE IF NOT EXISTS user_lecture_note_items (
+                item_id TEXT PRIMARY KEY,
+                note_id TEXT NOT NULL,
+                line_order INTEGER NOT NULL DEFAULT 0,
+                topic_text TEXT NOT NULL,
+                topic_key TEXT NOT NULL,
+                mcq_count INTEGER DEFAULT 0,
+                ref_count INTEGER DEFAULT 0,
+                obsidian_count INTEGER DEFAULT 0,
+                pdf_count INTEGER DEFAULT 0,
+                zim_count INTEGER DEFAULT 0,
+                references_json TEXT DEFAULT '{}',
+                updated_at REAL DEFAULT (unixepoch('now')),
+                FOREIGN KEY(note_id) REFERENCES user_lecture_notes(note_id) ON DELETE CASCADE
+            );
         """)
 
         # STAGE 2: Idempotent Column Additions & Schema Migrations (BEFORE Index Creation)
@@ -606,6 +633,8 @@ def initialize_database() -> None:
             CREATE INDEX IF NOT EXISTS idx_qm_last_attempt ON question_metadata(last_attempt_ts);
             CREATE INDEX IF NOT EXISTS idx_obs_clean_title ON obsidian_notes(clean_title);
             CREATE INDEX IF NOT EXISTS idx_obs_book ON obsidian_notes(book_name);
+            CREATE INDEX IF NOT EXISTS idx_uln_updated ON user_lecture_notes(is_pinned DESC, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ulni_note_order ON user_lecture_note_items(note_id, line_order ASC);
         """)
 
         # STAGE 4: Rebuild FTS5 index if csv_questions has data but FTS5 docsize shadow table is empty

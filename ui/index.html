@@ -125,6 +125,12 @@
             </button>
           </li>
           <li>
+            <button type="button" class="nav-btn" data-target="my-notes-view" data-view="my-notes" title="My Notes">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path><line x1="8" y1="6" x2="16" y2="6"></line><line x1="8" y1="10" x2="16" y2="10"></line><line x1="8" y1="14" x2="12" y2="14"></line></svg>
+              <span class="sidebar-text">My Notes</span>
+            </button>
+          </li>
+          <li>
             <button type="button" class="nav-btn" data-target="knowledge-hub-view" title="Knowledge Hub">
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
               <span class="sidebar-text">Knowledge Hub</span>
@@ -332,6 +338,11 @@
               <div id="test-feature-detail-content"></div>
             </div>
           </div>
+        </section>
+
+        <!-- MY NOTES VIEW -->
+        <section id="my-notes-view" class="view-section fade-enter h-full p-0">
+          <!-- Populated dynamically by notes.js -->
         </section>
 
         <!-- QUIZ ENGINE VIEW -->
@@ -1494,6 +1505,7 @@
     <script src="/js/app.js" defer></script>
     <script src="/js/test_features.js" defer></script>
     <script src="/js/dashboard.js" defer></script>
+    <script src="/js/notes.js" type="module"></script>
     <script src="/js/quiz.js" defer></script>
     <script src="/js/hub.js" defer></script>
     <script src="/js/habits.js" defer></script>

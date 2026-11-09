@@ -20,7 +20,7 @@ import urllib.parse
 # Enforce Invariant 1: Zero VRAM for backend processes
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel
 
 try:
@@ -548,3 +548,509 @@ def build_note_index_document(note_id: str, title: str, markdown_body: str, tags
         "content": (markdown_body or "").strip(),
         "tags": list(tags or []),
     }
+
+
+# ============================================================================
+# 4. MY NOTES - LECTURE TOPIC PAD & CARD CRUD ENDPOINTS
+# ============================================================================
+
+import json
+import re
+import time
+import uuid
+
+def _safe_search_index(clean_topic: str, limit_per_source: int = 4):
+    try:
+        from parsers.tantivy_engine import search_index
+        return search_index(clean_topic, limit_per_source=limit_per_source)
+    except Exception as exc:
+        logger.warning("search_index fallback on '%s': %s", clean_topic, exc)
+        return {"obsidian": [], "pdf": [], "zim": []}
+
+def _safe_lookup_pdf_topic_pages(clean_topic: str):
+    try:
+        from parsers.pdf_topic_indexer import lookup_pdf_topic_pages
+        return lookup_pdf_topic_pages(clean_topic)
+    except Exception:
+        return []
+
+
+class LectureNoteMetaPayload(BaseModel):
+    note_id: Optional[str] = None
+    title: str = "Untitled Note"
+    shade_index: int = 0
+    is_pinned: int = 0
+
+
+class LectureNoteItemPayload(BaseModel):
+    item_id: Optional[str] = None
+    line_order: int = 0
+    topic_text: str
+    force_refresh: bool = False
+
+
+def _build_safe_fts5_query(raw_topic: str) -> str:
+    """Sanitizes clinical topic strings for SQLite FTS5 MATCH without syntax errors."""
+    tokens = [t for t in re.findall(r"[A-Za-z0-9]+", (raw_topic or "").strip()) if len(t) >= 2]
+    if not tokens:
+        return ""
+    # Phrase or AND match across sanitized tokens
+    return " AND ".join(f'"{tok}"*' for tok in tokens[:5])
+
+
+def _count_matching_mcqs_sync(conn, topic_text: str) -> int:
+    """Fast sub-millisecond MCQ count across csv_questions_fts and topic_name."""
+    clean = (topic_text or "").strip()
+    if not clean:
+        return 0
+    cursor = conn.cursor()
+    fts_query = _build_safe_fts5_query(clean)
+    like_pat = f"%{clean}%"
+
+    try:
+        if fts_query:
+            cursor.execute(
+                """
+                SELECT COUNT(DISTINCT cq.id) AS cnt
+                FROM csv_questions cq
+                LEFT JOIN csv_questions_fts fts ON fts.rowid = cq.rowid
+                WHERE csv_questions_fts MATCH ?
+                   OR LOWER(cq.topic_name) LIKE LOWER(?)
+                """,
+                (fts_query, like_pat),
+            )
+            row = cursor.fetchone()
+            if row and row["cnt"] is not None:
+                return int(row["cnt"])
+    except Exception as exc:
+        logger.debug("FTS5 count fallback for '%s': %s", clean, exc)
+
+    cursor.execute(
+        """
+        SELECT COUNT(*) AS cnt
+        FROM csv_questions
+        WHERE LOWER(topic_name) LIKE LOWER(?)
+           OR LOWER(question) LIKE LOWER(?)
+           OR LOWER(opt_a) LIKE LOWER(?)
+           OR LOWER(opt_b) LIKE LOWER(?)
+           OR LOWER(opt_c) LIKE LOWER(?)
+           OR LOWER(opt_d) LIKE LOWER(?)
+        """,
+        (like_pat, like_pat, like_pat, like_pat, like_pat, like_pat),
+    )
+    row = cursor.fetchone()
+    return int(row["cnt"] or 0) if row else 0
+
+
+def _resolve_topic_refs_and_mcqs(topic_text: str, force_refresh: bool = False) -> Dict[str, Any]:
+    """
+    Resolves references (Obsidian, PDF, ZIM) and MCQ counts for a topic line.
+    Checks cached_syntheses first (<1ms), falling back to search_index + pdf_topic_index.
+    """
+    clean_topic = (topic_text or "").strip()
+    topic_key = re.sub(r"[\s_]+", "-", clean_topic.lower())
+    cached_refs: Optional[Dict[str, list]] = None
+
+    if not force_refresh and topic_key:
+        with closing(get_db_connection()) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT top_references FROM cached_syntheses WHERE topic_key = ?",
+                (topic_key,),
+            )
+            row = cursor.fetchone()
+            if row and row["top_references"]:
+                try:
+                    parsed = json.loads(row["top_references"])
+                    if isinstance(parsed, dict) and any(parsed.get(k) for k in ("obsidian", "pdf", "zim")):
+                        cached_refs = parsed
+                except Exception:
+                    pass
+
+    if cached_refs is None:
+        search_res = _safe_search_index(clean_topic, limit_per_source=4)
+
+        # Enrich PDF hits with exact hierarchical pdf_topic_index pages if available
+        try:
+            idx_hits = _safe_lookup_pdf_topic_pages(clean_topic)
+            existing_pdf_keys = {
+                (str(p.get("file_path") or "").lower(), int(p.get("page") or 1))
+                for p in (search_res.get("pdf") or [])
+            }
+            for h in (idx_hits or [])[:3]:
+                key = (str(h.get("pdf_path") or "").lower(), int(h.get("start_page") or 1))
+                if key not in existing_pdf_keys and h.get("pdf_path"):
+                    search_res.setdefault("pdf", []).insert(0, {
+                        "source": "pdf",
+                        "source_type": "pdf",
+                        "title": h.get("pdf_title") or h.get("topic_title") or clean_topic,
+                        "heading": h.get("heading_path") or h.get("topic_title") or "",
+                        "file_path": h.get("pdf_path"),
+                        "page": int(h.get("start_page") or 1),
+                        "snippet": f"Section: {h.get('heading_path') or clean_topic} (Pages {h.get('start_page')}–{h.get('end_page')})",
+                    })
+                    existing_pdf_keys.add(key)
+        except Exception:
+            pass
+
+        cached_refs = {
+            "obsidian": (search_res.get("obsidian") or [])[:4],
+            "pdf": (search_res.get("pdf") or [])[:4],
+            "zim": (search_res.get("zim") or [])[:4],
+        }
+
+    obs_list = cached_refs.get("obsidian") or []
+    pdf_list = cached_refs.get("pdf") or []
+    zim_list = cached_refs.get("zim") or []
+
+    with closing(get_db_connection()) as conn:
+        mcq_cnt = _count_matching_mcqs_sync(conn, clean_topic)
+        if topic_key:
+            conn.execute(
+                """
+                INSERT INTO cached_syntheses (
+                    topic_key, display_title, enhanced_explanation, distractor_analysis,
+                    unified_article, variance_audit, top_references,
+                    has_obsidian_note, has_pdf_match, has_zim_match, updated_at
+                ) VALUES (?, ?, '', '', '', '', ?, ?, ?, ?, unixepoch('now'))
+                ON CONFLICT(topic_key) DO UPDATE SET
+                    top_references = excluded.top_references,
+                    has_obsidian_note = excluded.has_obsidian_note,
+                    has_pdf_match = excluded.has_pdf_match,
+                    has_zim_match = excluded.has_zim_match,
+                    updated_at = unixepoch('now')
+                """,
+                (
+                    topic_key,
+                    clean_topic,
+                    json.dumps(cached_refs),
+                    1 if obs_list else 0,
+                    1 if pdf_list else 0,
+                    1 if zim_list else 0,
+                ),
+            )
+
+    return {
+        "topic_key": topic_key,
+        "mcq_count": mcq_cnt,
+        "obsidian_count": len(obs_list),
+        "pdf_count": len(pdf_list),
+        "zim_count": len(zim_list),
+        "ref_count": len(obs_list) + len(pdf_list) + len(zim_list),
+        "references": cached_refs,
+    }
+
+
+def _get_lecture_notes_sync(page: int = 1, page_size: int = 12, q: Any = "") -> Dict[str, Any]:
+    try:
+        page = int(page)
+    except Exception:
+        page = 1
+    try:
+        page_size = int(page_size)
+    except Exception:
+        page_size = 12
+    offset = max(0, (page - 1) * page_size)
+    clean_q = (str(q) if isinstance(q, str) else "").strip()
+
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        if clean_q:
+            like_pat = f"%{clean_q}%"
+            count_query = """
+                SELECT COUNT(DISTINCT n.note_id) AS cnt
+                FROM user_lecture_notes n
+                LEFT JOIN user_lecture_note_items i ON i.note_id = n.note_id
+                WHERE n.title LIKE ? OR i.topic_text LIKE ?
+            """
+            cursor.execute(count_query, (like_pat, like_pat))
+            total_items = int(cursor.fetchone()["cnt"] or 0)
+
+            query = """
+                SELECT DISTINCT n.note_id, n.title, n.shade_index, n.is_pinned, n.created_at, n.updated_at
+                FROM user_lecture_notes n
+                LEFT JOIN user_lecture_note_items i ON i.note_id = n.note_id
+                WHERE n.title LIKE ? OR i.topic_text LIKE ?
+                ORDER BY n.is_pinned DESC, n.updated_at DESC
+                LIMIT ? OFFSET ?
+            """
+            cursor.execute(query, (like_pat, like_pat, page_size, offset))
+        else:
+            cursor.execute("SELECT COUNT(*) AS cnt FROM user_lecture_notes")
+            total_items = int(cursor.fetchone()["cnt"] or 0)
+
+            query = """
+                SELECT note_id, title, shade_index, is_pinned, created_at, updated_at
+                FROM user_lecture_notes
+                ORDER BY is_pinned DESC, updated_at DESC
+                LIMIT ? OFFSET ?
+            """
+            cursor.execute(query, (page_size, offset))
+
+        note_rows = cursor.fetchall()
+        notes = []
+
+        for nr in note_rows:
+            nid = nr["note_id"]
+            cursor.execute(
+                """
+                SELECT item_id, line_order, topic_text, topic_key, mcq_count, ref_count,
+                       obsidian_count, pdf_count, zim_count
+                FROM user_lecture_note_items
+                WHERE note_id = ?
+                ORDER BY line_order ASC
+                LIMIT 6
+                """,
+                (nid,),
+            )
+            top_items = [dict(r) for r in cursor.fetchall()]
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) as total_topics,
+                       COALESCE(SUM(mcq_count), 0) as total_mcqs,
+                       COALESCE(SUM(ref_count), 0) as total_refs
+                FROM user_lecture_note_items
+                WHERE note_id = ?
+                """,
+                (nid,),
+            )
+            stats = cursor.fetchone()
+
+            notes.append({
+                "note_id": nid,
+                "title": nr["title"],
+                "shade_index": nr["shade_index"],
+                "is_pinned": bool(nr["is_pinned"]),
+                "created_at": nr["created_at"],
+                "updated_at": nr["updated_at"],
+                "top_items": top_items,
+                "total_topics": int(stats["total_topics"] or 0),
+                "total_mcqs": int(stats["total_mcqs"] or 0),
+                "total_refs": int(stats["total_refs"] or 0),
+            })
+
+    total_pages = max(1, (total_items + page_size - 1) // page_size) if total_items > 0 else 1
+    return {
+        "status": "success",
+        "notes": notes,
+        "page": page,
+        "page_size": page_size,
+        "total_items": total_items,
+        "total_pages": total_pages,
+    }
+
+
+def _get_single_lecture_note_sync(note_id: str) -> Optional[Dict[str, Any]]:
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT note_id, title, shade_index, is_pinned, created_at, updated_at
+            FROM user_lecture_notes
+            WHERE note_id = ?
+            """,
+            (note_id,),
+        )
+        note_row = cursor.fetchone()
+        if not note_row:
+            return None
+
+        cursor.execute(
+            """
+            SELECT item_id, note_id, line_order, topic_text, topic_key,
+                   mcq_count, ref_count, obsidian_count, pdf_count, zim_count,
+                   references_json, updated_at
+            FROM user_lecture_note_items
+            WHERE note_id = ?
+            ORDER BY line_order ASC
+            """,
+            (note_id,),
+        )
+        items = []
+        for r in cursor.fetchall():
+            item_dict = dict(r)
+            try:
+                item_dict["references"] = json.loads(item_dict.get("references_json") or "{}")
+            except Exception:
+                item_dict["references"] = {"obsidian": [], "pdf": [], "zim": []}
+            items.append(item_dict)
+
+        return {
+            "status": "success",
+            "note": dict(note_row),
+            "items": items,
+        }
+
+
+def _upsert_lecture_note_sync(payload: LectureNoteMetaPayload) -> Dict[str, Any]:
+    note_id = (payload.note_id or "").strip() or f"note_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
+    title = (payload.title or "").strip() or "Untitled Note"
+
+    with closing(get_db_connection()) as conn:
+        conn.execute(
+            """
+            INSERT INTO user_lecture_notes (note_id, title, shade_index, is_pinned, created_at, updated_at)
+            VALUES (?, ?, ?, ?, unixepoch('now'), unixepoch('now'))
+            ON CONFLICT(note_id) DO UPDATE SET
+                title = excluded.title,
+                shade_index = excluded.shade_index,
+                is_pinned = excluded.is_pinned,
+                updated_at = unixepoch('now')
+            """,
+            (note_id, title, payload.shade_index, payload.is_pinned),
+        )
+
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT note_id, title, shade_index, is_pinned, created_at, updated_at FROM user_lecture_notes WHERE note_id = ?",
+            (note_id,),
+        )
+        saved = cursor.fetchone()
+
+    return {"status": "success", "note": dict(saved)}
+
+
+def _delete_lecture_note_sync(note_id: str) -> bool:
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM user_lecture_note_items WHERE note_id = ?", (note_id,))
+        cursor.execute("DELETE FROM user_lecture_notes WHERE note_id = ?", (note_id,))
+        return cursor.rowcount > 0
+
+
+def _upsert_lecture_note_item_sync(note_id: str, payload: LectureNoteItemPayload) -> Dict[str, Any]:
+    item_id = (payload.item_id or "").strip() or f"item_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
+    topic_text = (payload.topic_text or "").strip()
+
+    # Resolve references and matching MCQs
+    resolved = _resolve_topic_refs_and_mcqs(topic_text, force_refresh=payload.force_refresh)
+    topic_key = resolved["topic_key"]
+    refs_json = json.dumps(resolved["references"])
+
+    with closing(get_db_connection()) as conn:
+        # Verify or ensure parent note exists
+        cursor = conn.cursor()
+        cursor.execute("SELECT note_id FROM user_lecture_notes WHERE note_id = ?", (note_id,))
+        if not cursor.fetchone():
+            conn.execute(
+                """
+                INSERT INTO user_lecture_notes (note_id, title, shade_index, is_pinned, created_at, updated_at)
+                VALUES (?, 'Untitled Note', 0, 0, unixepoch('now'), unixepoch('now'))
+                """,
+                (note_id,),
+            )
+
+        conn.execute(
+            """
+            INSERT INTO user_lecture_note_items (
+                item_id, note_id, line_order, topic_text, topic_key,
+                mcq_count, ref_count, obsidian_count, pdf_count, zim_count,
+                references_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))
+            ON CONFLICT(item_id) DO UPDATE SET
+                line_order = excluded.line_order,
+                topic_text = excluded.topic_text,
+                topic_key = excluded.topic_key,
+                mcq_count = excluded.mcq_count,
+                ref_count = excluded.ref_count,
+                obsidian_count = excluded.obsidian_count,
+                pdf_count = excluded.pdf_count,
+                zim_count = excluded.zim_count,
+                references_json = excluded.references_json,
+                updated_at = unixepoch('now')
+            """,
+            (
+                item_id,
+                note_id,
+                payload.line_order,
+                topic_text,
+                topic_key,
+                resolved["mcq_count"],
+                resolved["ref_count"],
+                resolved["obsidian_count"],
+                resolved["pdf_count"],
+                resolved["zim_count"],
+                refs_json,
+            ),
+        )
+        conn.execute(
+            "UPDATE user_lecture_notes SET updated_at = unixepoch('now') WHERE note_id = ?",
+            (note_id,),
+        )
+
+    return {
+        "status": "success",
+        "item_id": item_id,
+        "note_id": note_id,
+        "line_order": payload.line_order,
+        "topic_text": topic_text,
+        "topic_key": topic_key,
+        "mcq_count": resolved["mcq_count"],
+        "ref_count": resolved["ref_count"],
+        "obsidian_count": resolved["obsidian_count"],
+        "pdf_count": resolved["pdf_count"],
+        "zim_count": resolved["zim_count"],
+        "references": resolved["references"],
+    }
+
+
+def _delete_lecture_note_item_sync(note_id: str, item_id: str) -> bool:
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM user_lecture_note_items WHERE note_id = ? AND item_id = ?",
+            (note_id, item_id),
+        )
+        deleted = cursor.rowcount > 0
+        if deleted:
+            conn.execute(
+                "UPDATE user_lecture_notes SET updated_at = unixepoch('now') WHERE note_id = ?",
+                (note_id,),
+            )
+        return deleted
+
+
+@router.get("/lecture-notes")
+async def get_lecture_notes(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(12, ge=1, le=100),
+    q: str = Query(""),
+) -> Dict[str, Any]:
+    """Returns paginated note cards with item previews, topic counts, matched MCQs, and references."""
+    return await asyncio.to_thread(_get_lecture_notes_sync, page=page, page_size=page_size, q=q)
+
+
+@router.get("/lecture-notes/{note_id}")
+async def get_single_lecture_note(note_id: str) -> Dict[str, Any]:
+    """Returns the full note metadata and all ordered locked topic lines."""
+    result = await asyncio.to_thread(_get_single_lecture_note_sync, note_id=note_id)
+    if not result:
+        raise HTTPException(status_code=404, detail=f"Lecture note '{note_id}' not found.")
+    return result
+
+
+@router.post("/lecture-notes")
+async def upsert_lecture_note(payload: LectureNoteMetaPayload) -> Dict[str, Any]:
+    """Creates or updates a note's metadata (note_id, title, shade_index, is_pinned)."""
+    return await asyncio.to_thread(_upsert_lecture_note_sync, payload=payload)
+
+
+@router.delete("/lecture-notes/{note_id}")
+async def delete_lecture_note(note_id: str) -> Dict[str, Any]:
+    """Deletes a note and cascades its items."""
+    deleted = await asyncio.to_thread(_delete_lecture_note_sync, note_id=note_id)
+    return {"status": "success", "deleted": deleted}
+
+
+@router.post("/lecture-notes/{note_id}/items")
+async def upsert_lecture_note_item(note_id: str, payload: LectureNoteItemPayload) -> Dict[str, Any]:
+    """Upserts a locked topic line, resolves references and MCQ count, and returns enriched item."""
+    return await asyncio.to_thread(_upsert_lecture_note_item_sync, note_id=note_id, payload=payload)
+
+
+@router.delete("/lecture-notes/{note_id}/items/{item_id}")
+async def delete_lecture_note_item(note_id: str, item_id: str) -> Dict[str, Any]:
+    """Removes a topic line from a lecture note."""
+    deleted = await asyncio.to_thread(_delete_lecture_note_item_sync, note_id=note_id, item_id=item_id)
+    return {"status": "success", "deleted": deleted}

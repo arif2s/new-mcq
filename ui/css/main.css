@@ -2100,3 +2100,20 @@ input[type="range"]::-moz-range-thumb {
 .obsidian-heading {
     scroll-margin-top: 1.5rem;
 }
+
+/* ============================================================================
+   My Notes - Multi-Column Cards, Line-by-Line Locked Topics & Drawer
+   ============================================================================ */
+.lecture-note-card {
+    will-change: transform, box-shadow;
+    transform: translateZ(0);
+}
+
+.note-topic-row {
+    will-change: background-color, border-color;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+#my-notes-right-sidebar {
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
