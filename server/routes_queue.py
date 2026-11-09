@@ -439,6 +439,44 @@ def unignore_topic(
     return {"status": "success" if removed else "error", "topic": t_val}
 
 
+@router.delete("/remove_verified_topic")
+@router.post("/remove_verified_topic")
+def remove_verified_topic_endpoint(
+    topic: Optional[str] = Query(default=None),
+    req: Optional[IgnoreTopicRequest] = Body(default=None),
+) -> Dict[str, Any]:
+    """Removes a topic from verified/top note lists and purges it from extracted_topics."""
+    from agents.tema_q.topic_extractor import remove_verified_note_topic
+    t_val = (topic or (req.get_topic() if req else "")).strip()
+    if not t_val:
+        return {"status": "error", "message": "No topic specified."}
+
+    removed = remove_verified_note_topic(t_val)
+    with closing(get_db_connection()) as conn:
+        conn.execute(
+            "DELETE FROM extracted_topics WHERE LOWER(topic_name) = LOWER(?)",
+            (t_val,),
+        )
+        conn.commit()
+    return {"status": "success" if removed else "error", "topic": t_val}
+
+
+@router.get("/topic_files_sync_status")
+def get_topic_files_sync_status() -> Dict[str, Any]:
+    """Checks differences between flat files (Ignore_list.txt and topic.txt) and SQLite database."""
+    from agents.tema_q.topic_extractor import check_topic_files_sync_diff
+    diff = check_topic_files_sync_diff()
+    return {"status": "success", "diff": diff}
+
+
+@router.post("/topic_files_sync_apply")
+def post_topic_files_sync_apply() -> Dict[str, Any]:
+    """Applies differences from flat files to update database upon user confirmation."""
+    from agents.tema_q.topic_extractor import apply_topic_files_sync_update
+    result = apply_topic_files_sync_update()
+    return result
+
+
 @router.get("/ignored_topics")
 def list_ignored_topics() -> Dict[str, Any]:
     """Retrieves all permanently ignored topics."""

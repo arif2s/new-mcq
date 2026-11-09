@@ -700,6 +700,36 @@ window.openTopicVerificationModal = async function(sessionContext) {
     } catch (_) {}
 
     activeVerificationSession.topicList = topicList;
+
+    // Scan flat files for changes compared to database and ask once for confirmation with exact numbers
+    try {
+        const syncCheckRes = await fetch('/api/queue/topic_files_sync_status');
+        if (syncCheckRes.ok) {
+            const syncCheckData = await syncCheckRes.json();
+            const diff = syncCheckData.diff;
+            if (diff && diff.has_changes) {
+                const excAdded = diff.excluded.added_count || 0;
+                const excDeleted = diff.deleted_count || diff.excluded.deleted_count || 0;
+                const incAdded = diff.included.added_count || 0;
+                const incDeleted = diff.included.deleted_count || 0;
+
+                const confirmMsg = `File sync difference detected:\n` +
+                    `- Excluded Topics (Ignore_list.txt): ${excAdded} added, ${excDeleted} deleted\n` +
+                    `- Included Topics (topic.txt): ${incAdded} added, ${incDeleted} deleted\n\n` +
+                    `Do you want to update the database to match these file changes?`;
+
+                if (confirm(confirmMsg)) {
+                    const applyRes = await fetch('/api/queue/topic_files_sync_apply', { method: 'POST' });
+                    if (applyRes.ok) {
+                        showToast(`Database synchronized: ${excAdded + incAdded} added, ${excDeleted + incDeleted} deleted.`);
+                    }
+                }
+            }
+        }
+    } catch (syncErr) {
+        console.warn("Topic files sync check note:", syncErr);
+    }
+
     renderTopicVerificationModalDOM();
 };
 
@@ -744,10 +774,11 @@ function renderTopicVerificationModalDOM() {
                         <span class="font-bold">Normal Text:</span> Verified Medical Topic (ZIM/Morphology)
                     </span>
                     <span class="flex items-center gap-1.5 opacity-60">
-                        <span>Grey Text:</span> Doubtful Term (Regex/medSpaCy only)
+                        <span class="text-gray-400">Normal Grey Text:</span> Doubtful Term (Regex/medSpaCy only)
                     </span>
-                    <span class="flex items-center gap-1.5 opacity-40">
-                        <span class="line-through">Strikethrough / Greyed:</span> Ignored Term
+                    <span class="flex items-center gap-1.5">
+                        <span class="w-3 h-3 rounded bg-red-500/20 border border-red-500/50 inline-block"></span>
+                        <span class="text-gray-400 line-through">Greyed Text in Slight Red Box:</span> Excluded / Ignored Term
                     </span>
                     <span class="flex items-center gap-1.5">
                         <span class="w-3 h-3 rounded bg-success-500/35 border border-success-500 inline-block"></span>
@@ -765,37 +796,52 @@ function renderTopicVerificationModalDOM() {
             <div id="topic-editor-questions" class="flex flex-wrap gap-2.5 min-h-[120px] p-4 glass-panel rounded-2xl border border-gray-700/50">
                 ${session.topicList.length === 0
                     ? '<p class="text-sm text-muted m-auto">No medical topics extracted. Add a custom topic below.</p>'
-                    : session.topicList.map((t, idx) => {
-                        const hasNote = session.existingNotesSet.has(t.name.toLowerCase());
-                        const isFrequent = session.frequentNotesSet.has(t.name.toLowerCase());
-                        const isIgnored = Boolean(t.ignored);
-
-                        let chipStyle = '';
-                        let textClass = '';
-                        if (isIgnored) {
-                            textClass = 'opacity-40 text-gray-400 line-through';
-                            chipStyle = 'border border-gray-600 bg-gray-800/40';
-                        } else if (t.selected) {
-                            textClass = t.verified ? 'font-semibold text-gray-100' : 'text-gray-200';
-                            if (isFrequent) {
-                                chipStyle = 'border-2 border-success-500 underline decoration-success-500 decoration-2 bg-success-500/35 shadow-md shadow-success-500/20';
-                            } else {
-                                chipStyle = 'border-2 border-success-500 underline decoration-success-500 decoration-2 bg-success-500/15 shadow-sm';
+                    : (() => {
+                        // Order chips: Unconfirmed candidates first (0), confirmed topics next-to-last (1), excluded/ignored topics last (2)
+                        const decorated = session.topicList.map((t, idx) => {
+                            let order = 0;
+                            if (t.ignored) {
+                                order = 2; // Excluded/ignored at the very end
+                            } else if (t.selected || t.verified) {
+                                order = 1; // Confirmed topics near the end
                             }
-                        } else {
-                            textClass = t.verified ? 'font-semibold text-gray-100' : 'opacity-60 text-muted font-normal';
-                            chipStyle = isFrequent ? 'border border-success-500/50 bg-success-500/10' : 'border border-gray-700 glass-panel';
-                        }
+                            return { t, origIdx: idx, order };
+                        });
+                        decorated.sort((a, b) => a.order - b.order || a.t.name.localeCompare(b.t.name));
 
-                        return `
-                            <div class="topic-verify-chip inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm cursor-pointer select-none transition-all ${textClass} ${chipStyle}"
-                                 data-idx="${idx}"
-                                 title="Single-click: Toggle selection | Double-click: ${isIgnored ? 'Unignore topic' : 'Add to permanent Ignore List'}">
-                                <span class="chip-label">${window.escapeHTML(t.name)}</span>${hasNote ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-success-500/20 text-success-300 no-underline" title="Notes already synthesized">✓ Cached</span>' : ''}${isFrequent ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-success-500/30 text-success-300 no-underline font-bold" title="Frequent note topic (>2)">★ Top Note</span>' : ''}${isIgnored ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-400 no-underline" title="Permanently Ignored (Double-click to unignore)">Ignored</span>' : ''}
-                                <button type="button" class="chip-edit-btn text-xs opacity-60 hover:opacity-100 bg-transparent border-none cursor-pointer ml-1 no-underline" data-idx="${idx}" title="Edit topic name">✎</button>
-                            </div>
-                        `;
-                    }).join('')}
+                        return decorated.map(({ t, origIdx }) => {
+                            const hasNote = session.existingNotesSet.has(t.name.toLowerCase());
+                            const isFrequent = session.frequentNotesSet.has(t.name.toLowerCase());
+                            const isIgnored = Boolean(t.ignored);
+
+                            let chipStyle = '';
+                            let textClass = '';
+                            if (isIgnored) {
+                                textClass = 'text-gray-400 line-through';
+                                chipStyle = 'border border-red-500/40 bg-red-500/15 shadow-inner shadow-red-500/10';
+                            } else if (t.selected) {
+                                textClass = t.verified ? 'font-semibold text-gray-100' : 'text-gray-200';
+                                if (isFrequent) {
+                                    chipStyle = 'border-2 border-success-500 underline decoration-success-500 decoration-2 bg-success-500/35 shadow-md shadow-success-500/20';
+                                } else {
+                                    chipStyle = 'border-2 border-success-500 underline decoration-success-500 decoration-2 bg-success-500/15 shadow-sm';
+                                }
+                            } else {
+                                textClass = t.verified ? 'font-semibold text-gray-100' : 'opacity-60 text-muted font-normal';
+                                chipStyle = isFrequent ? 'border border-success-500/50 bg-success-500/10' : 'border border-gray-700 glass-panel';
+                            }
+
+                            return `
+                                <div class="topic-verify-chip inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm cursor-pointer select-none transition-all ${textClass} ${chipStyle}"
+                                     data-idx="${origIdx}"
+                                     title="Single-click: Toggle selection | Double-click: ${isIgnored ? 'Unignore topic' : 'Add to permanent Ignore List'}">
+                                    <span class="chip-label">${window.escapeHTML(t.name)}</span>${hasNote ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-success-500/20 text-success-300 no-underline" title="Notes already synthesized">✓ Cached</span>' : ''}${isFrequent ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-success-500/30 text-success-300 no-underline font-bold" title="Frequent note topic (>2)">★ Top Note</span>' : ''}${isIgnored ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-900/60 border border-red-700/60 text-red-300 no-underline" title="Permanently Excluded (Double-click to unignore)">Excluded</span>' : ''}
+                                    <button type="button" class="chip-edit-btn text-xs opacity-60 hover:opacity-100 bg-transparent border-none cursor-pointer ml-1 no-underline" data-idx="${origIdx}" title="Edit topic name">✎</button>
+                                    <button type="button" class="chip-remove-btn text-xs opacity-50 hover:opacity-100 text-red-400 hover:text-red-300 bg-transparent border-none cursor-pointer ml-1 no-underline font-bold" data-idx="${origIdx}" title="Remove topic completely">✕</button>
+                                </div>
+                            `;
+                        }).join('');
+                    })()}
             </div>
 
             <!-- Add Custom Topic Bar -->

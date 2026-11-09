@@ -34,6 +34,25 @@ for _native_mod in ("onnxruntime", "lancedb", "tantivy"):
     except Exception:
         pass
 
+# Windows asyncio Proactor loop connection reset suppression (WinError 10054 / teardown)
+if sys.platform.startswith("win"):
+    try:
+        from functools import wraps
+        from asyncio.proactor_events import _ProactorBasePipeTransport
+
+        _orig_call_connection_lost = _ProactorBasePipeTransport._call_connection_lost
+
+        @wraps(_orig_call_connection_lost)
+        def _silent_call_connection_lost(self, exc):
+            try:
+                return _orig_call_connection_lost(self, exc)
+            except (ConnectionResetError, ConnectionAbortedError, RuntimeError, OSError):
+                pass
+
+        _ProactorBasePipeTransport._call_connection_lost = _silent_call_connection_lost
+    except Exception:
+        pass
+
 import uvicorn
 from core.database import initialize_database
 

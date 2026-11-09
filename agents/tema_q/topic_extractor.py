@@ -165,17 +165,37 @@ MEDSPACY_TARGET_RULES: List[Tuple[str, str, str, str]] = [
 ]
 
 
+class _PyFastNERLogFilter(logging.Filter):
+    """Filters noisy 'not a eligible syntax' log messages from PyFastNER/PyRuSH."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = str(record.getMessage())
+        if "not a eligible syntax" in msg or "not eligible" in msg:
+            return False
+        return True
+
+
 def _suppress_pyrush_logging() -> None:
-    """Silences verbose PyRuSH sentencizer debug loggers across standard logging and Loguru."""
-    logging.getLogger("PyRuSH").setLevel(logging.WARNING)
-    py_rush_logger = logging.getLogger("PyRuSH.PyRuSHSentencizer")
-    py_rush_logger.setLevel(logging.WARNING)
-    py_rush_logger.propagate = False
-    for h in list(py_rush_logger.handlers):
-        py_rush_logger.removeHandler(h)
+    """Silences verbose PyRuSH sentencizer debug loggers and PyFastNER syntax warnings."""
+    fastner_filter = _PyFastNERLogFilter()
+
+    # Filter root logger and all known rule parsers
+    for log_name in ("", "PyRuSH", "PyRuSH.PyRuSHSentencizer", "PyFastNER", "FastNER", "CFastCNER"):
+        l = logging.getLogger(log_name)
+        l.addFilter(fastner_filter)
+        if log_name:
+            l.setLevel(logging.WARNING)
+            l.propagate = False
+            for h in list(l.handlers):
+                l.removeHandler(h)
+
+    # Filter handlers attached to root logger
+    for h in logging.getLogger().handlers:
+        h.addFilter(fastner_filter)
+
     try:
         from loguru import logger as loguru_logger
         loguru_logger.disable("PyRuSH")
+        loguru_logger.disable("PyFastNER")
     except ImportError:
         pass
 
@@ -405,19 +425,39 @@ def get_ignored_topics_set(force_refresh: bool = False) -> Set[str]:
 
 
 def add_ignored_topic(term: str) -> bool:
-    """Adds a term to the persistent ignored_topics SQLite table, syncs Ignore_list.txt, and invalidates cache."""
+    """Adds a term to persistent ignored_topics, ensures mutual exclusivity by removing from verified/included lists, syncs flat files, and invalidates cache."""
     key = normalize_topic_key(term)
     if not key:
         return False
     try:
         with contextlib.closing(get_db_connection()) as conn:
             _ensure_ignored_topics_table_once(conn)
+            clean_term = str(term).strip()
             conn.execute(
                 "INSERT OR REPLACE INTO ignored_topics (topic_norm, original_text, created_at) VALUES (?, ?, ?)",
-                (key, str(term).strip(), time.time()),
+                (key, clean_term, time.time()),
             )
+            # Enforce mutual exclusivity: remove from frequent note topics and purge from topic.txt if present
+            conn.execute("DELETE FROM topic_note_counts WHERE topic_norm = ?", (key,))
+            # Remove from extracted_topics if table exists
+            try:
+                conn.execute(
+                    "DELETE FROM extracted_topics WHERE LOWER(topic_name) IN (LOWER(?), LOWER(?))",
+                    (clean_term, key),
+                )
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
             _sync_ignore_list_file_from_db(conn)
+
+            # Re-sync topic.txt without this newly ignored topic
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT original_text FROM topic_note_counts WHERE note_count > 2 ORDER BY original_text ASC"
+            )
+            rows = cursor.fetchall()
+            lines = [str(r[0]).strip() for r in rows if r and r[0] and str(r[0]).strip()]
+            TOPIC_LIST_FILE.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
         with _IGNORED_TOPICS_LOCK:
             if _IGNORED_TOPICS_CACHE is not None:
                 _IGNORED_TOPICS_CACHE.add(key)
@@ -451,6 +491,7 @@ def record_topic_note_selections(topics: List[str]) -> None:
     """
     Increments note selection counts for the given topics in SQLite topic_note_counts.
     If note_count > 2, persists the topic into topic.txt in the project root folder.
+    Guarantees mutual exclusivity: removes topic from ignored_topics if it is selected.
     """
     if not topics:
         return
@@ -458,6 +499,7 @@ def record_topic_note_selections(topics: List[str]) -> None:
         with contextlib.closing(get_db_connection()) as conn:
             _ensure_ignored_topics_table_once(conn)
             cursor = conn.cursor()
+            ignored_modified = False
             for t in topics:
                 if not t or not str(t).strip():
                     continue
@@ -465,6 +507,12 @@ def record_topic_note_selections(topics: List[str]) -> None:
                 key = normalize_topic_key(clean_t)
                 if not key or key == "general medical concept":
                     continue
+
+                # Remove from ignored_topics to ensure mutual exclusivity
+                del_res = conn.execute("DELETE FROM ignored_topics WHERE topic_norm = ?", (key,))
+                if del_res.rowcount > 0:
+                    ignored_modified = True
+
                 cursor.execute(
                     """
                     INSERT INTO topic_note_counts (topic_norm, original_text, note_count, updated_at)
@@ -477,6 +525,14 @@ def record_topic_note_selections(topics: List[str]) -> None:
                 )
             conn.commit()
 
+            if ignored_modified:
+                _sync_ignore_list_file_from_db(conn)
+                with _IGNORED_TOPICS_LOCK:
+                    for t in topics:
+                        k = normalize_topic_key(t)
+                        if _IGNORED_TOPICS_CACHE is not None and k:
+                            _IGNORED_TOPICS_CACHE.discard(k)
+
             cursor.execute(
                 "SELECT original_text FROM topic_note_counts WHERE note_count > 2 ORDER BY original_text ASC"
             )
@@ -485,6 +541,30 @@ def record_topic_note_selections(topics: List[str]) -> None:
             TOPIC_LIST_FILE.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     except Exception as exc:
         logger.warning("Error recording topic note selections: %s", exc)
+
+
+def remove_verified_note_topic(term: str) -> bool:
+    """Removes a topic from topic_note_counts and syncs topic.txt."""
+    key = normalize_topic_key(term)
+    if not key:
+        return False
+    try:
+        with contextlib.closing(get_db_connection()) as conn:
+            _ensure_ignored_topics_table_once(conn)
+            conn.execute("DELETE FROM topic_note_counts WHERE topic_norm = ?", (key,))
+            conn.commit()
+
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT original_text FROM topic_note_counts WHERE note_count > 2 ORDER BY original_text ASC"
+            )
+            rows = cursor.fetchall()
+            lines = [str(r[0]).strip() for r in rows if r and r[0] and str(r[0]).strip()]
+            TOPIC_LIST_FILE.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+        return True
+    except Exception as exc:
+        logger.warning("Error removing note topic '%s': %s", term, exc)
+        return False
 
 
 def get_frequent_note_topics_set() -> Set[str]:
@@ -498,6 +578,147 @@ def get_frequent_note_topics_set() -> Set[str]:
     except Exception as exc:
         logger.warning("Error retrieving frequent note topics: %s", exc)
         return set()
+
+
+def check_topic_files_sync_diff() -> Dict[str, Any]:
+    """
+    Compares Ignore_list.txt (excluded topics) and topic.txt (included/frequent note topics)
+    against the SQLite database. Returns whether differences exist and the exact added and deleted counts.
+    """
+    try:
+        with contextlib.closing(get_db_connection()) as conn:
+            _ensure_ignored_topics_table_once(conn)
+            cursor = conn.cursor()
+            cursor.execute("SELECT topic_norm, original_text FROM ignored_topics")
+            db_ignored = {r["topic_norm"]: r["original_text"] for r in cursor.fetchall()}
+
+            cursor.execute("SELECT topic_norm, original_text FROM topic_note_counts WHERE note_count > 2")
+            db_included = {r["topic_norm"]: r["original_text"] for r in cursor.fetchall()}
+
+        file_ignored = {}
+        if IGNORE_LIST_FILE.exists():
+            for line in IGNORE_LIST_FILE.read_text(encoding="utf-8").splitlines():
+                s = line.strip()
+                if s:
+                    k = normalize_topic_key(s)
+                    if k:
+                        file_ignored[k] = s
+
+        file_included = {}
+        if TOPIC_LIST_FILE.exists():
+            for line in TOPIC_LIST_FILE.read_text(encoding="utf-8").splitlines():
+                s = line.strip()
+                if s:
+                    k = normalize_topic_key(s)
+                    if k:
+                        file_included[k] = s
+
+        # Excluded (ignored) diffs
+        ignored_added = [file_ignored[k] for k in file_ignored if k not in db_ignored]
+        ignored_deleted = [db_ignored[k] for k in db_ignored if k not in file_ignored]
+
+        # Included (top note) diffs
+        included_added = [file_included[k] for k in file_included if k not in db_included]
+        included_deleted = [db_included[k] for k in db_included if k not in file_included]
+
+        has_changes = bool(ignored_added or ignored_deleted or included_added or included_deleted)
+        return {
+            "has_changes": has_changes,
+            "excluded": {
+                "added_count": len(ignored_added),
+                "deleted_count": len(ignored_deleted),
+                "added": ignored_added,
+                "deleted": ignored_deleted,
+            },
+            "included": {
+                "added_count": len(included_added),
+                "deleted_count": len(included_deleted),
+                "added": included_added,
+                "deleted": included_deleted,
+            },
+        }
+    except Exception as exc:
+        logger.error("Error diffing topic files with DB: %s", exc)
+        return {
+            "has_changes": False,
+            "excluded": {"added_count": 0, "deleted_count": 0, "added": [], "deleted": []},
+            "included": {"added_count": 0, "deleted_count": 0, "added": [], "deleted": []},
+        }
+
+
+def apply_topic_files_sync_update() -> Dict[str, Any]:
+    """
+    Synchronizes database state with flat files (Ignore_list.txt and topic.txt)
+    when user confirms the file update prompt.
+    """
+    diff = check_topic_files_sync_diff()
+    if not diff.get("has_changes"):
+        return {"status": "success", "message": "No changes to sync.", "diff": diff}
+
+    try:
+        with contextlib.closing(get_db_connection()) as conn:
+            _ensure_ignored_topics_table_once(conn)
+            cursor = conn.cursor()
+
+            # 1. Apply excluded (ignored) additions
+            for term in diff["excluded"]["added"]:
+                k = normalize_topic_key(term)
+                if k:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO ignored_topics (topic_norm, original_text, created_at) VALUES (?, ?, ?)",
+                        (k, term, time.time()),
+                    )
+                    conn.execute("DELETE FROM topic_note_counts WHERE topic_norm = ?", (k,))
+
+            # 2. Apply excluded (ignored) deletions
+            for term in diff["excluded"]["deleted"]:
+                k = normalize_topic_key(term)
+                if k:
+                    conn.execute("DELETE FROM ignored_topics WHERE topic_norm = ?", (k,))
+
+            # 3. Apply included additions
+            for term in diff["included"]["added"]:
+                k = normalize_topic_key(term)
+                if k:
+                    conn.execute(
+                        """
+                        INSERT INTO topic_note_counts (topic_norm, original_text, note_count, updated_at)
+                        VALUES (?, ?, 3, unixepoch('now'))
+                        ON CONFLICT(topic_norm) DO UPDATE SET
+                            note_count = MAX(note_count, 3),
+                            updated_at = unixepoch('now')
+                        """,
+                        (k, term),
+                    )
+                    conn.execute("DELETE FROM ignored_topics WHERE topic_norm = ?", (k,))
+
+            # 4. Apply included deletions
+            for term in diff["included"]["deleted"]:
+                k = normalize_topic_key(term)
+                if k:
+                    conn.execute("DELETE FROM topic_note_counts WHERE topic_norm = ?", (k,))
+
+            conn.commit()
+
+            # Refresh in-memory caches
+            with _IGNORED_TOPICS_LOCK:
+                global _IGNORED_TOPICS_CACHE, _IGNORED_TOPICS_CACHE_TIMESTAMP
+                _IGNORED_TOPICS_CACHE = None
+                _IGNORED_TOPICS_CACHE_TIMESTAMP = 0.0
+
+            # Rewrite flat files cleanly to ensure canonical formatting
+            _sync_ignore_list_file_from_db(conn)
+            cursor.execute(
+                "SELECT original_text FROM topic_note_counts WHERE note_count > 2 ORDER BY original_text ASC"
+            )
+            rows = cursor.fetchall()
+            lines = [str(r[0]).strip() for r in rows if r and r[0] and str(r[0]).strip()]
+            TOPIC_LIST_FILE.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+        return {"status": "success", "message": "Synchronized database with files.", "applied_diff": diff}
+    except Exception as exc:
+        logger.error("Error applying topic files sync update: %s", exc)
+        return {"status": "error", "message": str(exc), "diff": diff}
 
 
 # ---------------------------------------------------------------------------
@@ -1377,10 +1598,48 @@ def isolate_subclauses(text: str) -> List[Tuple[str, bool]]:
 
 
 # ---------------------------------------------------------------------------
-# Candidate Term Extractor
+# HTML Sanitization & Candidate Term Extractor
 # ---------------------------------------------------------------------------
+def clean_html_prose(text: str) -> str:
+    """
+    Cleans raw HTML/XML markup and unescapes entities from medical question/option text.
+    Ensures tags act as word boundaries instead of fusing neighboring words
+    (e.g., '<span>heart</span>failure' -> 'heart failure', 'acute<b>pancreatitis</b>' -> 'acute pancreatitis').
+    Also removes broken or unclosed tags.
+    """
+    if not text:
+        return ""
+    t = str(text)
+    try:
+        import html as _html
+        t = _html.unescape(t)
+    except Exception:
+        pass
+
+    # Replace break and block tags with explicit newlines/spaces
+    t = re.sub(r"<(?:br|p|div|li|tr|h[1-6])[\s/>]", " ", t, flags=re.IGNORECASE)
+    # Replace well-formed opening and closing HTML tags with whitespace so words don't get joined
+    t = re.sub(r"<\/?\w+(?:\s+[^<>]*)?>", " ", t)
+    # Strip unclosed tag fragments at the end of string (e.g. '<span style=...')
+    t = re.sub(r"<\/?\w+[^a-zA-Z0-9_\s>]*\b[^>]*$", " ", t)
+    # Strip stray leading tag closing fragment (e.g. 'div>text...')
+    t = re.sub(r"^[^<]*>", " ", t)
+    # Strip any remaining stray angle brackets
+    t = t.replace("<", " ").replace(">", " ")
+    # Collapse multiple whitespace characters into a single space
+    t = re.sub(r"[\t\r\n\xa0]+", " ", t)
+    t = re.sub(r" {2,}", " ", t)
+    return t.strip()
+
+
 def is_valid_clinical_candidate(term: str, ignored_keys: Set[str]) -> bool:
     """Validates candidate text against length, stopwords, and generic terms."""
+    if not term:
+        return False
+    # Reject raw or broken HTML fragments in candidate terms
+    if "<" in term or ">" in term or "</" in term:
+        return False
+
     term_clean = term.strip(".,;:?!'\"()[]{} \t\n\r")
     if not term_clean:
         return False
@@ -1583,7 +1842,9 @@ def extract_topics_local(
     Main extraction interface. Resolves clinical concepts, protects subtypes,
     and returns verified and doubtful classifications conforming to TopicExtractorOutputDict (Section 4).
     """
-    input_text = text if (text is not None and not question) else question
+    raw_input_text = text if (text is not None and not question) else question
+    input_text = clean_html_prose(raw_input_text)
+    explanation_clean = clean_html_prose(explanation)
     ignored_keys = get_ignored_topics_set()
     active_pipelines = _get_active_spacy_pipelines()
 
@@ -1609,7 +1870,7 @@ def extract_topics_local(
             option_texts = [str(v) for v in options if v]
 
         for opt in option_texts:
-            opt_clean = str(opt).strip()
+            opt_clean = clean_html_prose(str(opt).strip())
             # Strip MCQ option prefixes (e.g., "(A) Gout", "A. Gout", "1. Gout")
             opt_clean = re.sub(
                 r"^(?:\(?[A-Ea-e1-5]\)?[\.\)]\s*|\(?[A-Ea-e]\)\s*)", "", opt_clean
@@ -1647,7 +1908,7 @@ def extract_topics_local(
     # Bypasses brittle subclause splitting to prevent false-positive clause negation (e.g. "dyspnea but no asthma")
     narratives = [
         (input_text, "question", 1.0),
-        (explanation, "explanation", 0.9),
+        (explanation_clean, "explanation", 0.9),
     ]
 
     medspacy_nlp = get_medspacy_model()
@@ -2186,7 +2447,12 @@ __all__ = [
     "normalize_topic_key",
     "resolve_zim_topic",
     "record_topic_note_selections",
+    "remove_verified_note_topic",
     "get_frequent_note_topics_set",
+    "check_topic_files_sync_diff",
+    "apply_topic_files_sync_update",
+    "clean_html_prose",
+    "is_valid_clinical_candidate",
     "classify_medical_domain",
 ]
 
