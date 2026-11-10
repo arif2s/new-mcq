@@ -28,10 +28,14 @@ logger = logging.getLogger(__name__)
 _SLUG_REGEX = re.compile(r"[^a-z0-9]+")
 _BARE_INEQUALITY_RE = re.compile(r"<(?=\s*\d|\s*[=<>]|\s+[a-zA-Z])")
 _DANGEROUS_TAG_RE = re.compile(
-    r"<\s*/?\s*(?:script|iframe|object|embed|applet|meta|link|base)\b[^>]*>",
+    r"<\s*/?\s*(?:script|iframe|object|embed|applet|meta|link|base|form|svg|math|style)\b[^>]*>",
     flags=re.IGNORECASE,
 )
 _EVENT_ATTR_RE = re.compile(r"\s+on[a-z]+\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s>]+)", flags=re.IGNORECASE)
+_DANGEROUS_URI_ATTR_RE = re.compile(
+    r"""(\b(?:href|src|action)\s*=\s*["']?)\s*(?:javascript|vbscript|data\s*:\s*text/html)\s*:[^"'\s>]*""",
+    flags=re.IGNORECASE,
+)
 
 DOSSIER_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -204,11 +208,17 @@ _COMPILED_TEMPLATE = _JINJA_ENV.from_string(DOSSIER_TEMPLATE)
 
 
 def _sanitize_rendered_html(rendered: str) -> str:
-    """Strips dangerous tags and inline event handlers to satisfy Invariant 5."""
+    """Iteratively strips dangerous tags, inline event handlers, and script URI schemes (Invariant 5)."""
     if not rendered:
         return ""
-    cleaned = _DANGEROUS_TAG_RE.sub("", rendered)
-    cleaned = _EVENT_ATTR_RE.sub("", cleaned)
+    cleaned = rendered
+    while True:
+        next_cleaned = _DANGEROUS_TAG_RE.sub("", cleaned)
+        next_cleaned = _EVENT_ATTR_RE.sub("", next_cleaned)
+        next_cleaned = _DANGEROUS_URI_ATTR_RE.sub(r"\1#", next_cleaned)
+        if next_cleaned == cleaned:
+            break
+        cleaned = next_cleaned
     return cleaned
 
 

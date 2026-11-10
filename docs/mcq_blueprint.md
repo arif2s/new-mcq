@@ -688,7 +688,7 @@ def get_zim_article(zim_path: str, title: str) -> str:
 C. Report Generator (core/reporter.py)
 # core/reporter.py
 from pathlib import Path
-from jinja2 import Template
+from jinja2 import BaseLoader, Environment
 from config import REPORTS_DIR
 
 DOSSIER_TEMPLATE = """
@@ -729,12 +729,14 @@ DOSSIER_TEMPLATE = """
 </html>
 """
 
+_JINJA_ENV = Environment(loader=BaseLoader(), autoescape=True)
+
 def generate_topic_report(topic: str, search_results: dict, synthesis_output: dict):
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     slug = topic.lower().replace(" ", "_")
     output_path = REPORTS_DIR / f"{slug}_report.html"
 
-    template = Template(DOSSIER_TEMPLATE)
+    template = _JINJA_ENV.from_string(DOSSIER_TEMPLATE)
     html_content = template.render(topic=topic, search_results=search_results, synthesis=synthesis_output)
     output_path.write_text(html_content, encoding="utf-8")
 
