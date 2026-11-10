@@ -123,3 +123,38 @@ async def test_note_mode_and_markdown_extraction_sync():
     # Extracted topics should include Nephrotic syndrome
     items = create_res["items"]
     assert any(it["topic_text"] == "Nephrotic syndrome" for it in items)
+
+
+@pytest.mark.asyncio
+async def test_ignore_list_and_suppressed_topics_deduplication():
+    # Mock get_ignored_topics_set to include 'ignoredterm'
+    with patch("server.routes_notes.get_ignored_topics_set", return_value={"ignoredterm"}):
+        note_res = await upsert_lecture_note(LectureNoteMetaPayload(
+            title="Ignore Test Note",
+            note_mode="notes",
+            content_markdown="Patient with [[Asthma]] and [[IgnoredTerm]] and [[Asthma]]."
+        ))
+        note_id = note_res["note"]["note_id"]
+
+        synced = await extract_and_sync_note_topics(note_id, {"content_markdown": "Patient with [[Asthma]], [[ignoredterm]], [[Asthma]]."})
+        items = synced["items"]
+        topic_texts = [it["topic_text"].lower() for it in items]
+        # 'ignoredterm' should be excluded
+        assert "ignoredterm" not in topic_texts
+        # 'asthma' should not have duplicates
+        assert topic_texts.count("asthma") == 1
+
+        # Delete 'asthma' item
+        asthma_item = next(it for it in items if it["topic_text"].lower() == "asthma")
+        del_res = await delete_lecture_note_item(note_id, asthma_item["item_id"])
+        assert del_res["deleted"] is True
+
+        # Check suppressed_topics on note
+        refreshed = await get_single_lecture_note(note_id)
+        suppressed = refreshed["note"].get("suppressed_topics", [])
+        assert "asthma" in suppressed
+
+        # Re-syncing should not re-add asthma because it is now suppressed for this note
+        resynced = await extract_and_sync_note_topics(note_id, {"content_markdown": "Patient with [[Asthma]] again."})
+        resynced_texts = [it["topic_text"].lower() for it in resynced["items"]]
+        assert "asthma" not in resynced_texts

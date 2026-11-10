@@ -575,24 +575,34 @@ def _safe_lookup_pdf_topic_pages(clean_topic: str):
         return []
 
 
-from agents.tema_q.topic_extractor import extract_topics_local, normalize_topic_key
+from agents.tema_q.topic_extractor import extract_topics_local, get_ignored_topics_set, normalize_topic_key
 
 _WIKILINK_TOPIC_RE = re.compile(r"(?<!!)\[\[(?:([^|\]]+)\|)?([^\]]+)\]\]")
 
 
-def extract_topics_from_note_markdown(markdown_text: str) -> list[str]:
-    """Extracts guaranteed topics from [[Wikilinks]] and automated medical entities from prose."""
+def extract_topics_from_note_markdown(markdown_text: str, suppressed_keys: Optional[set[str]] = None) -> list[str]:
+    """Extracts guaranteed topics from [[Wikilinks]] and automated medical entities from prose, adhering to the global ignore list and suppressed keys."""
     if not markdown_text or not markdown_text.strip():
         return []
 
+    ignored_set = get_ignored_topics_set()
+    suppressed = suppressed_keys or set()
+
     seen: set[str] = set()
+    seen_texts: set[str] = set()
     ordered_topics: list[str] = []
 
     def _add(term: str) -> None:
         clean = (term or "").strip()
+        if not clean or len(clean) < 2:
+            return
         key = normalize_topic_key(clean)
-        if key and len(clean) >= 2 and key not in seen:
+        clean_lower = clean.lower()
+        if not key or key in ignored_set or key in suppressed or clean_lower in suppressed:
+            return
+        if key not in seen and clean_lower not in seen_texts:
             seen.add(key)
+            seen_texts.add(clean_lower)
             ordered_topics.append(clean)
 
     # 1. Explicit Obsidian [[Wikilink]] or [[Target|Alias]] notations
@@ -902,6 +912,7 @@ def _get_single_lecture_note_sync(note_id: str) -> Optional[Dict[str, Any]]:
             """
             SELECT note_id, title, shade_index, is_pinned,
                    note_mode, content_markdown, card_color,
+                   suppressed_topics_json,
                    created_at, updated_at
             FROM user_lecture_notes
             WHERE note_id = ?
@@ -911,6 +922,12 @@ def _get_single_lecture_note_sync(note_id: str) -> Optional[Dict[str, Any]]:
         note_row = cursor.fetchone()
         if not note_row:
             return None
+
+        note_dict = dict(note_row)
+        try:
+            note_dict["suppressed_topics"] = json.loads(note_dict.get("suppressed_topics_json") or "[]")
+        except Exception:
+            note_dict["suppressed_topics"] = []
 
         cursor.execute(
             """
@@ -934,17 +951,17 @@ def _get_single_lecture_note_sync(note_id: str) -> Optional[Dict[str, Any]]:
 
         return {
             "status": "success",
-            "note": dict(note_row),
+            "note": note_dict,
             "items": items,
         }
 
 
 def _extract_and_sync_note_topics_sync(note_id: str, markdown_override: Optional[str] = None) -> Dict[str, Any]:
-    """Extracts topics from note markdown and merges them into user_lecture_note_items."""
+    """Extracts topics from note markdown and merges them into user_lecture_note_items, adhering to the ignore list and note-suppressed topics."""
     with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT note_id, title, shade_index, is_pinned, note_mode, content_markdown, card_color, created_at, updated_at FROM user_lecture_notes WHERE note_id = ?",
+            "SELECT note_id, title, shade_index, is_pinned, note_mode, content_markdown, card_color, suppressed_topics_json, created_at, updated_at FROM user_lecture_notes WHERE note_id = ?",
             (note_id,),
         )
         note_row = cursor.fetchone()
@@ -952,6 +969,12 @@ def _extract_and_sync_note_topics_sync(note_id: str, markdown_override: Optional
             raise HTTPException(status_code=404, detail=f"Note '{note_id}' not found.")
 
         md_text = markdown_override if markdown_override is not None else (note_row["content_markdown"] or "")
+        suppressed_raw = note_row["suppressed_topics_json"] if "suppressed_topics_json" in note_row.keys() else "[]"
+        try:
+            suppressed_list = json.loads(suppressed_raw or "[]")
+        except Exception:
+            suppressed_list = []
+        suppressed_keys = {str(k).strip().lower() for k in suppressed_list if str(k).strip()}
 
         cursor.execute(
             "SELECT item_id, line_order, topic_text, topic_key FROM user_lecture_note_items WHERE note_id = ? ORDER BY line_order ASC",
@@ -959,9 +982,11 @@ def _extract_and_sync_note_topics_sync(note_id: str, markdown_override: Optional
         )
         existing_items = [dict(r) for r in cursor.fetchall()]
 
-    extracted_names = extract_topics_from_note_markdown(md_text)
+    from agents.tema_q.topic_extractor import get_ignored_topics_set, normalize_topic_key
+    ignored_set = get_ignored_topics_set()
 
-    from agents.tema_q.topic_extractor import normalize_topic_key
+    extracted_names = extract_topics_from_note_markdown(md_text, suppressed_keys=suppressed_keys)
+
     existing_keys = {r["topic_key"]: r for r in existing_items}
     existing_clean_text = {r["topic_text"].strip().lower() for r in existing_items}
 
@@ -970,7 +995,14 @@ def _extract_and_sync_note_topics_sync(note_id: str, markdown_override: Optional
     for term in extracted_names:
         clean_t = term.strip()
         t_key = normalize_topic_key(clean_t)
-        if t_key not in existing_keys and clean_t.lower() not in existing_clean_text:
+        if (
+            t_key
+            and t_key not in existing_keys
+            and clean_t.lower() not in existing_clean_text
+            and t_key not in ignored_set
+            and t_key not in suppressed_keys
+            and clean_t.lower() not in suppressed_keys
+        ):
             existing_keys[t_key] = True
             existing_clean_text.add(clean_t.lower())
             _upsert_lecture_note_item_sync(note_id, LectureNoteItemPayload(
@@ -1129,15 +1161,46 @@ def _delete_lecture_note_item_sync(note_id: str, item_id: str) -> bool:
     with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
         cursor.execute(
+            "SELECT topic_text, topic_key FROM user_lecture_note_items WHERE note_id = ? AND item_id = ?",
+            (note_id, item_id),
+        )
+        item_row = cursor.fetchone()
+
+        cursor.execute(
             "DELETE FROM user_lecture_note_items WHERE note_id = ? AND item_id = ?",
             (note_id, item_id),
         )
         deleted = cursor.rowcount > 0
         if deleted:
-            conn.execute(
-                "UPDATE user_lecture_notes SET updated_at = unixepoch('now') WHERE note_id = ?",
-                (note_id,),
-            )
+            # Register deleted topic key into suppressed_topics_json so it isn't automatically re-extracted
+            if item_row:
+                t_key = item_row["topic_key"]
+                t_text = (item_row["topic_text"] or "").strip().lower()
+                cursor.execute(
+                    "SELECT suppressed_topics_json FROM user_lecture_notes WHERE note_id = ?",
+                    (note_id,),
+                )
+                note_row = cursor.fetchone()
+                existing_suppressed: list = []
+                if note_row and note_row["suppressed_topics_json"]:
+                    try:
+                        existing_suppressed = json.loads(note_row["suppressed_topics_json"])
+                    except Exception:
+                        existing_suppressed = []
+                if t_key and t_key not in existing_suppressed:
+                    existing_suppressed.append(t_key)
+                if t_text and t_text not in existing_suppressed:
+                    existing_suppressed.append(t_text)
+
+                conn.execute(
+                    "UPDATE user_lecture_notes SET suppressed_topics_json = ?, updated_at = unixepoch('now') WHERE note_id = ?",
+                    (json.dumps(existing_suppressed), note_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE user_lecture_notes SET updated_at = unixepoch('now') WHERE note_id = ?",
+                    (note_id,),
+                )
         return deleted
 
 

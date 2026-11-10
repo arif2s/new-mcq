@@ -506,6 +506,7 @@ def initialize_database() -> None:
                 note_mode TEXT DEFAULT 'list',
                 content_markdown TEXT DEFAULT '',
                 card_color TEXT DEFAULT '',
+                suppressed_topics_json TEXT DEFAULT '[]',
                 created_at REAL DEFAULT (unixepoch('now')),
                 updated_at REAL DEFAULT (unixepoch('now'))
             );
@@ -560,6 +561,7 @@ def initialize_database() -> None:
             "note_mode TEXT DEFAULT 'list'",
             "content_markdown TEXT DEFAULT ''",
             "card_color TEXT DEFAULT ''",
+            "suppressed_topics_json TEXT DEFAULT '[]'",
         ):
             _safe_add_column(conn, "user_lecture_notes", col_def)
 

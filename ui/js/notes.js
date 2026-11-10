@@ -77,14 +77,22 @@ export async function sampleRandomBgCardColor() {
 /**
  * Highlights recognized medical topic names inside sanitized HTML as interactive clinical spans.
  */
-export function highlightRecognizedTopicsInHtml(safeHtml, topicsList) {
+export function highlightRecognizedTopicsInHtml(safeHtml, topicsList, suppressedList = []) {
   if (!safeHtml || !Array.isArray(topicsList) || topicsList.length === 0) return safeHtml;
   if (typeof document === 'undefined') return safeHtml;
+
+  const suppressedSet = new Set((suppressedList || []).map(s => String(s || '').trim().toLowerCase()));
 
   const container = document.createElement('div');
   container.innerHTML = safeHtml;
   const sortedTopics = [...topicsList]
-    .filter(t => t && t.topic_text && t.topic_text.trim().length >= 3)
+    .filter(t => {
+      if (!t || !t.topic_text || t.topic_text.trim().length < 3) return false;
+      const lower = t.topic_text.trim().toLowerCase();
+      const key = (t.topic_key || '').trim().toLowerCase();
+      if (suppressedSet.has(lower) || (key && suppressedSet.has(key))) return false;
+      return true;
+    })
     .sort((a, b) => b.topic_text.length - a.topic_text.length);
 
   if (!sortedTopics.length) return safeHtml;
@@ -257,6 +265,7 @@ export class LectureNoteEditor {
     this.isReadingMode = true; // For 'notes' view: toggles between Markdown editor and reading preview
     this.carouselActiveIndex = 0;
     this.isCarouselOpen = false;
+    this.isExtractingTopics = false;
   }
 
   async openNote(noteId) {
@@ -418,15 +427,31 @@ export class LectureNoteEditor {
   }
 
   _renderListModeContent() {
+    const isPopulating = this.isExtractingTopics;
     return `
       <div class="text-[11px] text-slate-300/80 mb-2 flex items-center justify-between px-2 shrink-0">
         <span><strong>Tip:</strong> Press <kbd class="px-1.5 py-0.5 rounded bg-slate-900/80 border border-white/10">Enter</kbd> to lock topic &amp; move to next line. <strong>Single-click</strong> topic for References &amp; MCQs; <strong>Double-click</strong> topic text to edit.</span>
         <span class="uppercase tracking-wider font-semibold text-slate-400">References &amp; MCQs</span>
       </div>
 
+      ${isPopulating ? `
+        <!-- Populating Notice Banner -->
+        <div id="note-populating-banner" class="mb-3 px-3.5 py-2.5 rounded-xl bg-sky-500/15 border border-sky-400/40 text-sky-200 text-xs flex items-center gap-2.5 animate-pulse shrink-0">
+          <svg class="animate-spin h-4 w-4 text-sky-300 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+          </svg>
+          <span class="font-medium">Populating... Please wait while the topic list is being found out.</span>
+        </div>
+      ` : ''}
+
       <!-- Locked Topic Lines Container -->
       <div id="note-topic-lines-list" class="flex-1 overflow-y-auto space-y-1.5 pr-1">
-        ${this.items.map((item, idx) => this._renderLockedTopicRowHtml(item, idx + 1)).join('')}
+        ${this.items.length === 0 && isPopulating ? `
+          <div class="p-8 text-center text-xs text-sky-300/80 bg-slate-950/30 rounded-xl border border-sky-500/20">
+            Scanning note text for medical topics &amp; references...
+          </div>
+        ` : this.items.map((item, idx) => this._renderLockedTopicRowHtml(item, idx + 1)).join('')}
       </div>
 
       <!-- Active New-Line Input at Bottom -->
@@ -580,8 +605,9 @@ export class LectureNoteEditor {
       safeHtml = this._escapeHtml(rawMd).replace(/\n/g, '<br>');
     }
 
-    // Highlight recognized topics in HTML
-    const highlightedHtml = highlightRecognizedTopicsInHtml(safeHtml, this.items);
+    // Highlight recognized topics in HTML (excluding any suppressed / deleted topics)
+    const suppressed = (this.note && this.note.suppressed_topics) || [];
+    const highlightedHtml = highlightRecognizedTopicsInHtml(safeHtml, this.items, suppressed);
     viewport.innerHTML = highlightedHtml;
 
     // Attach double-click listener to switch to editing mode
@@ -748,21 +774,21 @@ export class LectureNoteEditor {
     const okBtn = this.workspaceEl.querySelector('#btn-note-editor-ok');
     const switchToEditBtn = this.workspaceEl.querySelector('#btn-switch-to-edit');
 
-    closeBtn?.addEventListener('click', async () => {
-      await this.savePendingEdits();
+    closeBtn?.addEventListener('click', () => {
+      this.savePendingEdits();
       if (this.rightDrawerEl) this.rightDrawerEl.classList.add('hidden');
       this.onBack();
     });
 
-    modeToggle?.addEventListener('click', async (e) => {
+    modeToggle?.addEventListener('click', (e) => {
       const btn = e.target.closest('.note-mode-toggle-btn');
       if (!btn) return;
       const targetMode = btn.dataset.mode;
       if (targetMode === this.note.note_mode) return;
 
-      await this.savePendingEdits();
+      this.savePendingEdits();
       this.note.note_mode = targetMode;
-      await this._saveNoteMetadata();
+      this._saveNoteMetadata();
       this.renderEditor();
     });
 
@@ -771,15 +797,18 @@ export class LectureNoteEditor {
       this.renderEditor();
     });
 
-    okBtn?.addEventListener('click', async () => {
+    okBtn?.addEventListener('click', () => {
       const textarea = this.workspaceEl.querySelector('#note-markdown-textarea');
       if (textarea) {
         this.note.content_markdown = textarea.value;
       }
-      await this._saveNoteMetadata();
-      await this._extractAndSyncTopics();
+      // Immediately switch to Reading Mode without UI stutter
       this.isReadingMode = true;
       this.renderEditor();
+
+      // Run autosave and topic extraction in background non-blockingly
+      this._saveNoteMetadata();
+      this._extractAndSyncTopics();
     });
 
     titleInput?.addEventListener('input', () => {
@@ -871,6 +900,9 @@ export class LectureNoteEditor {
   }
 
   async _extractAndSyncTopics() {
+    this.isExtractingTopics = true;
+    this._updatePopulatingIndicator();
+
     try {
       const res = await fetch(`/api/notes/${encodeURIComponent(this.note.note_id)}/extract-topics`, {
         method: 'POST',
@@ -884,9 +916,52 @@ export class LectureNoteEditor {
         if (Array.isArray(data.items)) {
           this.items = data.items;
         }
+        if (data.note && Array.isArray(data.note.suppressed_topics)) {
+          this.note.suppressed_topics = data.note.suppressed_topics;
+        }
       }
     } catch (err) {
       console.error('[LectureNoteEditor] Failed to extract topics:', err);
+    } finally {
+      this.isExtractingTopics = false;
+      this._updatePopulatingIndicator();
+
+      const mode = (this.note.note_mode || 'list').toLowerCase();
+      if (mode === 'notes' && this.isReadingMode) {
+        this._hydrateReadingMode();
+      } else if (mode === 'list') {
+        const listEl = this.workspaceEl.querySelector('#note-topic-lines-list');
+        if (listEl) {
+          listEl.innerHTML = this.items.map((it, idx) => this._renderLockedTopicRowHtml(it, idx + 1)).join('');
+        }
+        const nextNumEl = this.workspaceEl.querySelector('#next-line-num');
+        if (nextNumEl) nextNumEl.textContent = `#${this.items.length + 1}`;
+      }
+    }
+  }
+
+  _updatePopulatingIndicator() {
+    const existingBanner = this.workspaceEl.querySelector('#note-populating-banner');
+    const mode = (this.note.note_mode || 'list').toLowerCase();
+    if (this.isExtractingTopics && mode === 'list') {
+      if (!existingBanner) {
+        const bodyEl = this.workspaceEl.querySelector('#note-mode-body');
+        const tipEl = bodyEl?.firstElementChild;
+        if (tipEl) {
+          const bannerHtml = `
+            <div id="note-populating-banner" class="mb-3 px-3.5 py-2.5 rounded-xl bg-sky-500/15 border border-sky-400/40 text-sky-200 text-xs flex items-center gap-2.5 animate-pulse shrink-0">
+              <svg class="animate-spin h-4 w-4 text-sky-300 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+              </svg>
+              <span class="font-medium">Populating... Please wait while the topic list is being found out.</span>
+            </div>
+          `;
+          tipEl.insertAdjacentHTML('afterend', bannerHtml);
+        }
+      }
+    } else {
+      if (existingBanner) existingBanner.remove();
     }
   }
 
@@ -1015,11 +1090,27 @@ export class LectureNoteEditor {
 
   async _deleteTopicLine(itemId) {
     try {
+      const deletedItem = this.items.find((i) => i.item_id === itemId);
       await fetch(`/api/notes/${encodeURIComponent(this.note.note_id)}/items/${encodeURIComponent(itemId)}`, {
         method: 'DELETE'
       });
       this.items = this.items.filter((i) => i.item_id !== itemId);
       this.items.forEach((i, idx) => { i.line_order = idx; });
+
+      // Track deleted topic into suppressed_topics so it is not re-highlighted or re-extracted
+      if (deletedItem) {
+        if (!Array.isArray(this.note.suppressed_topics)) {
+          this.note.suppressed_topics = [];
+        }
+        if (deletedItem.topic_key && !this.note.suppressed_topics.includes(deletedItem.topic_key)) {
+          this.note.suppressed_topics.push(deletedItem.topic_key);
+        }
+        const lowerText = (deletedItem.topic_text || '').trim().toLowerCase();
+        if (lowerText && !this.note.suppressed_topics.includes(lowerText)) {
+          this.note.suppressed_topics.push(lowerText);
+        }
+      }
+
       if (this.activeItemId === itemId) {
         this.activeItemId = null;
         if (this.rightDrawerEl) this.rightDrawerEl.classList.add('hidden');
