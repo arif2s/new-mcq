@@ -43,7 +43,8 @@
 │       ├── pipeline.py                # 2-pass iterative LLM synthesis coordinator with token budgeting, VLM page notes, and LM Studio integration.
 │       ├── auditor.py                 # Primary clinical discrepancy, staging variance detection, word budget enforcement, and JSON node merger.
 │       ├── session_processor.py       # Async session processor for background RAG, multi-article context budgeting (500w/1000w), and task execution.
-│       └── prompts.py                 # Strict token-budgeted medical RAG prompts, multi-article synthesis templates, and stop-token definitions.
+│       ├── prompts.py                 # Strict token-budgeted medical RAG prompts, multi-article synthesis templates, and stop-token definitions.
+│       └── telemetry.py               # Full-pipeline diagnostic telemetry, HeadingDispatchTrace, PipelineDiagnosticTrace, and automated anomaly detection.
 ├── core/
 │   ├── database.py                    # SQLite schema initialization, WAL/MMAP PRAGMAs, question_metadata tracking, and atomic transaction helpers.
 │   ├── model_lifecycle.py             # LazyModelHolder for low-RAM lazy loading and idle memory eviction of heavy models.
@@ -73,6 +74,7 @@
 │   │   ├── strategies.py              # Layout strategy hierarchy, vertical wrapped element merging (_merge_wrapped_elements), acronym tail recovery, and subheadings.
 │   │   ├── engine.py                  # IndraModularEngine, FallbackChain (ONNX, pdfplumber, pypdfium2), 2D table grid builder, chromatic pill banner recovery.
 │   │   ├── document.py                # Dual-mode lazy & streaming TOC tracking (DocumentHeadingTracker) with v37 disk caching and cross-page hierarchy compilation.
+│   │   ├── heading_calibrator.py      # Multi-step layout box and heading calibrator with hard exclusions, HSV color hues, sibling outline consistency, and consensus scoring.
 │   │   └── refiner.py                 # IndraHybridLayoutRefiner and interactive SVG bounding box overlay generator with deduplicated heading emission.
 │   ├── pdf_extractor.py               # Lightweight PyMuPDF fallback fast text slicer with page heading detection and layout reconstruction.
 │   ├── obsidian_reader.py             # Obsidian markdown frontmatter stripper, wikilink cleaner, and section reader.
@@ -118,7 +120,8 @@
         ├── test_features.js           # Interactive feature test bench (PDF, DB search, models, KaTeX, pipeline runner).
         ├── analysis.js                # Visual PDF layout analysis workspace, bbox drag/resize (interact.js), category tagger, auto-save.
         ├── analysis_toc.js            # Table of Contents hierarchical validation workspace, heading tree, tier shifting (H1-H6).
-        └── reader.js                  # Reader view initialization wrapper, in-app document viewer, and modal controller.
+        ├── reader.js                  # Reader view initialization wrapper, in-app document viewer, and modal controller.
+        └── notes.js                   # 'My Notes' Lecture Topic Pad controller, wallpaper-derived card shades, pagination, topic line-locking, and inline editing.
 ```
 
 ---
@@ -139,6 +142,7 @@
 - `agents.__init__`: Central package re-exporting `detect_clinical_variances`, `merge_json_nodes`, `filter_novel_secondary_sentences`, `audit_synthesized_note`, `extract_topics`, `extract_topics_local`, `filter_sibling_topics`, `get_topic_aliases`, `generate_candidate_variants`, `canonicalize_clinical_phrase`, `extract_clinical_modifiers`, `extract_all_clinical_modifiers`, `get_ignored_topics_set`, `add_ignored_topic`, `remove_ignored_topic`, `normalize_topic_key`, `resolve_zim_topic`, `get_medspacy_model` from `agents.tema_q`.
 - `agents.tema_q.topic_extractor`:
   - `extract_topics(text: str, explanation: str = "", strategy: str = "medspacy", use_zim_refinement: bool = False, use_tantivy_refinement: bool = False, **kwargs) -> list[str]`
+  - `clean_html_prose(text: str) -> str`: Robustly strips HTML/XML tags and converts inline/block elements into clear whitespace boundaries, preventing word concatenation across tags and filtering malformed HTML fragments.
   - `extract_topics_local(question: str = "", options: Optional[Any] = None, explanation: str = "", strategy: str = "medspacy", use_zim_refinement: bool = False, use_tantivy_refinement: bool = False, text: Optional[str] = None, **kwargs) -> dict[str, Any]`: Uses MedSpaCy ConText negation and clinical target rules to bind CUIs and semantic categories directly, bypassing brittle subclause splitting to prevent false-positive clause negation (e.g. "dyspnea but no asthma"); uses thread-local SQLite pooling (`_get_thread_db_connection()`) and LRU caching (`maxsize=16384`).
   - `filter_sibling_topics(query: str, chunks: list[dict]) -> list[dict]`
   - `get_topic_aliases(term: str, max_aliases: int = 20) -> list[str]`
@@ -172,17 +176,28 @@
   - `process_session_llm_tasks(session_id: str, worker: Optional[Any] = None) -> None`
 - `agents.tema_q.subtopic_router`:
   - `clean_prose_for_synthesis(text: str) -> str`: Strips Markdown/HTML tables, image links, embeds, figure captions, and visual clutter to produce clean clinical prose.
+  - `sanitize_clinical_prose(text: str) -> str`: Pre-processes text by converting HTML headings to markdown, safely stripping HTML tags while preserving inequalities, and eliminating figures and visual clutter without discarding terminal clinical statements.
+  - `split_clinical_sentences(text: str) -> list[str]`: Protects Latin/medical abbreviations (`e.g.`, `i.e.`, `vs.`, `dr.`, `prof.`, `st.`, `fig.`, `figs.`, `tab.`, `tabs.`, `sp.`, `ssp.`, `et al.`, `i.v.`, `i.m.`, `p.o.`, `s.c.`, `b.i.d.`, `t.i.d.`, `q.i.d.`, `q.d.`, `q.h.s.`, `p.r.n.`, `c.f.`) from false terminal sentence splits.
   - `route_paragraphs_to_subtopics(paragraphs: list[str], domain: str) -> dict[str, list[str]]`: Routes prose paragraphs across 7 domain-specific subtopic schemas (`DOMAIN_SUBTOPIC_SCHEMAS`) via lexical keyword and ONNX embedding scoring.
   - `normalize_subtopic_stem(term: str) -> str`: Normalizes subtopic stems and plural forms (`-oses` -> `-osis`, `-ies` -> `-y`, `-es`, `-s`).
 - `agents.tema_q.json_utils`:
-  - `parse_llm_json(raw: str) -> dict[str, Any] | list[Any]`: Resilient JSON repair engine; strips `<think>` reasoning and markdown fences, fixes trailing commas, balances brackets, and parses arbitrary LLM outputs safely.
+  - `parse_llm_json(raw: str) -> dict[str, Any] | list[Any]`: Resilient JSON repair engine; strips `<think>` reasoning and markdown fences, fixes trailing commas, balances brackets via LIFO lexical scanner (`_repair_truncated_json_lifo`), and parses arbitrary LLM outputs safely.
+  - `extract_and_repair_json(raw_text: str) -> tuple[str, bool]`: Extracts JSON snippets bounded by delimiters and invokes lexical repair on truncated or unbalanced cutoffs.
+  - `_repair_truncated_json_lifo(json_str: str) -> str`: Single-pass quote- and escape-aware lexical state machine maintaining a LIFO delimiter stack to repair truncated JSON structures, dangling key-value cut points (`: null`), and trailing commas.
   - `parse_llm_pydantic(raw: str, schema_cls: type[T]) -> T | None`: Repairs JSON and validates schema via Pydantic (`ExtractedTopicsPayload`, `SubtopicCluster`, `SubtopicRoutePayload`, `SynthesizedNotePayload`, `MCQItemPayload`, `AuditVerdictPayload`).
 - `agents.tema_q.prompts`: `STOP_TOKENS: list[str]`, `PASS1_CLINICAL_SYSTEM_PROMPT: str`, `PASS2_AUDIT_SYSTEM_PROMPT: str`, `DISTRACTOR_ANALYSIS_PROMPT: str`, `EXPLANATION_GENERATION_PROMPT: str`, `VLM_PAGE_SYNTHESIS_SYSTEM_PROMPT: str`, `MULTI_ARTICLE_SYNTHESIS_PROMPT_TEMPLATE: str`
+- `agents.tema_q.telemetry`:
+  - `class HeadingDispatchTrace`: Tracks heading block dispatches, breadcrumbs (`H1 > H2 > H3`), prompt lengths, generation times, and token usage.
+  - `class PipelineDiagnosticTrace`: Full telemetry trace capturing model name, topic, execution duration, auditor merge events, token counts, and automated anomaly flags.
+  - `persist_diagnostic_trace(trace: PipelineDiagnosticTrace, trace_dir: Optional[Path] = None) -> str`: Persists serialized diagnostic trace JSON to disk (`storage/reports/pipeline_traces/`).
 
 ### Core Modules (`core/`)
 - `core.database`:
   - `get_db_connection() -> sqlite3.Connection` (configured per-connection with `WAL`, `busy_timeout=20000`, `foreign_keys=ON`, `synchronous=NORMAL`, `mmap_size=536870912`, `temp_store=MEMORY`, `cache_size=-64000`)
+  - `atomic_transaction(conn: sqlite3.Connection)`: Context manager executing `BEGIN IMMEDIATE` transaction ensuring atomic claiming, isolation, and immediate lock resolution across worker threads.
   - `initialize_database() -> None` (executes 4-stage initialization: table & FTS5 trigger creation -> idempotent column & `task_queue` FK removal migrations -> index creation -> `csv_questions_fts_docsize` external-content FTS5 rebuild check)
+  - `add_column_safely(conn: sqlite3.Connection, table_name: str, column_name: str, column_type: str) -> None`: Safe dynamic schema migration helper validating identifiers against `^[a-zA-Z0-9_]+$` and types against `_ALLOWED_COLUMN_TYPES` to eliminate DDL injection.
+  - `normalize_db_file_path(file_path: str) -> str`: Normalizes file paths to lowercase forward-slash canonical strings to guarantee SQLite foreign and primary key consistency across OS platforms.
   - `record_question_attempt(conn: sqlite3.Connection, question_id: str | int, is_correct: bool, attempt_ts: float | None = None, verified_topics: list | None = None, cached_refs: dict | None = None, llm_summary: str | None = None) -> None`: Fast indexed upsert into `question_metadata` tracking attempts, wrong counts, and cached references/summaries.
   - `update_question_verified_topics(conn: sqlite3.Connection, question_id: str | int, verified_topics: list, cached_refs: dict | None = None, llm_summary: str | None = None) -> None`: Updates or initializes verified topics and cached metadata for a question in `question_metadata`.
 - `core.queue_manager`:
@@ -195,11 +210,13 @@
   - `get_session_queue_info(session_id: str) -> dict[str, Any]`
   - `prioritize_session_tasks(session_id: str) -> int`
 - `core.scheduler`:
-  - `get_fsrs_parameters() -> dict[str, Any]`: Reads user-configured FSRS parameters (`requested_retention`, `max_interval_days`, `easy_bonus`, `hard_factor`) from SQLite `user_state` with safe defaults.
+  - `class CachedFSRSConfigProvider`: Thread-safe in-memory cache with 300s TTL for FSRS retention and interval parameters, preventing N+1 database queries on high-throughput quiz runs; supports `invalidate()` upon parameter mutations.
+  - `get_fsrs_parameters() -> dict[str, Any]`: Reads user-configured FSRS parameters (`requested_retention`, `max_interval_days`, `easy_bonus`, `hard_factor`) from SQLite `user_state` with safe defaults via `CachedFSRSConfigProvider`.
   - `map_fsrs_state_to_status(state: int, stability: float = 0.0, reps: int = 0) -> str`: Maps FSRS numeric state and stability to UI status labels (`'new'`, `'learning'`, `'review'`, `'mastered'`).
   - `calculate_fsrs_next_interval(rating: int, state: int, difficulty: float, stability: float, reps: int, lapses: int, now: Optional[float] = None, requested_retention: Optional[float] = None, max_interval_days: Optional[int] = None) -> dict[str, Any]`: Computes updated FSRS v4.5 metrics using exact power-law interval scaling ($I = S \cdot \text{scaler}$ adhering to user-configured retention and capped at `max_interval_days`), $D_0(3)$ mean reversion, stability floor protection ($\ge 0.1$), and optional `due_timestamp` calculation; when `rating == 1` ('Again'), forces `interval_days = 0`, `interval_seconds = 0`, and sets `due_timestamp = now` so lapsed cards repeat on the next quiz set; returns `FSRS Stats Dict`.
 - `core.model_lifecycle`:
   - `class LazyModelHolder`: Thread-safe lazy loader and memory releaser (`is_loaded`, `get()`, `release_memory()`, `unload_if_idle(ttl_override)`) supporting zero-VRAM baseline and automatic idle memory eviction.
+  - `get_gpu_enabled_subprocess_env() -> dict[str, str]`: Generates a clean child subprocess environment removing empty or "-1" `CUDA_VISIBLE_DEVICES` so external LLMs can access GPU while backend remains bounded on CPU.
 - `core.topic_filter`:
   - `load_ignore_set() -> frozenset[str]`: LRU-cached loader reading stopwords and operational noise tokens from `Ignore_list.txt`.
   - `is_valid_topic(topic: str | None) -> bool`: Validates candidate topics; rejects strings < 3 chars, purely non-alphanumeric text, and phrases consisting entirely of ignored tokens.
@@ -259,7 +276,8 @@
   - `parsers.indra.strategies`: `LayoutStrategy`, `NativeDigitalStrategy`, `ScannedTwoColumnTextbookStrategy`, `IllustratedBookletStrategy`, `AcademicArticleStrategy`, `LayoutStrategyRegistry`; provides `_merge_wrapped_elements` (parenthetical acronym tails, *Situation multi-line exemptions) and clinical subheading classification a)-d).
   - `parsers.indra.engine`: `FallbackChain`, `IndraModularEngine(mode, math, furniture, dpi, threads, image_ocr)`, `reconstruct_2d_table_grid(words, ...)`, `_crosses_dynamic_channel`, `_detect_and_ocr_chromatic_pill_banners`, physiological subscript attachment (PaO2, PaCO2) with zero-VRAM CPU/opportunistic GPU routing, `extract_page_with_indra`, `extract_pdf_structure`, `extract_structured_layout`, `ingest_to_lancedb`, and consolidated heading calibration `extract_page_with_indra_base_heading_opt`.
   - `parsers.indra.document`: `DocumentHeadingTracker(root_title)`, `get_or_create_document_tracker(file_path, default_title, reset, target_page, full_scan, progress_callback)`; supports dual-mode lazy & streaming TOC tracking with v37 disk caching (`_get_toc_disk_cache_path`).
-  - `parsers.indra.refiner`: `IndraHybridLayoutRefiner(page_elements)`, `build_layout_svg_overlay(page_elements, width, height)`; deduplicates consensus lines and suppresses duplicate heading/list item emissions in output markdown.
+  - `parsers.indra.heading_calibrator`: `calibrate_headings_multistep(elements: list, profile: LayoutProfile) -> list`; multi-step layout box and heading calibrator with hard exclusions, HSV color-hue extraction differentiating chromatic headings, sibling outline consistency, prose demotion vetoes, and bidirectional consensus scoring (threshold >= 0.60).
+- `parsers.indra.refiner`: `IndraHybridLayoutRefiner(page_elements)`, `build_layout_svg_overlay(page_elements, width, height)`; deduplicates consensus lines and suppresses duplicate heading/list item emissions in output markdown.
 - `parsers.schema`:
   - Canonical AST data schema defining `BoundingBox`, `ParsedBlock`, `HeadingNode`, `DocumentSection`, `ParsedDocument`, and `clamp_heading_levels(sections)` re-exported across Docling and Indra.
 - `parsers.pdf_extractor`:
@@ -271,9 +289,14 @@
   - `get_pdf_page_count(file_path: Union[str, Path]) -> int`: Fast trailer-based page count reader.
 
 - `parsers.obsidian_reader`:
-  - `read_markdown_body(file_path: Union[str, Path]) -> str`: LRU-cached (maxsize=512) frontmatter, comment, and wikilink stripper; handles Windows UTF-8 BOM (`utf-8-sig`) and returns cleaned plain text.
-  - `extract_obsidian_sections(file_path: Union[str, Path]) -> list[dict]`: Layout-aware section extractor; protects fenced code blocks from false heading parsing, suppresses phantom sections, and returns complete dictionaries adhering strictly to `ChunkDict` (`id`, `doc_id`, `text`, `snippet`, `title`, `heading`, `heading_path`, `subheading`, `source="obsidian"`, `file_path`, `page=1`, `page_number=1`, `doc_length`, `article_length`).
-  - `read_obsidian_for_browser(file_path: Union[str, Path]) -> dict[str, Any]`: Prepares notes for SPA client rendering; rewrites image embeds to `/api/sources/asset` and wikilinks to `.citation-link` anchors carrying `data-source-type="obsidian"`, `data-file-path`, `data-page="1"`, and optional `data-anchor`.
+  - `read_markdown_body(file_path: Union[str, Path], allowed_root: Optional[Union[str, Path]] = None) -> str`: Reads Obsidian notes with strict path traversal confinement (`is_relative_to`), null-byte checks, and start-anchored YAML frontmatter stripping preserving intermediate markdown rules.
+  - `extract_obsidian_sections(file_path: Union[str, Path]) -> list[dict]`: Layout-aware section extractor segmenting notes by heading level (H1-H6).
+  - `read_obsidian_for_browser(file_path: Union[str, Path]) -> dict[str, Any]`: Prepares notes for SPA rendering, resolving wikilinks and embedding section anchors.
+  - `heading_slug(text: str) -> str`: Deterministic URI-safe slug generator for section heading anchors (`heading-{slug}`).
+  - `extract_heading_sections(markdown_body: str) -> list[dict[str, Any]]`: Slices markdown bodies into hierarchical heading sections with slugs, line ranges, and cleaned titles.
+  - `class ObsidianNoteRecord`: Structured dataclass representing note metadata, titles, book affiliations, links, and search texts.
+  - `class ObsidianVaultGraph`: In-memory and SQLite-backed graph indexer caching notes (`obsidian_notes`), clinical subheading synonyms (`CLINICAL_SUBHEADING_SYNONYMS`), and unified section search (`search_notes_and_sections`).
+  - `convert_obsidian_markdown_to_html_ready(markdown_text: str, current_book: str = "") -> str`: Prepares obsidian markdown into HTML-ready text with anchor IDs and obsidian-wikilink attributes.
 - `parsers.zim_reader`:
   - `class ZimAsset(tuple)`: Polyfill supporting `tuple[bytes, str]` unpacking and dictionary/property access (`.content`, `.mimetype`, `.zim_path`).
   - `get_enabled_zim_paths(force_refresh: bool = False) -> list[str]`
@@ -335,6 +358,7 @@
   - `POST /api/analysis/save-markdown` -> `save_markdown_override(req: SaveMarkdownRequest) -> dict[str, Any]`: Persists manual full-document or page-level markdown override text.
   - `GET /api/analysis/toc` -> `get_document_toc(file_path: str) -> dict[str, Any]`: Compiles hierarchical document heading tree from saved page bounding boxes (`element_type='header'`) and layout strategies.
   - `POST /api/analysis/update-heading` -> `update_heading_level(req: UpdateHeadingRequest) -> dict[str, Any]`: Modifies heading tier level (H1-H6) for an annotated header bounding box in `user_annotated_bboxes`.
+  - `POST /api/analysis/pipeline-benchmark`: Executes deterministic multi-model benchmark evaluation across RAG synthesis stages.
   - `POST /api/analysis/finalize` -> `finalize_analysis(req: FinalizeAnalysisRequest) -> dict[str, Any]`: Compiles all reviewed page bboxes into unified markdown, optionally exports to LanceDB via `parsers.docling.engine.ingest_to_lancedb()`, marks progress as `completed`, and updates source status.
 - `server.routes_csv`:
   - `scan_and_ingest_csvs() -> dict[str, Any]`: Recursively scans `CSV_DIR` and `MCQS_DIR`, normalizes diverse option/answer representations (numbers 1-4, bracketed letters, verbatim text matches), and executes chunked (`BATCH_SIZE=1000`) `INSERT OR IGNORE` queries into `csv_questions`.
@@ -350,6 +374,7 @@
   - `GET /api/csv/diagnostics/lm_studio` & `GET /api/mcq/diagnostics/lm_studio` -> `check_lm_studio() -> dict[str, Any]`: Legacy compatibility alias for `/api/models/diagnostics/lm_studio`.
   - `POST /api/mcq/topics_status`, `POST /api/mcq/topics/status`, `POST /api/csv/topics_status` -> `topics_status(req: TopicsStatusRequest) -> dict[str, Any]`: Checks existing dossiers, references (via polymorphic validation), and ignored status.
 - `server.routes_mcq`:
+  - `GET /api/mcq/question/{question_id}/verified_topics`: Retrieves strictly verified topics for a question from `question_metadata` and `extracted_topics`.
   - `POST /api/mcq/extract_topics` & `POST /api/mcq/topics/extract` -> `extract_mcq_topics(payload: TopicExtractionPayload) -> dict[str, Any]`
   - `POST /api/mcq/score` -> `score_question(payload: ScorePayload) -> dict[str, Any]`
   - `GET /api/mcq/synthesis?topic=...&resolve_if_missing=true` -> `get_synthesis(topic: str, resolve_if_missing: bool = True) -> dict[str, Any]`
@@ -360,6 +385,8 @@
   - `POST /api/mcq/batch_update_all_references` -> `batch_update_all_verified_references() -> dict[str, Any]`: Aggregates all distinct verified topics across `question_metadata`, `extracted_topics`, and `session_questions` to refresh reference links in batch.
   - `POST /api/mcq/batch_update_all_summaries` -> `batch_update_all_verified_summaries() -> dict[str, Any]`: Aggregates all distinct verified topics across `question_metadata`, `extracted_topics`, and `session_questions` to enqueue missing LM Studio summaries in batch.
 - `server.routes_models`:
+  - `GET /api/models/lm-studio-available`: Fast probe checking LM Studio availability and active loaded model metadata.
+  - `POST /api/models/unload`: Evicts idle LLM models from host memory to free RAM/VRAM.
   - `GET /api/models/cpu_embeddings`, `POST /api/models/cpu_embeddings`, `GET /api/models/cpu_embedding_models`, `POST /api/models/cpu_embedding_models` -> `get_cpu_embedding_models() -> dict[str, Any]`: Lists embedding models (including SapBERT Clinical Fulltext ONNX), disk caching status, and active model selection from `user_state`.
   - `GET /api/models/flashrank_models` & `POST /api/models/flashrank_models` -> `get_flashrank_models() -> dict[str, Any]`: Lists FlashRank cross-encoder reranking models and download status.
   - `GET /api/models/scispacy_models` & `POST /api/models/scispacy_models` -> `get_scispacy_models() -> dict[str, Any]`: Lists SciSpaCy biomedical NER models, RAM footprints, and installation status.
@@ -387,7 +414,17 @@
   - `POST /api/notes/obsidian-native` & `POST /api/notes/open-obsidian` -> `open_obsidian_native(req: OpenObsidianRequest) -> dict[str, Any]`: Launches native desktop Obsidian via `obsidian://open?vault=...&file=...` adhering to Invariant 6; supports cross-platform invocation (`os.startfile`, macOS `open`, Linux `xdg-open`).
   - `GET /api/notes/zim-article` & `GET /api/notes/zim_article` -> `zim_article(article_id: Optional[str] = None, title: Optional[str] = None, zim_path: Optional[str] = None) -> dict[str, Any]`: Extracts in-browser HTML from offline ZIM archives.
   - `GET /api/notes/zim-asset` & `GET /api/notes/zim_asset` -> `zim_asset(path: str, zim_path: Optional[str] = None) -> Response`: Serves binary media assets from ZIM archives; polymorphically unpacks dicts, tuples, and `ZimAsset` polyfills with `Cache-Control` response headers.
+  - `GET /api/notes/lecture-notes`: Returns paginated list of user lecture notes (`user_lecture_notes`), item counts, and card shades.
+  - `GET /api/notes/lecture-notes/{note_id}`: Retrieves full lecture note record and ordered item list (`user_lecture_note_items`).
+  - `POST /api/notes/lecture-notes`: Creates a new lecture note or updates existing title, pin status, and wallpaper shade index.
+  - `DELETE /api/notes/lecture-notes/{note_id}`: Cascading deletion of lecture note and associated items.
+  - `POST /api/notes/lecture-notes/{note_id}/items`: Creates or updates a lecture note line item, resolving medical topic reference counts and caching reference details.
+  - `DELETE /api/notes/lecture-notes/{note_id}/items/{item_id}`: Deletes a specific lecture note line item.
 - `server.routes_queue`:
+  - `GET /api/queue/topic_files_sync_status`: Compares `Ignore_list.txt` and `topic.txt` against SQLite and returns diff counts.
+  - `POST /api/queue/topic_files_sync_apply`: Synchronizes flat files and database tables bidirectionally.
+  - `DELETE /api/queue/remove_verified_topic` & `POST /api/queue/remove_verified_topic`: Removes verified topic association from a question.
+  - `POST /api/queue/enqueue`: Batch enqueues topic synthesis tasks.
   - `POST /api/queue/extract_topics` -> `extract_topics(req: PrepareRequest) -> dict[str, Any]`
   - `POST /api/queue/ignore_topic` -> `ignore_topic(req: IgnoreTopicRequest) -> dict[str, Any]`
   - `DELETE /api/queue/ignore_topic` & `POST /api/queue/unignore_topic` -> `unignore_topic(topic: Optional[str] = None, req: Optional[IgnoreTopicRequest] = None) -> dict[str, Any]`
@@ -405,7 +442,10 @@
     - Returns: `{"status": "success", "top_hit": ChunkDict | None, "all_results": SearchResultsDict, "candidates": list[ChunkDict], "query": str, "aliases": list[str]}`.
   - `GET /api/search/diagnostics/{lm_studio|db|sumatrapdf|tantivy}`: Legacy compatibility aliases for `/api/models/diagnostics/*`.
 - `server.routes_sessions`:
-  - `sync_consolidated_due_session(conn) -> None`: Consolidates overdue and learning questions along with wrongly answered questions into unified `sess_spaced_repetition_due`.
+  - `sync_consolidated_due_session(conn) -> None`: Consolidates overdue and learning questions along with wrongly answered questions into unified `sess_spaced_repetition_due`, maintaining full synchronization of `topic_list_json` and `session_questions` with verified topics.
+  - `GET /api/sessions/checklist-analytics`: Returns historical checklist completion rates and SVG analytics.
+  - `PATCH /api/sessions/topics/select`: Optimistically updates topic selection within a quiz session.
+  - `GET /api/sessions/due_summary`
   - `GET /api/sessions/due_summary` -> `get_due_summary() -> dict[str, Any]`: Returns `{status: "success", total_due: int, session_id: Optional[str]}`.
   - `GET /api/sessions/dashboard_prompts` -> `get_dashboard_prompts() -> dict[str, Any]`: Computes intelligent banner list (due reviews, high-yield weak topics derived from NLP-extracted topics, subject rotations unattempted in 3+ days, and rotating encouragement messages).
   - `POST /api/sessions/save` -> `save_session(session: SessionCreate) -> dict[str, Any]`
@@ -432,6 +472,9 @@
   - `POST /api/sources/build_zim_dict` -> `build_zim_dict() -> dict[str, Any]`: Zero-copy C++ B-tree archive inspection updating item counts.
   - `POST /api/sources/test_pdf_extract` -> `test_pdf_extract(payload: TestPdfExtractPayload) -> dict[str, Any]`: Interactive PDF layout comparator testing Fitz text, heuristic headings, Docling OCR engines (`auto`, `rapidocr`, `easyocr`), and Indra OCR layout parsers.
 - `server.routes_state`:
+  - `GET /api/state/ignored-topics`, `POST /api/state/ignored-topics`, `DELETE /api/state/ignored-topics/{topic_norm}`: Manages permanently ignored topics in SQLite `ignored_topics`.
+  - `GET /api/state/extraction-config`, `PUT /api/state/extraction-config`: Manages document extraction settings (`explicit_profile_id`, `fallback_provider_primary`, `dpi`, `threads`, `math`, `furniture`).
+  - `GET /api/state/verify_vendor`, `POST /api/state/verify_vendor`: Verifies offline vendor assets integrity.
   - `GET /api/state/vendor_status` -> `get_vendor_status() -> dict[str, Any]`: Checks presence and size (>128 bytes) of offline vendor scripts (Tailwind, Marked, DOMPurify, KaTeX) in `ui/vendor/`.
   - `POST /api/state/vendor_download` -> `trigger_vendor_download() -> dict[str, Any]`: Triggers atomic download of vendor assets via `config.ensure_offline_vendor_assets()`.
   - `GET /api/state/export` -> `export_state() -> dict[str, Any]`: Exports all key-value entries from `user_state`.
@@ -459,7 +502,8 @@
 - `ui/js/test_features.js`: `initTestFeatures()`, `renderPdfExtractorView()`, `renderDbQueriesView()`, multi-engine OCR dropdown routing (`auto`, `rapidocr`, `easyocr`).
 - `ui/js/analysis.js`: `initAnalysisWorkspace()`, `loadFilesList()`, `loadPageData(file, page)`, `renderPageCanvas()`, `renderLayoutBoxes()`, `savePageAnnotations()`, `autoSave()`. Manages dual-pane visual workspace, interactive drag/resize via `ui/vendor/interact.min.js`, category retagging (`text`, `header`, `table`, `figure`), reading order flow, and 3-second debounced persistence.
 - `ui/js/analysis_toc.js`: `openTocValidation(file_path)`, `initTocWorkspace()`, `loadTocHeadings()`, `renderHeadingsTree()`, `shiftHeadingTier(boxId, delta)`, `commitAndIngestDocument()`. Controls Table of Contents validation dual-pane screen, bounding box focus on canvas, nested heading tree manipulation (H1-H6), and LanceDB finalization trigger.
-- `ui/js/reader.js`: `initReaderView()`, `openDocumentInReader(sourceType: str, path: str, pageOrAnchor: str)`
+- `ui/js/reader.js`: `initReaderView()`, `openDocumentInReader(sourceType: str, path: str, pageOrAnchor: str)`, deep heading scrolling via `anchorId` / `anchor` resolving against `id="heading-..."`, and font-size controls (`.font-zoom-ctrl-group`).
+- `ui/js/notes.js`: `MyNotesController`, `LectureNoteEditor`; manages 'My Notes' Lecture Topic Pad, 8 glassmorphic card shades, paginated note cards (12/page), quick MCQ launcher (`startCombinedTopicsQuiz`), <2ms optimistic Enter line-locking, double-click inline editor, and debounced Right Sidebar inspection.
 
 ---
 
@@ -715,6 +759,60 @@ question_metadata (
   updated_at REAL DEFAULT (unixepoch('now'))
 );
 CREATE INDEX idx_qm_attempt ON question_metadata(attempt_count);
+
+-- Obsidian Notes: Cached Obsidian markdown note graph and clinical section indexing
+obsidian_notes (
+  note_id TEXT PRIMARY KEY,
+  book_name TEXT NOT NULL,
+  category TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  raw_title TEXT NOT NULL,
+  clean_title TEXT NOT NULL,
+  rel_path TEXT NOT NULL,
+  abs_path TEXT NOT NULL,
+  is_hub_index INTEGER DEFAULT 0,
+  headings_json TEXT DEFAULT '[]',
+  child_links_json TEXT DEFAULT '[]',
+  assets_json TEXT DEFAULT '[]',
+  parent_note_ids_json TEXT DEFAULT '[]',
+  parent_titles_json TEXT DEFAULT '[]',
+  breadcrumb_path TEXT DEFAULT '',
+  contextual_search_text TEXT DEFAULT '',
+  content_markdown TEXT DEFAULT '',
+  created_at REAL DEFAULT (unixepoch('now')),
+  updated_at REAL DEFAULT (unixepoch('now'))
+);
+CREATE INDEX idx_obs_clean_title ON obsidian_notes (clean_title);
+CREATE INDEX idx_obs_book ON obsidian_notes (book_name);
+
+-- User Lecture Notes: 'My Notes' Lecture Topic Pad cards
+user_lecture_notes (
+  note_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL DEFAULT 'Untitled Note',
+  shade_index INTEGER DEFAULT 0,
+  is_pinned INTEGER DEFAULT 0,
+  created_at REAL DEFAULT (unixepoch('now')),
+  updated_at REAL DEFAULT (unixepoch('now'))
+);
+CREATE INDEX idx_uln_updated ON user_lecture_notes (is_pinned DESC, updated_at DESC);
+
+-- User Lecture Note Items: Structured clinical topic line items within a lecture note
+user_lecture_note_items (
+  item_id TEXT PRIMARY KEY,
+  note_id TEXT NOT NULL,
+  line_order INTEGER NOT NULL DEFAULT 0,
+  topic_text TEXT NOT NULL,
+  topic_key TEXT NOT NULL,
+  mcq_count INTEGER DEFAULT 0,
+  ref_count INTEGER DEFAULT 0,
+  obsidian_count INTEGER DEFAULT 0,
+  pdf_count INTEGER DEFAULT 0,
+  zim_count INTEGER DEFAULT 0,
+  references_json TEXT DEFAULT '{}',
+  updated_at REAL DEFAULT (unixepoch('now')),
+  FOREIGN KEY(note_id) REFERENCES user_lecture_notes(note_id) ON DELETE CASCADE
+);
+CREATE INDEX idx_ulni_note_order ON user_lecture_note_items (note_id, line_order ASC);
 CREATE INDEX idx_qm_wrong ON question_metadata(wrong_count);
 CREATE INDEX idx_qm_last_attempt ON question_metadata(last_attempt_ts);
 ```
@@ -1094,6 +1192,27 @@ CREATE INDEX idx_qm_last_attempt ON question_metadata(last_attempt_ts);
            ├── Compiles verified document Markdown
            ├── parsers/docling/engine.py (ingest_to_lancedb) -> LanceDB vector & FTS table
            └── Updates layout_analysis_progress status='completed' -> Vault UI displays green checkmark
+
+8. Obsidian Markdown Vault Graph & Section Navigation:
+   ui/js/reader.js -> GET /api/notes/obsidian-note -> parsers/obsidian_reader.py
+     ├── ObsidianVaultGraph index check -> caches into SQLite (obsidian_notes)
+     ├── Strips YAML frontmatter (\A---
+?
+...
+?
+---) preserving internal markdown dividers
+     ├── convert_obsidian_markdown_to_html_ready() -> rewrites wikilinks to .obsidian-wikilink anchors
+     ├── Resolves section heading slugs (heading_slug) for deep scroll navigation
+     └── In-app reader mounts rendered DOM with font-size controls and citation delegation
+
+9. 'My Notes' Lecture Topic Pad & Quick Quiz Launch:
+   ui/js/notes.js -> GET /api/notes/lecture-notes -> Render paginated glassmorphic note cards
+     ├── Enter key -> Optimistic line-locking (<2ms) -> POST /api/notes/lecture-notes/{note_id}/items
+     │     └── Server queries SQLite (mcq_bank, csv_questions, obsidian_notes, pdf_topic_index, zim_titles)
+     │     └── Caches reference counts and returns populated topic item
+     ├── Single click on line item -> Debounced Right Sidebar Reference Inspector update
+     ├── Double click on note title -> LectureNoteEditor inline title editing
+     └── Click 'Do MCQ' button -> window.startCombinedTopicsQuiz(topics, noteTitle) -> Launches quiz session across all contained topics
 ```
 
 ---
@@ -1140,3 +1259,19 @@ CREATE INDEX idx_qm_last_attempt ON question_metadata(last_attempt_ts);
 34. **Topic Stopword Filtering & Ignore List Bidirectional Synchronization**: Candidate topic extraction (`agents/tema_q/topic_extractor.py`), full-PDF TOC indexing (`parsers/pdf_topic_indexer.py`), and dossier report generation (`core/reporter.py`) MUST validate all topic strings against `core/topic_filter.py` (`is_valid_topic`). Strings shorter than 3 characters, purely non-alphanumeric noise, and phrases formed exclusively from `Ignore_list.txt` stopwords MUST be rejected. Ignored topics and frequent note topics (>2 occurrences) MUST synchronize bidirectionally between SQLite tables (`ignored_topics`, `topic_note_counts`) and local flat files (`Ignore_list.txt`, `tests/fixtures/topic.txt`).
 35. **Server Lifespan Maintenance & Safe Upload Streaming**: FastAPI server startup MUST invoke `run_startup_maintenance()`, ensure runtime storage directories exist, clear stale 0-byte Tantivy lockfiles, and register `GZipMiddleware(minimum_size=1000)`. Uploaded files (`server/routes_sources.py`) MUST undergo null byte and path traversal validation (`validate_safe_source_path`) and stream to disk in discrete 1 MB chunks (`stream_upload_to_disk`) with incremental SHA-256 digest computation to guard against memory exhaustion during large vault imports.
 36. **Frontend Race-Safe Search & Performance Throttling**: Interactive UI search operations (`ui/js/search.js`) MUST enforce query cancellation via `AbortController` and 200ms input debounce (`executeRaceSafeSearch`) to eliminate out-of-order response races. Heavy visual updates (drag events in layout analysis and scroll events) MUST be throttled using `requestAnimationFrame` (`throttleWithRAF`), state updates debounced at 300ms with localStorage backup (`queueDebouncedStatePatch`), and WebSocket reconnection guarded by exponential backoff (`computeWsBackoffDelay`).
+37. **Safe Dynamic Schema Migrations & DDL Identifier Sanitization**: In `core/database.py`, runtime schema migrations MUST execute via `add_column_safely(conn, table_name, column_name, column_type)` to eliminate SQL and DDL injection vectors. Table and column identifiers MUST match strict regex `^[a-zA-Z0-9_]+$`, and column types MUST resolve against the strict allowlist `_ALLOWED_COLUMN_TYPES` (`INTEGER`, `TEXT`, `REAL`, `BLOB`, `NUMERIC`, `BOOLEAN`, `DATETIME`). Attempted additions of existing columns MUST fail silently and idempotently without raising duplicate column exceptions.
+38. **Canonical SQLite File Path Normalization**: In `core/database.py` and `parsers/pdf_topic_indexer.py`, file system paths persisted across primary keys, foreign keys, and indexing lookups MUST be canonicalized via `normalize_db_file_path(file_path: str) -> str`. The helper normalizes absolute paths to lowercase forward-slash representation (`Path(file_path).resolve().as_posix().lower()`), preventing path mismatch bugs between Windows drive letters, mixed backslashes/slashes, and case-varying directory lookups in tables such as `layout_analysis_progress`, `user_annotated_bboxes`, and `pdf_topic_index`.
+39. **Quiz Sessions Sole Primary Key Constraint**: In `core/database.py`, `docs/mcq_blueprint.md`, and `blueprint.md`, the `quiz_sessions` table MUST define `id TEXT PRIMARY KEY` as its sole uniqueness constraint. No secondary or composite unique constraints may be placed on `title` or `custom_title`, permitting users to create multiple study sessions with identical or repeated topic names over time. Child table `session_questions` references `quiz_sessions(id) ON DELETE CASCADE`.
+40. **Cached FSRS Spaced Repetition Configuration**: In `core/scheduler.py`, access to user-configured spaced repetition retention and interval limits MUST route through `CachedFSRSConfigProvider` with a thread-safe 300-second TTL cache. High-frequency quiz scoring loops and session generators must not execute N+1 database queries against `user_state`. Mutation endpoints in `server/routes_mcq.py` and `server/routes_state.py` MUST explicitly call `CachedFSRSConfigProvider.invalidate()` upon configuration updates to maintain live consistency.
+41. **Consolidated Review Set Topic Synchronization**: In `server/routes_sessions.py`, `sync_consolidated_due_session` MUST continuously reconcile the active topic list (`topic_list_json`) and child rows (`session_questions`) of `sess_spaced_repetition_due` with strictly verified topics. Questions due for review or answered incorrectly immediately aggregate verified topics from `question_metadata`, `extracted_topics` (`verified = 1`), and `session_questions`. When questions are mastered or due timestamps are pushed into the future, both the question rows and associated orphan topic entries MUST be purged from the review set.
+42. **Precision Counter Basis Points Arithmetic**: In `ui/js/habits.js`, all telemetry metrics, goal counters, and habit completion percentages calculated by `PrecisionCounterController` MUST operate using integer basis points (1 unit = 10,000 bp). Floating-point arithmetic is strictly prohibited in cumulative counter mutations to eliminate IEEE 754 precision drift. Visual counter updates MUST animate smoothly via cubic ease-out `requestAnimationFrame` interpolations and debounce database synchronization to 350ms.
+43. **Focus Mode & Passive Activity Wellness Engine**: In `ui/js/habits.js` and `ui/js/dashboard.js`, `FocusModeEngine` tracks study time using wall-clock intervals (`Date.now()`) with passive interaction listeners (`pointerdown`, `keydown`, `wheel`, `quiz:answer_submitted`). An automated 5-minute check-in modal engages during extended sessions with a 10-second auto-pause countdown, contextual wellness guidance (hydration, 20-20-20 visual relief, ergonomic stretches), and subtle Web Audio chime notifications, syncing live state to `DashboardStudyBanner`.
+44. **Hierarchical Heading Breadcrumb Dispatch & Telemetry**: In `agents/tema_q/subtopic_router.py` and `agents/tema_q/telemetry.py`, multi-source RAG synthesis pipelines MUST preserve hierarchical heading breadcrumbs (`H1 > H2 > H3`) across all prose chunks. Document blocks are tagged with contextual heading hierarchies (`primary_heading_sections`), and dispatch runs record detailed telemetry via `HeadingDispatchTrace` and `PipelineDiagnosticTrace`. Traces capturing model provenance, token usage, auditor merge events, and automated anomaly flags MUST be persisted as JSON under `storage/reports/pipeline_traces/`.
+45. **Obsidian Vault Graph Indexing & Section Slug Slicing**: In `parsers/obsidian_reader.py`, markdown vaults are indexed into a connected graph using `ObsidianVaultGraph` and cached in `obsidian_notes`. YAML frontmatter MUST be stripped anchored strictly at the start of the file (`\A---\r?\n[\s\S]*?\r?\n---\s*(?:\r?\n|$)`, count=1) to prevent stripping intermediate horizontal divider rules (`---`). Heading sections are sliced into discrete anchorable units with deterministic slugs (`heading_slug`), expanding clinical subheading synonyms (`CLINICAL_SUBHEADING_SYNONYMS`) for unified section search (`search_notes_and_sections`).
+46. **Lecture Topic Pad Glassmorphism & Optimistic Locking**: In `ui/js/notes.js`, `server/routes_notes.py`, and `core/database.py`, the 'My Notes' Lecture Topic Pad organizes study notes into 8 wallpaper-derived glassmorphic card shades. Note lines feature optimistic line-locking (<2ms latency on Enter key), debounced Right Sidebar reference inspection on single click, and double-click inline title editing (`LectureNoteEditor`). Each note card provides a direct 'Do MCQ' button (`.btn-do-mcq-note`) launching `window.startCombinedTopicsQuiz(topics, noteTitle)` across all contained topic items.
+47. **LIFO Stack Lexical State Machine for Truncated JSON Repair**: In `agents/tema_q/json_utils.py`, all malformed or truncated LLM JSON payloads MUST be pre-repaired using `_repair_truncated_json_lifo` before schema parsing. The single-pass quote- and escape-aware lexical scanner tracks delimiters on a LIFO stack (`{` -> `}`, `[` -> `]`), resolves dangling key-value cut points with `: null`, strips trailing commas, and closes unclosed braces, preventing parse exceptions on token budget truncations.
+48. **Atomic Queue Task Claiming with Immediate Isolation**: In `core/queue_manager.py`, `PriorityQueueWorker._claim_highest_priority_task` and `AsyncQueueWorker._fetch_and_claim_task` MUST claim tasks inside an atomic transaction block (`with atomic_transaction(conn):`) using `BEGIN IMMEDIATE`. Task claiming executes an atomic `UPDATE ... RETURNING` query with a fallback conditional `UPDATE ... WHERE task_id = ? AND LOWER(status) = 'pending'` checking `rowcount == 0` to prevent duplicate task claiming on autocommit connections.
+49. **Mode A Lazy Bidirectional H1 Probing & Running Header Preservation**: In `parsers/heading_toc_calibrator.py` and `parsers/indra/document.py`, Mode A TOC extraction MUST probe backwards to identify chapter start H1 boundaries and forwards for subsequent chapter boundaries, clearing probing artifacts and assembling pages in monotonic forward order. Running header furniture filters MUST check `el.bbox_norm[3] <= 0.08 and el.rel_size < 1.35 and not el.is_bold` to prevent true chapter headers (e.g. `CHAPTER 1: INTRODUCTION`) from being falsely stripped.
+50. **Accessible WAI-ARIA Semantics for Quiz Option Cards**: In `ui/js/quiz.js`, multiple-choice question options MUST implement full WAI-ARIA radiogroup semantics (`role="radiogroup"` on option lists, `role="radio"` and `aria-checked` on option cards). Options MUST support comprehensive keyboard navigation via numeric keys '1'-'4', alphabet keys 'A'-'D', Arrow keys, and Enter/Space activation, maintaining complete accessibility compliance.
+51. **Medical HTML Cleaning & Logging Hygiene**: In `agents/tema_q/topic_extractor.py`, medical candidate text extraction MUST clean input prose using `clean_html_prose`, converting HTML/XML inline and block tags into whitespace boundaries to prevent word concatenation across tags. Windows asyncio Proactor loops MUST catch and suppress `ConnectionResetError` [WinError 10054] during socket teardown in `run.py` and `server/app.py`, and PyFastNER syntax warnings MUST be suppressed via `_PyFastNERLogFilter`.
+52. **Candidate vs Ignored Topic Chip Styling & Mutual Exclusivity**: In `ui/js/quiz.js` and `server/routes_queue.py`, topic review modals MUST strictly enforce mutual exclusivity between verified and ignored/excluded topics. Ignored topics MUST display with greyed text in a red-tinted strike-through container (`border-red-500/40 bg-red-500/15 line-through`), visually separated from doubtful candidate topics in plain grey. Topics sort with unreviewed candidates first, confirmed topics next-to-last, and excluded topics last, each featuring an inline '✕' removal button.
