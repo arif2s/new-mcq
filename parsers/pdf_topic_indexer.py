@@ -22,7 +22,7 @@ from agents.tema_q.topic_extractor import (
     get_topic_aliases,
     normalize_topic_key,
 )
-from core.database import get_db_connection
+from core.database import get_db_connection, normalize_db_file_path
 from core.topic_filter import is_valid_topic
 from parsers.heading_toc_calibrator import build_document_toc_and_hierarchy
 
@@ -132,6 +132,7 @@ def index_pdf_topics_to_db(
     """
     ensure_pdf_topic_index_table()
     path = Path(pdf_path).resolve()
+    normalized_path = normalize_db_file_path(path)
     pdf_title = default_title.strip() or path.stem
 
     toc_payload = build_document_toc_and_hierarchy(
@@ -148,7 +149,7 @@ def index_pdf_topics_to_db(
 
     span_rows = compute_toc_page_ranges(doc_toc, total_pages=total_pages)
     with closing(get_db_connection()) as conn:
-        conn.execute("DELETE FROM pdf_topic_index WHERE pdf_path = ?", (str(path),))
+        conn.execute("DELETE FROM pdf_topic_index WHERE pdf_path = ?", (normalized_path,))
         conn.executemany(
             """
             INSERT INTO pdf_topic_index (
@@ -159,7 +160,7 @@ def index_pdf_topics_to_db(
             """,
             [
                 (
-                    str(path),
+                    normalized_path,
                     pdf_title,
                     engine_source,
                     r["heading_level"],
@@ -223,6 +224,7 @@ def lookup_pdf_topic_pages(
     topic: str,
     subtopic: Optional[str] = None,
     max_results: int = 4,
+    pdf_path: Optional[Union[str, Path]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Finds the exact PDF pages and vertical coordinate bounds for `topic` (and optional `subtopic`,
@@ -239,19 +241,26 @@ def lookup_pdf_topic_pages(
         aliases.insert(0, t_norm)
     sub_norm = normalize_topic_key(subtopic or "")
 
+    norm_target_path = normalize_db_file_path(pdf_path) if pdf_path else ""
+
     candidates: List[Dict[str, Any]] = []
     with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
         # Fetch rows matching any topic alias in topic_norm, parent_norm, or heading_path_norm
         like_clauses = " OR ".join(["heading_path_norm LIKE ?"] * len(aliases))
         params = [f"%{a}%" for a in aliases]
+        where_clause = f"({like_clauses})"
+        if norm_target_path:
+            where_clause += " AND pdf_path = ?"
+            params.append(norm_target_path)
+
         cursor.execute(
             f"""
             SELECT id, pdf_path, pdf_title, engine_source, heading_level,
                    topic_title, topic_norm, parent_topic, parent_norm,
                    heading_path, heading_path_norm, start_page, end_page, start_y0, end_y1
             FROM pdf_topic_index
-            WHERE {like_clauses}
+            WHERE {where_clause}
             LIMIT 200
             """,
             params,

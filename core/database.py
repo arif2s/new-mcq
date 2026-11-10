@@ -770,6 +770,19 @@ def update_question_verified_topics(
     )
 
 
+def normalize_db_file_path(file_path: str) -> str:
+    """Canonicalizes filesystem paths for consistent SQLite PK/FK matching across platforms."""
+    raw = str(file_path or "").strip()
+    if not raw:
+        return ""
+    normalized_input = raw.replace("\\", "/")
+    try:
+        resolved = str(Path(normalized_input).resolve())
+    except Exception:
+        resolved = os.path.normpath(normalized_input)
+    return os.path.normcase(resolved).replace("\\", "/")
+
+
 def upsert_layout_analysis_progress(
     file_path: str,
     status: str = "pending",
@@ -785,6 +798,7 @@ def upsert_layout_analysis_progress(
     child cascade references in user_annotated_bboxes and avoid unintended deletions.
     Ensures connection-scoped WAL/MMAP PRAGMAs via get_db_connection().
     """
+    normalized_path = normalize_db_file_path(file_path)
     query = """
         INSERT INTO layout_analysis_progress (
             file_path, status, total_pages, reviewed_pages_json,
@@ -800,7 +814,7 @@ def upsert_layout_analysis_progress(
             updated_at = excluded.updated_at
     """
     params = (
-        file_path,
+        normalized_path,
         status,
         total_pages,
         reviewed_pages_json,
@@ -831,9 +845,21 @@ def upsert_user_annotated_bbox(
 ) -> None:
     """Upserts a user annotated bounding box adhering to Invariant 15.
 
+    Ensures that a parent row exists in `layout_analysis_progress` before
+    inserting child bounding boxes, satisfying SQLite foreign key constraints.
     Uses `INSERT ... ON CONFLICT(id) DO UPDATE SET` logic and ensures
     connection-scoped WAL/MMAP PRAGMAs.
     """
+    normalized_path = normalize_db_file_path(file_path)
+
+    parent_check_query = """
+        INSERT OR IGNORE INTO layout_analysis_progress (
+            file_path, status, total_pages, reviewed_pages_json,
+            active_profile, final_markdown_override, updated_at
+        )
+        VALUES (?, 'pending', 0, '[]', 'native_digital', NULL, unixepoch('now'))
+    """
+
     query = """
         INSERT INTO user_annotated_bboxes (
             id, file_path, page_number, x0, y0, x1, y1,
@@ -857,7 +883,7 @@ def upsert_user_annotated_bbox(
     """
     params = (
         bbox_id,
-        file_path,
+        normalized_path,
         page_number,
         x0,
         y0,
@@ -870,9 +896,11 @@ def upsert_user_annotated_bbox(
         is_custom_drawn,
     )
     if conn is not None:
+        conn.execute(parent_check_query, (normalized_path,))
         conn.execute(query, params)
     else:
         with get_db_connection() as local_conn:
+            local_conn.execute(parent_check_query, (normalized_path,))
             local_conn.execute(query, params)
 
 
