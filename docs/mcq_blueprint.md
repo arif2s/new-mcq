@@ -87,6 +87,32 @@ CREATE TABLE IF NOT EXISTS cached_syntheses (
     updated_at REAL DEFAULT (unixepoch('now'))
 );
 
+-- Quiz Sessions & Knowledge Hub Cards
+CREATE TABLE IF NOT EXISTS quiz_sessions (
+    id TEXT PRIMARY KEY,
+    subject_name TEXT NOT NULL,
+    custom_title TEXT DEFAULT '',
+    date TEXT NOT NULL,
+    timestamp REAL NOT NULL,
+    last_attempted REAL DEFAULT 0.0,
+    total_questions INTEGER NOT NULL,
+    correct_answers INTEGER NOT NULL DEFAULT 0,
+    wrong_answers INTEGER NOT NULL DEFAULT 0,
+    unanswered INTEGER NOT NULL DEFAULT 0,
+    score INTEGER NOT NULL DEFAULT 0,
+    max_score INTEGER NOT NULL DEFAULT 0,
+    accuracy REAL NOT NULL DEFAULT 0.0,
+    time_limit_seconds INTEGER,
+    time_used_seconds INTEGER NOT NULL DEFAULT 0,
+    mode TEXT NOT NULL DEFAULT 'learn',
+    is_completed INTEGER DEFAULT 0,
+    topics_reviewed INTEGER DEFAULT 0,
+    refs_status TEXT DEFAULT 'none',
+    llm_status TEXT DEFAULT 'none',
+    topic_list_json TEXT DEFAULT '[]',
+    created_at REAL DEFAULT (unixepoch('now'))
+);
+
 Fast Search & Layout-Aware Parsing Subsystem
 The inverted Tantivy index stores source types, absolute paths, and Sumatra-compatible page numbers while stemming English tokens via BM25 scoring. Instead of basic PDF slicing, the system prioritizes docling_parser.py for textbook extraction. When retrieving sections on surgical techniques or orthopedic staging criteria, docling preserves the structural integrity of tables and columnar lists, preventing the LLM from hallucinating relationships between jumbled text streams.
 Local AI & Token-Aware Tema_Q Subsystem

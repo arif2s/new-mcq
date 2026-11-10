@@ -18,7 +18,7 @@ from typing import Any, Dict, Optional, Tuple
 # Enforce Invariant 1: Zero VRAM for backend processes
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
-from core.database import get_db_connection
+from core.database import atomic_transaction, get_db_connection
 from core.reporter import generate_topic_report
 
 
@@ -59,45 +59,53 @@ class AsyncQueueWorker:
         logger.info("Asynchronous queue worker cleanly shut down.")
 
     def _fetch_and_claim_task(self) -> Optional[Dict[str, Any]]:
-        from core.database import get_db_connection
+        from core.database import atomic_transaction, get_db_connection
         with get_db_connection() as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(
-                    """
-                    UPDATE task_queue
-                    SET status = 'processing', updated_at = unixepoch('now')
-                    WHERE task_id = (
+            with atomic_transaction(conn) as cursor:
+                try:
+                    cursor.execute(
+                        """
+                        UPDATE task_queue
+                        SET status = 'processing', updated_at = unixepoch('now')
+                        WHERE task_id = (
+                            SELECT task_id FROM task_queue
+                            WHERE LOWER(status) = 'pending'
+                            ORDER BY priority ASC, task_id ASC
+                            LIMIT 1
+                        )
+                        RETURNING task_id, task_type, payload, session_id, mcq_id;
+                        """
+                    )
+                    row = cursor.fetchone()
+                    if not row:
+                        return None
+                    return dict(row)
+                except Exception:
+                    cursor.execute(
+                        """
                         SELECT task_id FROM task_queue
-                        WHERE status = 'pending'
+                        WHERE LOWER(status) = 'pending'
                         ORDER BY priority ASC, task_id ASC
                         LIMIT 1
+                        """
                     )
-                    RETURNING task_id, task_type, payload, session_id, mcq_id;
-                    """
-                )
-                row = cursor.fetchone()
-                if not row:
-                    return None
-                return dict(row)
-            except Exception:
-                cursor.execute(
-                    """
-                    SELECT task_id, task_type, payload, session_id, mcq_id FROM task_queue
-                    WHERE status = 'pending'
-                    ORDER BY priority ASC, task_id ASC
-                    LIMIT 1
-                    """
-                )
-                row = cursor.fetchone()
-                if not row:
-                    return None
-                t_id = row["task_id"]
-                cursor.execute(
-                    "UPDATE task_queue SET status = 'processing', updated_at = unixepoch('now') WHERE task_id = ?",
-                    (t_id,),
-                )
-                return dict(row)
+                    row = cursor.fetchone()
+                    if not row:
+                        return None
+                    t_id = row["task_id"]
+                    cursor.execute(
+                        "UPDATE task_queue SET status = 'processing', updated_at = unixepoch('now') "
+                        "WHERE task_id = ? AND LOWER(status) = 'pending'",
+                        (t_id,),
+                    )
+                    if cursor.rowcount == 0:
+                        return None
+                    cursor.execute(
+                        "SELECT task_id, task_type, payload, session_id, mcq_id FROM task_queue WHERE task_id = ?",
+                        (t_id,),
+                    )
+                    result = cursor.fetchone()
+                    return dict(result) if result else None
 
     async def _dispatch_task(self, task: Dict[str, Any]) -> None:
         task_id = task["task_id"]
@@ -500,43 +508,46 @@ class PriorityQueueWorker:
 
     def _claim_highest_priority_task(self) -> Optional[Tuple]:
         with closing(get_db_connection()) as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute("""
-                    UPDATE task_queue
-                    SET status = 'processing', updated_at = unixepoch('now')
-                    WHERE task_id = (
+            with atomic_transaction(conn) as cursor:
+                try:
+                    cursor.execute("""
+                        UPDATE task_queue
+                        SET status = 'processing', updated_at = unixepoch('now')
+                        WHERE task_id = (
+                            SELECT task_id FROM task_queue
+                            WHERE LOWER(status) = 'pending'
+                            ORDER BY priority ASC, task_id ASC
+                            LIMIT 1
+                        )
+                        RETURNING task_id, task_type, priority, mcq_id, session_id, topic_name, payload
+                    """)
+                    result = cursor.fetchone()
+                    return tuple(result) if result else None
+                except Exception:
+                    # Fallback for SQLite versions without RETURNING clause support
+                    cursor.execute("""
                         SELECT task_id FROM task_queue
                         WHERE LOWER(status) = 'pending'
                         ORDER BY priority ASC, task_id ASC
                         LIMIT 1
+                    """)
+                    row = cursor.fetchone()
+                    if not row:
+                        return None
+                    t_id = row["task_id"]
+                    cursor.execute(
+                        "UPDATE task_queue SET status = 'processing', updated_at = unixepoch('now') "
+                        "WHERE task_id = ? AND LOWER(status) = 'pending'",
+                        (t_id,),
                     )
-                    RETURNING task_id, task_type, priority, mcq_id, session_id, topic_name, payload
-                """)
-                result = cursor.fetchone()
-                return tuple(result) if result else None
-            except Exception:
-                # Fallback for SQLite versions without RETURNING clause support
-                cursor.execute("""
-                    SELECT task_id FROM task_queue
-                    WHERE LOWER(status) = 'pending'
-                    ORDER BY priority ASC, task_id ASC
-                    LIMIT 1
-                """)
-                row = cursor.fetchone()
-                if not row:
-                    return None
-                t_id = row["task_id"]
-                cursor.execute(
-                    "UPDATE task_queue SET status = 'processing', updated_at = unixepoch('now') WHERE task_id = ?",
-                    (t_id,),
-                )
-                cursor.execute(
-                    "SELECT task_id, task_type, priority, mcq_id, session_id, topic_name, payload FROM task_queue WHERE task_id = ?",
-                    (t_id,),
-                )
-                result = cursor.fetchone()
-                return tuple(result) if result else None
+                    if cursor.rowcount == 0:
+                        return None
+                    cursor.execute(
+                        "SELECT task_id, task_type, priority, mcq_id, session_id, topic_name, payload FROM task_queue WHERE task_id = ?",
+                        (t_id,),
+                    )
+                    result = cursor.fetchone()
+                    return tuple(result) if result else None
 
     def _update_task_status(
         self, task_id: int, status: str, error_message: Optional[str] = None
