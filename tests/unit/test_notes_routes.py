@@ -87,3 +87,39 @@ async def test_lecture_note_crud():
     assert del_note["deleted"] is True
     listing_empty = await get_lecture_notes(page=1, page_size=12, q="")
     assert listing_empty["total_items"] == 0
+
+from unittest.mock import patch
+from server.routes_notes import extract_topics_from_note_markdown, extract_and_sync_note_topics
+
+def test_markdown_topic_extraction():
+    sample_md = (
+        "# Renal Pathology Notes\n"
+        "Patient presents with [[Nephrotic syndrome]] and biopsy confirms [[Cardiac amyloidosis|amyloidosis]].\n"
+        "Treat Acute pancreatitis aggressively with intravenous fluids."
+    )
+    with patch(
+        "server.routes_notes.extract_topics_local",
+        return_value={"all_topics": ["Acute pancreatitis", "Nephrotic syndrome"]},
+    ):
+        topics = extract_topics_from_note_markdown(sample_md)
+
+    assert "Nephrotic syndrome" in topics
+    assert "Cardiac amyloidosis" in topics
+    assert "Acute pancreatitis" in topics
+
+@pytest.mark.asyncio
+async def test_note_mode_and_markdown_extraction_sync():
+    create_res = await upsert_lecture_note(LectureNoteMetaPayload(
+        title="Pathology Note",
+        note_mode="notes",
+        card_color="rgba(100, 150, 200, 0.28)",
+        content_markdown="# Nephrology\nTreat [[Nephrotic syndrome]] promptly."
+    ))
+    assert create_res["status"] == "success"
+    note = create_res["note"]
+    assert note["note_mode"] == "notes"
+    assert note["card_color"] == "rgba(100, 150, 200, 0.28)"
+    assert note["content_markdown"] == "# Nephrology\nTreat [[Nephrotic syndrome]] promptly."
+    # Extracted topics should include Nephrotic syndrome
+    items = create_res["items"]
+    assert any(it["topic_text"] == "Nephrotic syndrome" for it in items)

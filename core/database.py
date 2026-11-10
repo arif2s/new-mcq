@@ -79,6 +79,7 @@ _ALLOWED_COLUMN_TYPES: Set[str] = {
     "TEXT DEFAULT 'none'",
     "TEXT DEFAULT 'pending'",
     "TEXT DEFAULT 'learn'",
+    "TEXT DEFAULT 'list'",
     "TEXT DEFAULT 'General'",
     "TEXT DEFAULT 'docling_v2'",
     "TEXT DEFAULT 'native_digital'",
@@ -502,6 +503,9 @@ def initialize_database() -> None:
                 title TEXT NOT NULL DEFAULT 'Untitled Note',
                 shade_index INTEGER DEFAULT 0,
                 is_pinned INTEGER DEFAULT 0,
+                note_mode TEXT DEFAULT 'list',
+                content_markdown TEXT DEFAULT '',
+                card_color TEXT DEFAULT '',
                 created_at REAL DEFAULT (unixepoch('now')),
                 updated_at REAL DEFAULT (unixepoch('now'))
             );
@@ -551,6 +555,13 @@ def initialize_database() -> None:
             "topic_list_json TEXT DEFAULT '[]'",
         ):
             _safe_add_column(conn, "quiz_sessions", col_def)
+
+        for col_def in (
+            "note_mode TEXT DEFAULT 'list'",
+            "content_markdown TEXT DEFAULT ''",
+            "card_color TEXT DEFAULT ''",
+        ):
+            _safe_add_column(conn, "user_lecture_notes", col_def)
 
         for col_def in (
             "llm_explanation TEXT DEFAULT ''",

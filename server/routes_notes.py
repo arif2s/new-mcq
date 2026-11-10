@@ -575,11 +575,58 @@ def _safe_lookup_pdf_topic_pages(clean_topic: str):
         return []
 
 
+from agents.tema_q.topic_extractor import extract_topics_local, normalize_topic_key
+
+_WIKILINK_TOPIC_RE = re.compile(r"(?<!!)\[\[(?:([^|\]]+)\|)?([^\]]+)\]\]")
+
+
+def extract_topics_from_note_markdown(markdown_text: str) -> list[str]:
+    """Extracts guaranteed topics from [[Wikilinks]] and automated medical entities from prose."""
+    if not markdown_text or not markdown_text.strip():
+        return []
+
+    seen: set[str] = set()
+    ordered_topics: list[str] = []
+
+    def _add(term: str) -> None:
+        clean = (term or "").strip()
+        key = normalize_topic_key(clean)
+        if key and len(clean) >= 2 and key not in seen:
+            seen.add(key)
+            ordered_topics.append(clean)
+
+    # 1. Explicit Obsidian [[Wikilink]] or [[Target|Alias]] notations
+    for match in _WIKILINK_TOPIC_RE.finditer(markdown_text):
+        target = (match.group(1) or match.group(2) or "").strip()
+        if target:
+            _add(target)
+
+    # 2. Automated clinical NLP extraction via MedSpaCy / SciSpaCy local extractor
+    try:
+        extracted = extract_topics_local(question=markdown_text)
+        for topic_name in extracted.get("all_topics", []):
+            _add(topic_name)
+    except Exception as exc:
+        logger.warning("Clinical NLP extraction error from note markdown: %s", exc)
+
+    return ordered_topics
+
+
 class LectureNoteMetaPayload(BaseModel):
+    if _NOTE_CONFIG is not None:
+        model_config = _NOTE_CONFIG
+    else:
+        class Config:
+            extra = "allow"
+
     note_id: Optional[str] = None
     title: str = "Untitled Note"
     shade_index: int = 0
     is_pinned: int = 0
+    note_mode: str = "list"
+    content_markdown: str = ""
+    card_color: str = ""
+    items: Optional[list] = None
 
 
 class LectureNoteItemPayload(BaseModel):
@@ -767,20 +814,24 @@ def _get_lecture_notes_sync(page: int = 1, page_size: int = 12, q: Any = "") -> 
             total_items = int(cursor.fetchone()["cnt"] or 0)
 
             query = """
-                SELECT DISTINCT n.note_id, n.title, n.shade_index, n.is_pinned, n.created_at, n.updated_at
+                SELECT DISTINCT n.note_id, n.title, n.shade_index, n.is_pinned,
+                                n.note_mode, n.content_markdown, n.card_color,
+                                n.created_at, n.updated_at
                 FROM user_lecture_notes n
                 LEFT JOIN user_lecture_note_items i ON i.note_id = n.note_id
-                WHERE n.title LIKE ? OR i.topic_text LIKE ?
+                WHERE n.title LIKE ? OR i.topic_text LIKE ? OR n.content_markdown LIKE ?
                 ORDER BY n.is_pinned DESC, n.updated_at DESC
                 LIMIT ? OFFSET ?
             """
-            cursor.execute(query, (like_pat, like_pat, page_size, offset))
+            cursor.execute(query, (like_pat, like_pat, like_pat, page_size, offset))
         else:
             cursor.execute("SELECT COUNT(*) AS cnt FROM user_lecture_notes")
             total_items = int(cursor.fetchone()["cnt"] or 0)
 
             query = """
-                SELECT note_id, title, shade_index, is_pinned, created_at, updated_at
+                SELECT note_id, title, shade_index, is_pinned,
+                       note_mode, content_markdown, card_color,
+                       created_at, updated_at
                 FROM user_lecture_notes
                 ORDER BY is_pinned DESC, updated_at DESC
                 LIMIT ? OFFSET ?
@@ -820,8 +871,11 @@ def _get_lecture_notes_sync(page: int = 1, page_size: int = 12, q: Any = "") -> 
             notes.append({
                 "note_id": nid,
                 "title": nr["title"],
-                "shade_index": nr["shade_index"],
+                "shade_index": nr["shade_index"] or 0,
                 "is_pinned": bool(nr["is_pinned"]),
+                "note_mode": nr["note_mode"] or "list",
+                "content_markdown": nr["content_markdown"] or "",
+                "card_color": nr["card_color"] or "",
                 "created_at": nr["created_at"],
                 "updated_at": nr["updated_at"],
                 "top_items": top_items,
@@ -846,7 +900,9 @@ def _get_single_lecture_note_sync(note_id: str) -> Optional[Dict[str, Any]]:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT note_id, title, shade_index, is_pinned, created_at, updated_at
+            SELECT note_id, title, shade_index, is_pinned,
+                   note_mode, content_markdown, card_color,
+                   created_at, updated_at
             FROM user_lecture_notes
             WHERE note_id = ?
             """,
@@ -883,32 +939,106 @@ def _get_single_lecture_note_sync(note_id: str) -> Optional[Dict[str, Any]]:
         }
 
 
+def _extract_and_sync_note_topics_sync(note_id: str, markdown_override: Optional[str] = None) -> Dict[str, Any]:
+    """Extracts topics from note markdown and merges them into user_lecture_note_items."""
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT note_id, title, shade_index, is_pinned, note_mode, content_markdown, card_color, created_at, updated_at FROM user_lecture_notes WHERE note_id = ?",
+            (note_id,),
+        )
+        note_row = cursor.fetchone()
+        if not note_row:
+            raise HTTPException(status_code=404, detail=f"Note '{note_id}' not found.")
+
+        md_text = markdown_override if markdown_override is not None else (note_row["content_markdown"] or "")
+
+        cursor.execute(
+            "SELECT item_id, line_order, topic_text, topic_key FROM user_lecture_note_items WHERE note_id = ? ORDER BY line_order ASC",
+            (note_id,),
+        )
+        existing_items = [dict(r) for r in cursor.fetchall()]
+
+    extracted_names = extract_topics_from_note_markdown(md_text)
+
+    from agents.tema_q.topic_extractor import normalize_topic_key
+    existing_keys = {r["topic_key"]: r for r in existing_items}
+    existing_clean_text = {r["topic_text"].strip().lower() for r in existing_items}
+
+    # Add newly extracted topics
+    next_order = len(existing_items)
+    for term in extracted_names:
+        clean_t = term.strip()
+        t_key = normalize_topic_key(clean_t)
+        if t_key not in existing_keys and clean_t.lower() not in existing_clean_text:
+            existing_keys[t_key] = True
+            existing_clean_text.add(clean_t.lower())
+            _upsert_lecture_note_item_sync(note_id, LectureNoteItemPayload(
+                line_order=next_order,
+                topic_text=clean_t,
+                force_refresh=False,
+            ))
+            next_order += 1
+
+    single = _get_single_lecture_note_sync(note_id)
+    return single or {"status": "success", "note": dict(note_row), "items": []}
+
+
 def _upsert_lecture_note_sync(payload: LectureNoteMetaPayload) -> Dict[str, Any]:
     note_id = (payload.note_id or "").strip() or f"note_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
     title = (payload.title or "").strip() or "Untitled Note"
+    mode = (payload.note_mode or "list").strip().lower()
+    if mode not in ("notes", "list"):
+        mode = "list"
+    content_md = payload.content_markdown if payload.content_markdown is not None else ""
+    color = (payload.card_color or "").strip()
 
     with closing(get_db_connection()) as conn:
         conn.execute(
             """
-            INSERT INTO user_lecture_notes (note_id, title, shade_index, is_pinned, created_at, updated_at)
-            VALUES (?, ?, ?, ?, unixepoch('now'), unixepoch('now'))
+            INSERT INTO user_lecture_notes (
+                note_id, title, shade_index, is_pinned, note_mode,
+                content_markdown, card_color, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch('now'), unixepoch('now'))
             ON CONFLICT(note_id) DO UPDATE SET
                 title = excluded.title,
                 shade_index = excluded.shade_index,
                 is_pinned = excluded.is_pinned,
+                note_mode = excluded.note_mode,
+                content_markdown = excluded.content_markdown,
+                card_color = excluded.card_color,
                 updated_at = unixepoch('now')
             """,
-            (note_id, title, payload.shade_index, payload.is_pinned),
+            (note_id, title, payload.shade_index, payload.is_pinned, mode, content_md, color),
         )
 
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT note_id, title, shade_index, is_pinned, created_at, updated_at FROM user_lecture_notes WHERE note_id = ?",
+            """
+            SELECT note_id, title, shade_index, is_pinned, note_mode,
+                   content_markdown, card_color, created_at, updated_at
+            FROM user_lecture_notes WHERE note_id = ?
+            """,
             (note_id,),
         )
         saved = cursor.fetchone()
 
-    return {"status": "success", "note": dict(saved)}
+    # If items are provided in payload, sync them if needed
+    if payload.items is not None and isinstance(payload.items, list):
+        for idx, it in enumerate(payload.items):
+            if isinstance(it, dict) and it.get("topic_text"):
+                _upsert_lecture_note_item_sync(note_id, LectureNoteItemPayload(
+                    item_id=it.get("item_id"),
+                    line_order=idx,
+                    topic_text=it.get("topic_text"),
+                ))
+    elif content_md.strip():
+        # Automatically extract & merge topics when saving markdown prose
+        _extract_and_sync_note_topics_sync(note_id, markdown_override=content_md)
+
+    single = _get_single_lecture_note_sync(note_id)
+    return single or {"status": "success", "note": dict(saved), "items": []}
 
 
 def _delete_lecture_note_sync(note_id: str) -> bool:
@@ -1011,6 +1141,10 @@ def _delete_lecture_note_item_sync(note_id: str, item_id: str) -> bool:
         return deleted
 
 
+# Standard REST endpoints and alias /lecture-notes routes
+
+@router.get("")
+@router.get("/")
 @router.get("/lecture-notes")
 async def get_lecture_notes(
     page: int = Query(1, ge=1),
@@ -1021,6 +1155,7 @@ async def get_lecture_notes(
     return await asyncio.to_thread(_get_lecture_notes_sync, page=page, page_size=page_size, q=q)
 
 
+@router.get("/{note_id}")
 @router.get("/lecture-notes/{note_id}")
 async def get_single_lecture_note(note_id: str) -> Dict[str, Any]:
     """Returns the full note metadata and all ordered locked topic lines."""
@@ -1030,12 +1165,23 @@ async def get_single_lecture_note(note_id: str) -> Dict[str, Any]:
     return result
 
 
+@router.post("")
+@router.post("/")
 @router.post("/lecture-notes")
 async def upsert_lecture_note(payload: LectureNoteMetaPayload) -> Dict[str, Any]:
-    """Creates or updates a note's metadata (note_id, title, shade_index, is_pinned)."""
+    """Creates or updates a note's metadata and items."""
     return await asyncio.to_thread(_upsert_lecture_note_sync, payload=payload)
 
 
+@router.put("/{note_id}")
+@router.put("/lecture-notes/{note_id}")
+async def update_lecture_note(note_id: str, payload: LectureNoteMetaPayload) -> Dict[str, Any]:
+    """Updates / auto-saves a note's metadata and markdown content."""
+    payload.note_id = note_id
+    return await asyncio.to_thread(_upsert_lecture_note_sync, payload=payload)
+
+
+@router.delete("/{note_id}")
 @router.delete("/lecture-notes/{note_id}")
 async def delete_lecture_note(note_id: str) -> Dict[str, Any]:
     """Deletes a note and cascades its items."""
@@ -1043,12 +1189,30 @@ async def delete_lecture_note(note_id: str) -> Dict[str, Any]:
     return {"status": "success", "deleted": deleted}
 
 
+@router.post("/{note_id}/extract-topics")
+@router.post("/lecture-notes/{note_id}/extract-topics")
+async def extract_and_sync_note_topics(note_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Extracts explicit wikilinks and NLP topics from note markdown and merges with items."""
+    md_override = payload.get("content_markdown") if payload and isinstance(payload, dict) else None
+    return await asyncio.to_thread(_extract_and_sync_note_topics_sync, note_id=note_id, markdown_override=md_override)
+
+
+@router.post("/{note_id}/items")
 @router.post("/lecture-notes/{note_id}/items")
 async def upsert_lecture_note_item(note_id: str, payload: LectureNoteItemPayload) -> Dict[str, Any]:
     """Upserts a locked topic line, resolves references and MCQ count, and returns enriched item."""
     return await asyncio.to_thread(_upsert_lecture_note_item_sync, note_id=note_id, payload=payload)
 
 
+@router.put("/{note_id}/items/{item_id}")
+@router.put("/lecture-notes/{note_id}/items/{item_id}")
+async def edit_lecture_note_item(note_id: str, item_id: str, payload: LectureNoteItemPayload) -> Dict[str, Any]:
+    """Edits or renames an individual topic in the note's topic list."""
+    payload.item_id = item_id
+    return await asyncio.to_thread(_upsert_lecture_note_item_sync, note_id=note_id, payload=payload)
+
+
+@router.delete("/{note_id}/items/{item_id}")
 @router.delete("/lecture-notes/{note_id}/items/{item_id}")
 async def delete_lecture_note_item(note_id: str, item_id: str) -> Dict[str, Any]:
     """Removes a topic line from a lecture note."""

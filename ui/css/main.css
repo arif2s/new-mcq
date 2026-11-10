@@ -2300,3 +2300,77 @@ input[type="range"]::-moz-range-thumb {
 #my-notes-right-sidebar {
     transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* ============================================================================
+   My Notes - Notes View, Highlighting, Carousel Sub-view, and Workspace
+   ============================================================================ */
+
+.note-mode-toggle-btn {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.note-topic-highlight {
+    background: rgba(56, 189, 248, 0.22);
+    color: #38bdf8;
+    border-bottom: 1.5px solid #38bdf8;
+    border-radius: 4px;
+    padding: 1px 4px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.15s ease;
+    display: inline-block;
+}
+
+body.light-theme .note-topic-highlight {
+    background: rgba(2, 132, 199, 0.16);
+    color: #0369a1;
+    border-bottom-color: #0284c7;
+}
+
+.note-topic-highlight:hover {
+    background: rgba(56, 189, 248, 0.38);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(56, 189, 248, 0.3);
+}
+
+.note-floating-ok-btn {
+    position: absolute;
+    bottom: 18px;
+    right: 22px;
+    z-index: 30;
+    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.note-floating-ok-btn:hover {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 6px 20px rgba(16, 185, 129, 0.6);
+}
+
+.note-reading-content {
+    cursor: text;
+    user-select: text;
+    line-height: 1.7;
+}
+
+.note-reading-content h1, .note-reading-content h2, .note-reading-content h3 {
+    margin-top: 1.25rem;
+    margin-bottom: 0.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.note-reading-content p {
+    margin-bottom: 0.85rem;
+}
+
+.note-carousel-pill {
+    transition: all 0.2s ease;
+}
+
+.note-carousel-pill.active {
+    background: rgba(56, 189, 248, 0.25) !important;
+    border-color: #38bdf8 !important;
+    color: #ffffff !important;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
+}
