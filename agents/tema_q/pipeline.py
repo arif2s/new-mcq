@@ -120,41 +120,22 @@ def parse_llm_json(response_str: str) -> Union[dict, list]:
             "discrepancies": "",
         }
 
-    match_fence = re.search(r"```(?:json)?\s*(.*?)\s*```", cleaned, re.DOTALL | re.IGNORECASE)
-    if match_fence:
-        cleaned = match_fence.group(1).strip()
-
-    first_bracket = cleaned.find("[")
-    first_brace = cleaned.find("{")
-
-    candidate = cleaned
-    if first_bracket != -1 and (first_brace == -1 or first_bracket < first_brace):
-        last_bracket = cleaned.rfind("]")
-        if last_bracket > first_bracket:
-            candidate = cleaned[first_bracket : last_bracket + 1]
-    elif first_brace != -1:
-        last_brace = cleaned.rfind("}")
-        if last_brace > first_brace:
-            candidate = cleaned[first_brace : last_brace + 1]
-
     try:
-        return json.loads(candidate)
+        from agents.tema_q.json_utils import extract_and_repair_json
+        parsed = extract_and_repair_json(cleaned)
+        if isinstance(parsed, (dict, list)):
+            return parsed
     except Exception:
-        # Clean up trailing commas commonly emitted by local 4B/7B GGUF models
-        candidate_fixed = re.sub(r",\s*([\]}])", r"\g<1>", candidate)
-        try:
-            return json.loads(candidate_fixed)
-        except Exception:
-            pass
+        pass
 
-        logger.warning("Failed to parse LLM JSON; constructing structured text node.")
-        return {
-            "section": "Clinical Summary",
-            "subtopic": "Synthesis",
-            "conditional_context": "",
-            "clinical_points": [{"point": cleaned[:600], "source": "Reference", "page": 1}],
-            "discrepancies": "",
-        }
+    logger.warning("Failed to parse LLM JSON; constructing structured text node.")
+    return {
+        "section": "Clinical Summary",
+        "subtopic": "Synthesis",
+        "conditional_context": "",
+        "clinical_points": [{"point": cleaned[:600], "source": "Reference", "page": 1}],
+        "discrepancies": "",
+    }
 
 
 def count_tokens(text: str) -> int:
@@ -948,6 +929,7 @@ async def run_tema_q_synthesis(
                     heading_json,
                     metadata={"source": sec_src, "page": sec_pg},
                     primary_max_words=500,
+                    telemetry=trace,
                 )
 
             if subtopic_node is None:
@@ -982,14 +964,21 @@ async def run_tema_q_synthesis(
                 sec_json_str = ""
 
                 if lm_available:
-                    sec_msg = (
+                    bounded_base_pts = truncate_to_token_limit(
+                        json.dumps(subtopic_node.get("clinical_points", [])), 1200
+                    )
+                    prompt_header = (
                         f"Clinical Topic: {topic}\n"
                         f"Target Subtopic: {sub_title} ({bucket.question_anchor})\n"
                         f"Source Document: {sec_src} (Page {sec_page})\n"
                         f"Article Heading Breadcrumb: {sec_breadcrumb}\n"
-                        f"Primary Baseline Points:\n{json.dumps(subtopic_node.get('clinical_points', []))}\n\n"
-                        f"Secondary Reference:\n{novel_sec_text}"
+                        f"Primary Baseline Points:\n{bounded_base_pts}\n\n"
+                        f"Secondary Reference:\n"
                     )
+                    used_tokens = count_tokens(pass2_sys_prompt) + count_tokens(prompt_header) + 500
+                    available_tokens = max(100, MAX_CONTEXT_TOKENS - used_tokens)
+                    novel_sec_text = truncate_to_token_limit(novel_sec_text, available_tokens)
+                    sec_msg = f"{prompt_header}{novel_sec_text}"
                     try:
                         sec_json_str = await call_llm_async(
                             pass2_sys_prompt,
@@ -1070,6 +1059,7 @@ async def run_tema_q_synthesis(
                     sec_json,
                     metadata={"source": sec_src, "page": sec_page},
                     max_words=1000,
+                    telemetry=trace,
                 )
 
             synthesized_subtopic_nodes.append(subtopic_node)
@@ -1114,7 +1104,16 @@ async def run_tema_q_synthesis(
             base_note_json,
             metadata={"source": doc1["source_label"], "page": doc1["page"]},
             primary_max_words=500,
+            telemetry=trace,
         )
+
+    variance_text = str(
+        final_article.get("discrepancies", "")
+        or final_article.get("variances", "")
+        or ""
+    ).strip()
+
+    enhanced_markdown = _format_article_as_markdown(final_article, topic)
 
     # Pass 3: Optional MCQ Distractor Audit
     distractor_output = "Distractors audited against clinical reference criteria."
@@ -1126,6 +1125,7 @@ async def run_tema_q_synthesis(
             or mcq_context.get("answer")
             or ""
         )
+        bounded_synthesis_md = truncate_to_token_limit(enhanced_markdown, 1800)
         distractor_user_msg = (
             f"Topic: {topic}\n"
             f"Question: {mcq_context.get('question', '')}\n"
@@ -1135,7 +1135,7 @@ async def run_tema_q_synthesis(
             f"(C) {opts.get('C', '')}\n"
             f"(D) {opts.get('D', '')}\n"
             f"Correct Answer: {correct_ans}\n\n"
-            f"Clinical Reference Synthesis:\n{json.dumps(final_article)}"
+            f"Clinical Reference Synthesis:\n{bounded_synthesis_md}"
         )
         try:
             distractor_output = await call_llm_async(
@@ -1143,14 +1143,6 @@ async def run_tema_q_synthesis(
             )
         except Exception:
             distractor_output = "Distractor analysis skipped (LM Studio unresponsive)."
-
-    variance_text = str(
-        final_article.get("discrepancies", "")
-        or final_article.get("variances", "")
-        or ""
-    ).strip()
-
-    enhanced_markdown = _format_article_as_markdown(final_article, topic)
 
     result_payload: Dict[str, Any] = {
         "topic_key": topic_key,

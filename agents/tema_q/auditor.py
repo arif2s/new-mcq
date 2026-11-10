@@ -109,7 +109,12 @@ def filter_novel_secondary_sentences(
     base_combined = " ".join(pt.get("point", "") for pt in base_points if pt.get("point"))
     base_nums = {val.lower() for val, _ in _NUMERIC_DOSAGE_PATTERN.findall(base_combined)}
 
-    sents = re.split(r"(?<=[.!?])\s+", secondary_text.strip())
+    try:
+        from agents.tema_q.subtopic_router import split_clinical_sentences
+        sents = split_clinical_sentences(secondary_text)
+    except Exception:
+        sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", secondary_text.strip()) if s.strip()]
+
     novel_sents: List[str] = []
     used_words = 0
 
@@ -203,10 +208,19 @@ def detect_clinical_variances(base_text: str, secondary_text: str) -> str:
     sec_str = str(secondary_text).strip()
     variances: List[str] = []
 
-    # 1. Detect explicit contrastive markers in secondary text
-    matches = {m.lower() for m in _VARIANCE_PATTERN.findall(sec_str)}
-    for m in sorted(matches):
-        variances.append(f"Contrasting criteria or variance marker observed: '{m}'")
+    # 1. Detect explicit contrastive markers in secondary text with sentence/clause context
+    try:
+        from agents.tema_q.subtopic_router import split_clinical_sentences
+        sec_sents = split_clinical_sentences(sec_str)
+    except Exception:
+        sec_sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", sec_str) if s.strip()]
+
+    for sent in sec_sents:
+        m = _VARIANCE_PATTERN.search(sent)
+        if m:
+            marker = m.group(0).lower()
+            snippet = " ".join(sent.split()[:30])
+            variances.append(f"Contrasting criteria or variance marker observed ('{marker}'): {snippet}")
 
     # 2. Extract and compare staging classifications and numeric thresholds
     if base_str:
@@ -302,6 +316,7 @@ def merge_json_nodes(
     metadata: Optional[Dict[str, Any]] = None,
     max_words: int = 1000,
     primary_max_words: int = 500,
+    telemetry: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
     Matches and merges clinical JSON subtopic nodes deterministically in Python (Section 3).
@@ -393,6 +408,10 @@ def merge_json_nodes(
         elif _normalize_text(sec_context) not in _normalize_text(merged["conditional_context"]):
             merged["conditional_context"] += f"; {sec_context}"
 
+    upgraded_in_place = 0
+    deduplicated_points = 0
+    added_novel_points = 0
+
     sec_points: List[Dict[str, Any]] = []
     for raw_pt in sec.get("clinical_points", []) or []:
         coerced = _coerce_clinical_point(raw_pt, meta_source, meta_page)
@@ -418,6 +437,7 @@ def merge_json_nodes(
                 ex_pt["point"] = pt_text
                 ex_pt["source"] = f"{ex_pt.get('source', '')} + {meta_source}".strip("+ ")
                 upgraded = True
+                upgraded_in_place += 1
                 break
 
         if upgraded:
@@ -430,8 +450,22 @@ def merge_json_nodes(
             for ex_pt in merged["clinical_points"]
         )
 
-        if not is_duplicate:
+        if is_duplicate:
+            deduplicated_points += 1
+        else:
             merged["clinical_points"].append(coerced)
+            added_novel_points += 1
+
+    if telemetry is not None and hasattr(telemetry, "auditor_merge_events"):
+        telemetry.auditor_merge_events.append({
+            "subtopic": merged.get("subtopic", "General"),
+            "source_label": meta_source,
+            "page": meta_page,
+            "upgraded_in_place": upgraded_in_place,
+            "deduplicated_points": deduplicated_points,
+            "added_novel_points": added_novel_points,
+            "total_points_after_merge": len(merged["clinical_points"]),
+        })
 
     # Cap total points at max_words
     merged["clinical_points"] = _enforce_points_word_budget(merged["clinical_points"], max_words)

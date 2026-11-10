@@ -61,6 +61,56 @@ def strip_reasoning_and_fences(raw_text: str) -> str:
     return cleaned
 
 
+def _repair_truncated_json_lifo(candidate: str) -> str:
+    """Single-pass quote-aware LIFO stack balancer for truncated local LLM JSON outputs."""
+    stack: list[str] = []
+    in_string = False
+    escape = False
+    last_complete_end = -1
+
+    for idx, ch in enumerate(candidate):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_string:
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            stack.append("}")
+        elif ch == "[":
+            stack.append("]")
+        elif ch in ("}", "]"):
+            if stack and stack[-1] == ch:
+                stack.pop()
+                if not stack:
+                    last_complete_end = idx
+                    break
+
+    if last_complete_end != -1:
+        return _TRAILING_COMMA_RE.sub(r"\1", candidate[: last_complete_end + 1])
+
+    repaired = candidate.rstrip()
+    if in_string:
+        if repaired.endswith("\\"):
+            repaired = repaired[:-1]
+        repaired += '"'
+
+    repaired = re.sub(r",\s*$", "", repaired)
+    if stack and stack[-1] == "}":
+        if re.search(r":\s*$", repaired):
+            repaired += " null"
+        elif re.search(r'[{,]\s*"[^"]*"\s*$', repaired):
+            repaired += ": null"
+
+    repaired += "".join(reversed(stack))
+    return _TRAILING_COMMA_RE.sub(r"\1", repaired)
+
+
 def extract_and_repair_json(raw_text: str) -> Any:
     """
     Deterministically extract and repair JSON objects or arrays from noisy local LLM outputs.
@@ -70,39 +120,22 @@ def extract_and_repair_json(raw_text: str) -> Any:
     if not cleaned:
         raise ValueError("Empty LLM completion after stripping reasoning blocks")
 
-    # Locate outermost JSON object or array start
     first_obj = cleaned.find("{")
     first_arr = cleaned.find("[")
     if first_obj == -1 and first_arr == -1:
         raise ValueError("No JSON object or array delimiter found in LLM output")
 
-    if first_obj != -1 and (first_arr == -1 or first_obj < first_arr):
-        start_idx = first_obj
-        last_idx = cleaned.rfind("}")
-    else:
-        start_idx = first_arr
-        last_idx = cleaned.rfind("]")
-
-    candidate = cleaned[start_idx : last_idx + 1] if last_idx > start_idx else cleaned[start_idx:]
-    candidate = _TRAILING_COMMA_RE.sub(r"\1", candidate)
-
-    # Attempt direct parse first
+    start_idx = (
+        first_obj
+        if (first_obj != -1 and (first_arr == -1 or first_obj < first_arr))
+        else first_arr
+    )
+    candidate = _TRAILING_COMMA_RE.sub(r"\1", cleaned[start_idx:])
     try:
         return json.loads(candidate)
     except json.JSONDecodeError:
-        pass
-
-    # Balance truncated braces/brackets for small local models
-    open_braces = candidate.count("{") - candidate.count("}")
-    open_brackets = candidate.count("[") - candidate.count("]")
-    balanced = candidate
-    if open_brackets > 0:
-        balanced += "]" * open_brackets
-    if open_braces > 0:
-        balanced += "}" * open_braces
-    balanced = _TRAILING_COMMA_RE.sub(r"\1", balanced)
-
-    return json.loads(balanced)
+        repaired = _repair_truncated_json_lifo(candidate)
+        return json.loads(repaired)
 
 
 def parse_llm_pydantic(raw_text: str, model_cls: type[T], default_fallback: T | None = None) -> T:
