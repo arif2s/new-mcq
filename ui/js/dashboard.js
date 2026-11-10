@@ -49,12 +49,12 @@ class DashboardStudyBanner {
     };
 
     this.container.innerHTML = `
-      <div class="relative overflow-hidden rounded-2xl border border-slate-700/70 bg-gradient-to-r from-slate-900/90 via-slate-900/80 to-indigo-950/70 p-4 sm:p-5 shadow-xl backdrop-blur-md mb-6">
+      <div class="daily-study-plan-banner relative overflow-hidden rounded-2xl p-4 sm:p-5 shadow-xl backdrop-blur-md mb-6">
         <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <!-- Left: Rotating Message & Wellness Ticker -->
           <div class="flex items-start gap-3.5 flex-1 min-w-0">
-            <div id="banner-Dynamic-icon" class="w-10 h-10 rounded-xl bg-sky-500/15 border border-sky-400/30 flex items-center justify-center text-xl shrink-0">
-              🎯
+            <div id="banner-Dynamic-icon" class="w-10 h-10 rounded-xl bg-sky-500/15 flex items-center justify-center text-xl shrink-0">
+              📖
             </div>
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">

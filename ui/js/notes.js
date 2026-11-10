@@ -108,7 +108,7 @@ export function renderTopicRightSidebar(drawerEl, item, onLaunchCustomQuiz, onOp
                data-ref-idx="${idx}">
             <div class="flex items-center justify-between gap-2">
               <span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
-                ref._type === 'obsidian' ? 'bg-purple-500/20 text-purple-300' :
+                ref._type === 'obsidian' ? 'bg-sky-500/20 text-sky-300' :
                 ref._type === 'pdf' ? 'bg-rose-500/20 text-rose-300' :
                 'bg-blue-500/20 text-blue-300'
               }">${ref._badge}</span>
@@ -288,7 +288,7 @@ export class LectureNoteEditor {
             </span>
           ` : `
             <span class="px-2 py-0.5 rounded-md text-[11px] font-semibold ${
-              item.obsidian_count > 0 ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 'bg-slate-900/60 text-slate-500'
+              item.obsidian_count > 0 ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30' : 'bg-slate-900/60 text-slate-500'
             }" title="Obsidian Notes">
               OBS ${item.obsidian_count || 0}
             </span>
@@ -823,7 +823,7 @@ export class MyNotesController {
       });
       if (!res.ok) throw new Error('Create failed');
       const data = await res.json();
-      await this.openNoteEditor(data.note.note_id);
+      await this.openNoteEditor(data.note.note_id, true);
     } catch (err) {
       console.error('[MyNotesController] Failed creating note:', err);
     }
@@ -885,7 +885,7 @@ export class MyNotesController {
     }
   }
 
-  async openNoteEditor(noteId) {
+  async openNoteEditor(noteId, isNewlyCreated = false) {
     const gridView = this.container.querySelector('#notes-grid-view');
     const editorContainer = this.container.querySelector('#notes-editor-container');
     const workspaceEl = this.container.querySelector('#my-notes-editor-workspace');
@@ -898,12 +898,24 @@ export class MyNotesController {
     this.editor = new LectureNoteEditor(
       workspaceEl,
       rightDrawerEl,
-      () => {
+      async () => {
         // Callback to return to grid view
+        if (isNewlyCreated && this.editor && this.editor.note) {
+          const currentNote = this.editor.note;
+          const itemsCount = Array.isArray(this.editor.items) ? this.editor.items.length : 0;
+          const isUntitled = !currentNote.title || currentNote.title.trim() === 'Untitled Note';
+          if (itemsCount === 0 && isUntitled) {
+            try {
+              await fetch(`/api/notes/lecture-notes/${encodeURIComponent(currentNote.note_id)}`, {
+                method: 'DELETE'
+              });
+            } catch (_) {}
+          }
+        }
         this.isEditing = false;
         if (editorContainer) editorContainer.classList.add('hidden');
         if (gridView) gridView.classList.remove('hidden');
-        this.loadNotes();
+        await this.loadNotes();
       },
       (customQuizParams) => {
         // Launch custom keyword quiz

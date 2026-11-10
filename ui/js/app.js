@@ -1138,6 +1138,20 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.documentElement.style.setProperty('--primary-btn-text-shadow', btnTextShadow);
             document.documentElement.style.setProperty('--accent-color', `rgb(${rBtn}, ${gBtn}, ${bBtn})`);
             document.documentElement.style.setProperty('--accent-hover', `rgb(${rHover}, ${gHover}, ${bHover})`);
+            document.documentElement.style.setProperty('--input-focus', `rgba(${rBtn}, ${gBtn}, ${bBtn}, 0.35)`);
+
+            // Contrast-safe brand text tokens derived from wallpaper accent
+            if (theme === 'dark') {
+                const [rB4, gB4, bB4] = hslToRgb(buttonHue, 0.85, 0.75);
+                const [rB3, gB3, bB3] = hslToRgb(buttonHue, 0.80, 0.82);
+                document.documentElement.style.setProperty('--c-brand-400', `rgb(${rB4}, ${gB4}, ${bB4})`);
+                document.documentElement.style.setProperty('--c-brand-300', `rgb(${rB3}, ${gB3}, ${bB3})`);
+            } else {
+                const [rB4, gB4, bB4] = hslToRgb(buttonHue, 0.85, 0.35);
+                const [rB3, gB3, bB3] = hslToRgb(buttonHue, 0.80, 0.28);
+                document.documentElement.style.setProperty('--c-brand-400', `rgb(${rB4}, ${gB4}, ${bB4})`);
+                document.documentElement.style.setProperty('--c-brand-300', `rgb(${rB3}, ${gB3}, ${bB3})`);
+            }
 
             const hueShifts = [0, 15, -15, 30];
             const alpha = (window.AppState && typeof window.AppState.get().cardOpacity === 'number')
