@@ -286,6 +286,29 @@ body {
 .card-shade-3 .text-muted, .card-shade-3 .text-gray-400, .card-shade-3 .subtitle { color: var(--text-muted-on-card-3); }
 .card-shade-4 .text-muted, .card-shade-4 .text-gray-400, .card-shade-4 .subtitle { color: var(--text-muted-on-card-4); }
 
+/* Custom subtle grey and transparency styling for Activity by Hour and Rank Preparedness */
+.card-shade-activity-hour {
+  background: rgba(30, 41, 59, 0.45) !important;
+  border-color: rgba(148, 163, 184, 0.22) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+body:not(.dark-theme) .card-shade-activity-hour {
+  background: rgba(241, 245, 249, 0.65) !important;
+  border-color: rgba(100, 116, 139, 0.25) !important;
+}
+
+.card-shade-rank-sim {
+  background: rgba(15, 23, 42, 0.50) !important;
+  border-color: rgba(148, 163, 184, 0.24) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+body:not(.dark-theme) .card-shade-rank-sim {
+  background: rgba(226, 232, 240, 0.65) !important;
+  border-color: rgba(100, 116, 139, 0.28) !important;
+}
+
 /* --- Input Elements --- */
 .glass-input, .glass-select {
   background: var(--input-bg);

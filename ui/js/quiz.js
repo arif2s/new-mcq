@@ -574,6 +574,27 @@ window.startCustomTopicQuiz = async function(topicName) {
     showToast(`Curated question set for "${topicName}"`);
 };
 
+window.startCombinedTopicsQuiz = async function(topicsList, noteTitle = '') {
+    const validTopics = Array.isArray(topicsList)
+        ? topicsList.filter(t => t && String(t).trim()).map(t => String(t).trim())
+        : [];
+    if (!validTopics.length) {
+        showToast('No topics available in this note yet.');
+        return;
+    }
+    // Set keyword search with OR combination of topics
+    quizConfig.subject = 'all';
+    quizConfig.topic = 'all';
+    quizConfig.keyword = validTopics.join(' OR ');
+    quizConfig.mode = 'learn';
+    quizConfig.count = Math.max(15, Math.min(100, validTopics.length * 5));
+
+    const navBtn = document.querySelector('.nav-btn[data-target="quiz-view"]');
+    if (navBtn) navBtn.click();
+    await initQuizSetup();
+    showToast(`Curated MCQ set from ${validTopics.length} topic${validTopics.length === 1 ? '' : 's'}${noteTitle ? ` in "${noteTitle}"` : ''}`);
+};
+
 // =========================================================
 // 2. TOPIC VERIFICATION POPUP
 // =========================================================

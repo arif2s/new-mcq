@@ -689,6 +689,12 @@ export class MyNotesController {
         }
         return;
       }
+      const doMcqBtn = e.target.closest('.btn-do-mcq-note');
+      if (doMcqBtn) {
+        e.stopPropagation();
+        this.launchCombinedQuizForNote(doMcqBtn.dataset.noteId, doMcqBtn.dataset.noteTitle || '');
+        return;
+      }
       const card = e.target.closest('.lecture-note-card');
       if (card) {
         this.openNoteEditor(card.dataset.noteId);
@@ -791,9 +797,12 @@ export class MyNotesController {
           </div>
 
           <!-- Footer Summary -->
-          <div class="pt-2 mt-2 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-300 font-semibold">
-            <span>${n.total_topics} Topics • ${n.total_refs} Refs • ${n.total_mcqs} MCQs</span>
-            <span class="text-sky-300 group-hover:underline">Open →</span>
+          <div class="pt-2 mt-2 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-300 font-semibold gap-2">
+            <span class="truncate">${n.total_topics} Topics • ${n.total_refs} Refs • ${n.total_mcqs} MCQs</span>
+            <button type="button" class="btn-do-mcq-note px-2.5 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/35 text-sky-200 border border-sky-400/40 font-bold transition flex items-center gap-1 shrink-0 cursor-pointer shadow"
+                    data-note-id="${n.note_id}" data-note-title="${this._escapeAttr(n.title)}" title="Do MCQ from all topics in this note">
+              <span>🎯</span> Do MCQ
+            </button>
           </div>
         </div>
       `;
@@ -844,6 +853,35 @@ export class MyNotesController {
       this.loadNotes();
     } catch (err) {
       console.error('[MyNotesController] Failed deleting note:', err);
+    }
+  }
+
+  async launchCombinedQuizForNote(noteId, noteTitle) {
+    try {
+      const res = await fetch(`/api/notes/lecture-notes/${encodeURIComponent(noteId)}`);
+      if (!res.ok) throw new Error('Failed to load note items');
+      const data = await res.json();
+      const items = Array.isArray(data.items) ? data.items : [];
+      const topics = items.map(it => it.topic_text).filter(Boolean);
+
+      if (!topics.length) {
+        if (typeof window.showToast === 'function') {
+          window.showToast('Note has no topics yet. Add topics to do MCQs.');
+        } else {
+          alert('Note has no topics yet. Add topics to do MCQs.');
+        }
+        return;
+      }
+
+      if (typeof window.startCombinedTopicsQuiz === 'function') {
+        window.startCombinedTopicsQuiz(topics, noteTitle || (data.note && data.note.title) || '');
+      } else if (typeof window.startCustomTopicQuiz === 'function') {
+        window.startCustomTopicQuiz(topics.join(' OR '));
+      } else if (window.switchTab) {
+        window.switchTab('quiz-view');
+      }
+    } catch (err) {
+      console.error('[MyNotesController] Failed to launch quiz from note:', err);
     }
   }
 

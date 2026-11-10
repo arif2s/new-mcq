@@ -734,8 +734,10 @@ async function initHabits() {
     const longestStreak = Number(state.longestStreak || 0);
     const sumFromResults = testResults.reduce((acc, r) => acc + Number(r.totalQuestions ?? r.total_questions ?? 0), 0);
     const totalQuestionsEver = Math.max(Number(state.totalQuestionsEver || 0), sumFromResults);
-    const dailyTargets = state.dailyTargets || { questionsTarget: 50, correctTarget: 40, reviewTarget: 20, customGoals: [] };
+    const dailyTargets = state.dailyTargets || { questionsTarget: 50, correctTarget: 40, hoursTarget: 2, reviewTarget: 20, customGoals: [] };
     const targetQuestions = Math.max(1, Number(dailyTargets.questionsTarget || 50));
+    const targetStudyHours = Math.max(0.1, Number(dailyTargets.hoursTarget || 2));
+    const targetStudySec = Math.round(targetStudyHours * 3600);
 
     // Daily Checklist Support: named plan and goals list
     const checklistTitle = dailyTargets.checklistTitle || dailyTargets.dailyChecklistTitle || "Daily Study Plan";
@@ -792,9 +794,12 @@ async function initHabits() {
       }
     }
 
+    window._lastMcqSeconds = todayMcqSeconds;
     const todayFocusSec = window.focusModeEngine ? window.focusModeEngine.todayFocusSeconds : 0;
     const combinedStudySec = Math.floor(todayFocusSec + todayMcqSeconds);
     const todayAccuracyPct = todayMcqAttempted > 0 ? Math.round((todayMcqCorrect / todayMcqAttempted) * 100) : 0;
+    const studyTimePct = Math.min(100, Math.round((combinedStudySec / targetStudySec) * 100));
+    const mcqCompletedPct = Math.min(100, Math.round((todayMcqAttempted / targetQuestions) * 100));
 
     // Evaluate goals against live metrics
     // Fetch analytics for each goal concurrently
@@ -845,20 +850,24 @@ async function initHabits() {
     window._lastChecklistSummary = checklistSummary;
 
     const calendarData = [];
-    const iterDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 364);
+    // Anchor 364 days ago from today, then align start to preceding Sunday so week grid (Sun-Sat) is contiguous
+    const rawStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 364);
+    const alignedStart = new Date(rawStart.getFullYear(), rawStart.getMonth(), rawStart.getDate() - rawStart.getDay());
+    const curDate = new Date(alignedStart);
 
-    for (let i = 0; i <= 364; i++) {
-        const dateStr = _getHabitLocalDateStr(iterDate);
+    while (curDate <= today) {
+        const dateStr = _getHabitLocalDateStr(curDate);
         const habit = habitMap.get(dateStr);
         calendarData.push({
             date: dateStr,
+            dateObj: new Date(curDate),
             count: Number(habit?.questionsAnswered || 0),
-            day: iterDate.getDay()
+            day: curDate.getDay()
         });
-        iterDate.setDate(iterDate.getDate() + 1);
+        curDate.setDate(curDate.getDate() + 1);
     }
 
-    // Group into weeks for the Heatmap
+    // Group into weeks for the Heatmap (Sun=0 to Sat=6)
     const weeks = [];
     let currentWeek = [];
     calendarData.forEach(day => {
@@ -870,7 +879,7 @@ async function initHabits() {
     });
     if (currentWeek.length > 0) weeks.push(currentWeek);
 
-    // Slice Stats
+    // Slice Stats (last 7 and 30 calendar days)
     const last7Days = calendarData.slice(-7);
     const wQuestions = last7Days.reduce((acc, d) => acc + d.count, 0);
     const wActive = last7Days.filter(d => d.count > 0).length;
@@ -884,12 +893,24 @@ async function initHabits() {
         ? activeHabits.reduce((b, h) => Number(h.questionsAnswered || 0) > Number(b.questionsAnswered || 0) ? h : b, activeHabits[0])
         : null;
 
-    // Overflow-safe Month Labels (anchored to day 1 of each month)
-    const mLabels = [];
-    for (let i = 0; i < 12; i++) {
-        const d = new Date(today.getFullYear(), today.getMonth() - 11 + i, 1);
-        mLabels.push(d.toLocaleString('default', { month: 'short' }));
-    }
+    // Month headers precisely aligned with week columns
+    let prevMonthIdx = -1;
+    const monthHeaderColsHtml = weeks.map((week, wi) => {
+        const firstOfMonth = week.find(d => d.dateObj.getDate() === 1);
+        let label = '';
+        if (firstOfMonth) {
+            label = firstOfMonth.dateObj.toLocaleString('default', { month: 'short' });
+            prevMonthIdx = firstOfMonth.dateObj.getMonth();
+        } else if (wi === 0) {
+            label = week[0].dateObj.toLocaleString('default', { month: 'short' });
+            prevMonthIdx = week[0].dateObj.getMonth();
+        }
+        return `
+            <div class="w-3 shrink-0 relative flex items-center justify-start">
+                ${label ? `<span class="text-[10px] text-muted font-medium select-none absolute left-0 -top-1 whitespace-nowrap z-10">${escapeHTML(label)}</span>` : ''}
+            </div>
+        `;
+    }).join('');
 
     // 2. Intelligent Motivation Engine
     const getMotivation = () => {
@@ -1055,26 +1076,42 @@ async function initHabits() {
                 <p id="kpi-mcq-time" class="text-2xl font-bold font-mono text-white mt-1">${mcqTimeFormatted}</p>
                 <p class="text-[11px] text-slate-400 mt-1">Aggregated question solving time</p>
             </div>
-            <div class="glass-card card-shade-1 p-4 rounded-2xl border border-emerald-500/20">
-                <div class="flex items-center justify-between mb-1">
-                    <span class="text-xs uppercase tracking-wider text-emerald-400 font-bold">Combined Study Time</span>
-                    <span class="text-lg">⚡</span>
+            <div class="glass-card card-shade-1 p-4 rounded-2xl border border-emerald-500/30 relative overflow-hidden group">
+                <div id="kpi-study-progress-fill" class="absolute inset-0 bg-gradient-to-r from-emerald-600/35 to-emerald-400/20 rounded-2xl pointer-events-none transition-all duration-700" style="width: ${studyTimePct}%;"></div>
+                <div class="relative z-10">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs uppercase tracking-wider text-emerald-400 font-bold">Study Time</span>
+                        <span class="text-lg">⚡</span>
+                    </div>
+                    <div class="flex items-baseline justify-between mt-1">
+                        <p id="kpi-combined-time" class="text-2xl font-bold font-mono text-emerald-300">${combinedTimeFormatted}</p>
+                        <span id="kpi-study-pct-badge" class="text-xs px-2 py-0.5 rounded-full font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
+                            ${studyTimePct}%
+                        </span>
+                    </div>
+                    <p class="text-[11px] text-slate-400 mt-1">Goal: ${targetStudyHours}h (${studyTimePct}% done)</p>
                 </div>
-                <p id="kpi-combined-time" class="text-2xl font-bold font-mono text-emerald-300 mt-1">${combinedTimeFormatted}</p>
-                <p class="text-[11px] text-slate-400 mt-1">Total focus + active question blocks</p>
             </div>
-            <div class="glass-card card-shade-1 p-4 rounded-2xl border border-amber-500/20">
-                <div class="flex items-center justify-between mb-1">
-                    <span class="text-xs uppercase tracking-wider text-amber-400 font-bold">MCQs Completed</span>
-                    <span class="text-lg">📝</span>
+            <div class="glass-card card-shade-1 p-4 rounded-2xl border border-amber-500/30 relative overflow-hidden group">
+                <div id="kpi-mcqs-progress-fill" class="absolute inset-0 bg-gradient-to-r from-amber-600/35 to-amber-400/20 rounded-2xl pointer-events-none transition-all duration-700" style="width: ${mcqCompletedPct}%;"></div>
+                <div class="relative z-10">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs uppercase tracking-wider text-amber-400 font-bold">MCQs Completed</span>
+                        <span class="text-lg">📝</span>
+                    </div>
+                    <div class="flex items-baseline justify-between mt-1">
+                        <div class="flex items-baseline gap-2">
+                            <span id="kpi-mcqs-done" class="text-2xl font-bold font-mono text-white">${todayMcqAttempted}</span>
+                            <span class="text-xs px-1.5 py-0.5 rounded font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                ${todayAccuracyPct}% Acc
+                            </span>
+                        </div>
+                        <span id="kpi-mcq-pct-badge" class="text-xs px-2 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono">
+                            ${mcqCompletedPct}%
+                        </span>
+                    </div>
+                    <p class="text-[11px] text-slate-400 mt-1">Goal: ${targetQuestions} Qs (${mcqCompletedPct}% done)</p>
                 </div>
-                <div class="flex items-baseline gap-2 mt-1">
-                    <span id="kpi-mcqs-done" class="text-2xl font-bold font-mono text-white">${todayMcqAttempted}</span>
-                    <span class="text-xs px-2 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                        ${todayAccuracyPct}% Acc
-                    </span>
-                </div>
-                <p class="text-[11px] text-slate-400 mt-1">${todayMcqCorrect} correct answers recorded today</p>
             </div>
         </div>
 
@@ -1177,21 +1214,26 @@ async function initHabits() {
         <div class="glass-card card-shade-3 p-6 mb-8">
             <h3 class="text-lg font-semibold mb-4 opacity-90">📊 Activity Heatmap (Last 365 Days)</h3>
 
-            <div class="flex mb-2 ml-6">
-                ${mLabels.map(m => `<span class="text-[10px] text-muted flex-1">${escapeHTML(m)}</span>`).join('')}
-            </div>
-
-            <div class="flex gap-1 overflow-x-auto pb-2 scrollbar-thin">
-                <div class="flex flex-col gap-1 mr-2 text-[10px] text-muted font-mono">
-                    <span class="h-3 leading-3">S</span>
-                    <span class="h-3 leading-3">M</span>
-                    <span class="h-3 leading-3">T</span>
-                    <span class="h-3 leading-3">W</span>
-                    <span class="h-3 leading-3">T</span>
-                    <span class="h-3 leading-3">F</span>
-                    <span class="h-3 leading-3">S</span>
+            <div class="overflow-x-auto pb-2 scrollbar-thin">
+                <!-- Month labels row aligned with day columns -->
+                <div class="flex gap-1 mb-2">
+                    <div class="w-4 shrink-0 mr-2"></div>
+                    ${monthHeaderColsHtml}
                 </div>
-                ${heatmapColsHtml}
+
+                <!-- Days of week + heatmap grid -->
+                <div class="flex gap-1">
+                    <div class="flex flex-col gap-1 mr-2 text-[10px] text-muted font-mono shrink-0">
+                        <span class="h-3 leading-3">S</span>
+                        <span class="h-3 leading-3">M</span>
+                        <span class="h-3 leading-3">T</span>
+                        <span class="h-3 leading-3">W</span>
+                        <span class="h-3 leading-3">T</span>
+                        <span class="h-3 leading-3">F</span>
+                        <span class="h-3 leading-3">S</span>
+                    </div>
+                    ${heatmapColsHtml}
+                </div>
             </div>
 
             <div class="flex items-center gap-2 mt-4 text-xs text-muted">
@@ -1467,9 +1509,24 @@ window.addEventListener('focusModeUpdated', (e) => {
   const btn = document.getElementById('habit-focus-toggle-btn');
   const kpiFocus = document.getElementById('kpi-focus-time');
   const kpiCombined = document.getElementById('kpi-combined-time');
+  const studyFill = document.getElementById('kpi-study-progress-fill');
+  const studyBadge = document.getElementById('kpi-study-pct-badge');
 
   if (timer) timer.textContent = FocusModeEngine.formatHMS(e.detail.todayFocusSeconds);
   if (kpiFocus) kpiFocus.textContent = FocusModeEngine.formatHMS(e.detail.todayFocusSeconds);
+
+  if (kpiCombined && window.AppState) {
+    const st = window.AppState.get() || {};
+    const dt = st.dailyTargets || {};
+    const hT = Math.max(0.1, Number(dt.hoursTarget || 2));
+    const targetSec = Math.round(hT * 3600);
+    const mcqSec = window._lastMcqSeconds || 0;
+    const totalSec = Math.floor(e.detail.todayFocusSeconds + mcqSec);
+    kpiCombined.textContent = FocusModeEngine.formatHMS(totalSec);
+    const pct = Math.min(100, Math.round((totalSec / targetSec) * 100));
+    if (studyFill) studyFill.style.width = `${pct}%`;
+    if (studyBadge) studyBadge.textContent = `${pct}%`;
+  }
 
   if (dot) {
     dot.className = e.detail.isRunning

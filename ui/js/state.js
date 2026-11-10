@@ -1,7 +1,7 @@
 // ui/js/state.js
 
 const DEFAULT_PERSISTENCE = {
-    dailyTargets: { questionsTarget: 50, correctTarget: 40, reviewTarget: 20, customGoals: [], checklistTitle: 'Daily Study Plan', dailyChecklist: [] },
+    dailyTargets: { questionsTarget: 50, correctTarget: 40, hoursTarget: 2, reviewTarget: 20, customGoals: [], checklistTitle: 'Daily Study Plan', dailyChecklist: [] },
     customBannerMessages: [
         "Consistency beats intensity — master one clinical mechanism at a time.",
         "Review every distractor rationale: knowing why options B, C, and D fail wins board exams.",

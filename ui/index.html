@@ -89,7 +89,10 @@
             </button>
             <div class="app-logo sidebar-text font-bold tracking-tight">Medisearch</div>
           </div>
-          <div class="flex gap-1 sidebar-text">
+          <div class="flex gap-1 items-center sidebar-text">
+            <button id="open-daily-goal-btn" type="button" class="icon-btn" aria-label="Set Daily Goal" title="Set Daily Goal">
+              <span class="text-base select-none">🎯</span>
+            </button>
             <button id="open-help-btn" type="button" class="icon-btn" aria-label="Help & Guide">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
             </button>
@@ -1446,6 +1449,58 @@
       </div>
     </div>
 
+    <!-- DAILY GOAL MODAL -->
+    <div id="daily-goal-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 200;">
+      <div class="modal glass-modal w-full max-w-md p-6 text-left rounded-2xl shadow-2xl">
+        <div class="flex items-center justify-between pb-3 mb-4 border-b border-gray-700/50">
+          <div class="flex items-center gap-2">
+            <span class="text-xl">🎯</span>
+            <h3 class="text-lg font-bold text-white">Set Daily Goals</h3>
+          </div>
+          <button type="button" id="close-daily-goal-x" class="text-muted hover:text-white bg-transparent border-none text-lg cursor-pointer">&times;</button>
+        </div>
+        <div class="space-y-4">
+          <div>
+            <label for="dg-modal-questions" class="block text-xs font-semibold text-neutral-300 mb-1">
+              Daily MCQ Target (Questions):
+            </label>
+            <input
+              type="number"
+              id="dg-modal-questions"
+              class="glass-input w-full rounded-lg px-3 py-2 text-sm text-white font-mono"
+              min="1"
+              max="1000"
+              value="50"
+            />
+            <p class="text-[11px] text-muted mt-1">Number of questions you aim to complete each day.</p>
+          </div>
+          <div>
+            <label for="dg-modal-hours" class="block text-xs font-semibold text-neutral-300 mb-1">
+              Daily Study Time Goal (Hours):
+            </label>
+            <input
+              type="number"
+              id="dg-modal-hours"
+              class="glass-input w-full rounded-lg px-3 py-2 text-sm text-white font-mono"
+              min="0.25"
+              max="24"
+              step="0.25"
+              value="2"
+            />
+            <p class="text-[11px] text-muted mt-1">Total combined study time (focus mode + quiz solving).</p>
+          </div>
+        </div>
+        <div class="flex items-center justify-end gap-3 mt-6 pt-3 border-t border-gray-700/50">
+          <button type="button" id="close-daily-goal-btn" class="secondary-btn px-4 py-2 text-xs font-semibold rounded-xl cursor-pointer">
+            Cancel
+          </button>
+          <button type="button" id="save-daily-goal-btn" class="primary-btn px-5 py-2 text-xs font-bold rounded-xl cursor-pointer shadow-lg">
+            Save Goals
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- HELP MODAL -->
     <div id="help-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 200;">
       <div class="modal glass-modal w-full max-w-3xl max-h-[85vh] flex flex-col text-left p-0">
@@ -1532,11 +1587,60 @@
         var importBtn = document.getElementById("import-data-btn");
         var importFile = document.getElementById("import-data-file");
 
+        // Top Header Daily Goal Modal
+        var goalModal = document.getElementById("daily-goal-modal");
+        var openGoalBtn = document.getElementById("open-daily-goal-btn");
+        var closeGoalX = document.getElementById("close-daily-goal-x");
+        var closeGoalBtn = document.getElementById("close-daily-goal-btn");
+        var saveGoalBtn = document.getElementById("save-daily-goal-btn");
+        var dgQuestionsInput = document.getElementById("dg-modal-questions");
+        var dgHoursInput = document.getElementById("dg-modal-hours");
+
+        function openDailyGoalModal() {
+          if (!goalModal) return;
+          var dt = (window.AppState ? window.AppState.get() : {})?.dailyTargets || {};
+          if (dgQuestionsInput) dgQuestionsInput.value = dt.questionsTarget || 50;
+          if (dgHoursInput) dgHoursInput.value = dt.hoursTarget !== undefined ? dt.hoursTarget : 2;
+          goalModal.style.display = "flex";
+        }
+        function closeDailyGoalModal() {
+          if (goalModal) goalModal.style.display = "none";
+        }
+        if (openGoalBtn) openGoalBtn.addEventListener("click", openDailyGoalModal);
+        if (closeGoalX) closeGoalX.addEventListener("click", closeDailyGoalModal);
+        if (closeGoalBtn) closeGoalBtn.addEventListener("click", closeDailyGoalModal);
+        if (goalModal) {
+          goalModal.addEventListener("click", function (e) {
+            if (e.target === goalModal) closeDailyGoalModal();
+          });
+        }
+        if (saveGoalBtn) {
+          saveGoalBtn.addEventListener("click", function () {
+            if (!window.AppState || !window.AppState.update) return;
+            var curr = (window.AppState.get() || {}).dailyTargets || {};
+            var qVal = Math.max(1, parseInt(dgQuestionsInput ? dgQuestionsInput.value : 50, 10) || 50);
+            var hVal = Math.max(0.1, parseFloat(dgHoursInput ? dgHoursInput.value : 2) || 2);
+            window.AppState.update({
+              dailyTargets: {
+                ...curr,
+                questionsTarget: qVal,
+                hoursTarget: hVal
+              }
+            });
+            closeDailyGoalModal();
+            if (window.showToast) {
+              window.showToast("Daily goals updated: " + qVal + " MCQs, " + hVal + "h study time");
+            }
+          });
+        }
+
         function syncTargetsFromState() {
           if (!window.AppState || !window.AppState.get) return;
           var dt = (window.AppState.get() || {}).dailyTargets || {};
           if (qInput && dt.questionsTarget) qInput.value = dt.questionsTarget;
           if (cInput && dt.correctTarget) cInput.value = dt.correctTarget;
+          if (dgQuestionsInput && dt.questionsTarget) dgQuestionsInput.value = dt.questionsTarget;
+          if (dgHoursInput && dt.hoursTarget !== undefined) dgHoursInput.value = dt.hoursTarget;
         }
 
         function saveTargetsToState() {
@@ -1544,6 +1648,7 @@
           var curr = (window.AppState.get() || {}).dailyTargets || {};
           window.AppState.update({
             dailyTargets: {
+              ...curr,
               questionsTarget: Math.max(1, parseInt(qInput ? qInput.value : 50, 10) || 50),
               correctTarget: Math.max(1, parseInt(cInput ? cInput.value : 40, 10) || 40),
               reviewTarget: curr.reviewTarget || 20

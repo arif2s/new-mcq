@@ -64,6 +64,9 @@ class DashboardStudyBanner {
                 <span id="banner-checklist-badge" class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 cursor-pointer" title="Jump to Habit Tracker Daily Checklist">
                   ${summary.done} / ${summary.total} Goals Done
                 </span>
+                <button type="button" id="banner-daily-goal-btn" class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-sky-500/15 text-sky-300 border border-sky-500/30 hover:bg-sky-500/25 transition cursor-pointer" title="Configure Daily Goals">
+                  🎯 Daily Goal
+                </button>
                 <button type="button" id="btn-edit-banner-messages" class="text-[10px] text-slate-400 hover:text-sky-300 ml-1 bg-transparent border-none cursor-pointer" title="Edit Custom Messages">
                   ✏️ Edit
                 </button>
@@ -114,6 +117,21 @@ class DashboardStudyBanner {
     this.container.querySelector('#banner-checklist-badge')?.addEventListener('click', () => {
       const habitNav = document.querySelector('.nav-btn[data-target="habit-tracker-view"]');
       if (habitNav) habitNav.click();
+    });
+
+    this.container.querySelector('#banner-daily-goal-btn')?.addEventListener('click', () => {
+      const modal = document.getElementById('daily-goal-modal');
+      if (modal) {
+        const dt = (window.AppState ? window.AppState.get() : {})?.dailyTargets || {};
+        const qInput = document.getElementById('dg-modal-questions');
+        const hInput = document.getElementById('dg-modal-hours');
+        if (qInput) qInput.value = dt.questionsTarget || 50;
+        if (hInput) hInput.value = dt.hoursTarget !== undefined ? dt.hoursTarget : 2;
+        modal.style.display = 'flex';
+      } else {
+        const topGoalBtn = document.getElementById('open-daily-goal-btn');
+        if (topGoalBtn) topGoalBtn.click();
+      }
     });
 
     this.container.querySelector('#btn-edit-banner-messages')?.addEventListener('click', () => {
@@ -843,6 +861,24 @@ async function initDashboard() {
 
     const todayStats = getDayStats({ ...state, testResults }, getTodayString());
 
+    // Daily Goals & Study Time Telemetry
+    const dt = state.dailyTargets || {};
+    const targetQ = Math.max(1, Number(dt.questionsTarget || 50));
+    const targetHours = Math.max(0.1, Number(dt.hoursTarget || 2));
+    const targetStudySec = Math.round(targetHours * 3600);
+    const focusSec = window.focusModeEngine ? Number(window.focusModeEngine.todayFocusSeconds || 0) : 0;
+    const combinedSec = Math.floor(focusSec + Number(todayStats.timeSpentSeconds || 0));
+    const studyPct = Math.min(100, Math.round((combinedSec / targetStudySec) * 100));
+    const mcqPct = Math.min(100, Math.round((todayStats.questionsAnswered / targetQ) * 100));
+    const formatHMS = (s) => {
+        const sec = Math.max(0, Math.floor(s || 0));
+        return [Math.floor(sec / 3600), Math.floor((sec % 3600) / 60), sec % 60]
+            .map(v => String(v).padStart(2, '0')).join(':');
+    };
+    const studyTimeFormatted = (window.FocusModeEngine && typeof window.FocusModeEngine.formatHMS === 'function')
+        ? window.FocusModeEngine.formatHMS(combinedSec)
+        : formatHMS(combinedSec);
+
     // Spaced Repetition Stats (Prefer exact SQLite fsrsCounts from state.js, fallback to ankiCards)
     let ankiStats = { mastered: 0, review: 0, learning: 0, new: 0 };
     let totalAnkiCards = 0;
@@ -949,22 +985,50 @@ async function initDashboard() {
         <!-- Today's Summary -->
         <div class="glass-card card-shade-1 mb-8">
           <h2 class="text-lg font-semibold mb-4 opacity-90">Today's Summary</h2>
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div class="text-center">
-              <p class="text-3xl font-bold">${todayStats.questionsAnswered}</p>
-              <p class="text-xs mt-1 text-muted">Questions Answered</p>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+            <!-- Study Time Card with Full Progress Fill -->
+            <div class="p-4 rounded-xl border border-emerald-500/30 relative overflow-hidden group glass-panel text-left">
+              <div id="dash-study-progress-fill" class="absolute inset-0 bg-gradient-to-r from-emerald-600/35 to-emerald-400/20 rounded-xl pointer-events-none transition-all duration-700" style="width: ${studyPct}%;"></div>
+              <div class="relative z-10 flex flex-col justify-between h-full">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs uppercase tracking-wider text-emerald-400 font-bold">Study Time</span>
+                  <span class="text-sm">⚡</span>
+                </div>
+                <div class="my-1">
+                  <p id="dash-study-time-val" class="text-2xl font-bold font-mono text-emerald-300">${studyTimeFormatted}</p>
+                </div>
+                <div class="flex items-center justify-between text-[11px] text-slate-300">
+                  <span>Goal: ${targetHours}h</span>
+                  <span id="dash-study-pct-val" class="font-bold font-mono text-emerald-400">${studyPct}%</span>
+                </div>
+              </div>
             </div>
-            <div class="text-center">
-              <p class="text-3xl font-bold">${todayStats.correctAnswers}</p>
+
+            <!-- MCQs Completed Card with Full Progress Fill -->
+            <div class="p-4 rounded-xl border border-amber-500/30 relative overflow-hidden group glass-panel text-left">
+              <div id="dash-mcq-progress-fill" class="absolute inset-0 bg-gradient-to-r from-amber-600/35 to-amber-400/20 rounded-xl pointer-events-none transition-all duration-700" style="width: ${mcqPct}%;"></div>
+              <div class="relative z-10 flex flex-col justify-between h-full">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs uppercase tracking-wider text-amber-400 font-bold">MCQs Completed</span>
+                  <span class="text-sm">📝</span>
+                </div>
+                <div class="my-1">
+                  <p class="text-2xl font-bold font-mono text-white">${todayStats.questionsAnswered}</p>
+                </div>
+                <div class="flex items-center justify-between text-[11px] text-slate-300">
+                  <span>Goal: ${targetQ} Qs</span>
+                  <span class="font-bold font-mono text-amber-400">${mcqPct}%</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="text-center glass-panel p-4 rounded-xl flex flex-col justify-center">
+              <p class="text-2xl font-bold text-white font-mono">${todayStats.correctAnswers}</p>
               <p class="text-xs mt-1 text-muted">Correct Answers</p>
             </div>
-            <div class="text-center">
-              <p class="text-3xl font-bold">${todayStats.accuracy.toFixed(1)}%</p>
+            <div class="text-center glass-panel p-4 rounded-xl flex flex-col justify-center">
+              <p class="text-2xl font-bold text-white font-mono">${todayStats.accuracy.toFixed(1)}%</p>
               <p class="text-xs mt-1 text-muted">Accuracy</p>
-            </div>
-            <div class="text-center">
-              <p class="text-3xl font-bold">${Math.round(todayStats.timeSpentSeconds / 60)}m</p>
-              <p class="text-xs mt-1 text-muted">Time Spent</p>
             </div>
           </div>
         </div>
@@ -995,6 +1059,80 @@ async function initDashboard() {
             <p class="text-xl font-bold">${state.longestStreak || 0}</p>
             <p class="text-xs text-muted mt-1">Best Streak</p>
           </div>
+        </div>
+
+        <!-- Rank Preparedness & Today's Activity by Hour (Positioned directly above Spaced Repetition & Subject Performance) -->
+        <div class="grid md:grid-cols-2 gap-6 mb-8">
+            <!-- Rank Simulation Preparedness -->
+            <div class="glass-card card-shade-rank-sim relative">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold opacity-90">🏅 Rank Preparedness</h3>
+                    <button id="open-rank-editor-btn" class="px-3 py-1.5 secondary-btn rounded-lg text-xs transition-colors cursor-pointer">
+                        ⚙️ Edit Config
+                    </button>
+                </div>
+                ${processedRankSims.length === 0 ? '<p class="text-muted text-sm mt-4">Take a test to see rank projections.</p>' : `
+                <div class="space-y-4 max-h-48 overflow-y-auto pr-2">
+                    ${processedRankSims.map(simData => `
+                    <div class="border border-gray-700/50 rounded-xl p-4 glass-panel">
+                        <div class="flex justify-between items-center mb-3">
+                            <p class="text-sm font-semibold opacity-90">${escapeHTML(simData.config.examName)}</p>
+                            <span class="text-xs glass-panel px-2 py-1 rounded opacity-70">Max: ${simData.config.maxMarks || (simData.config.totalQuestions * simData.config.marksPerCorrect)}</span>
+                        </div>
+                        <div class="grid grid-cols-3 gap-3">
+                            <div class="glass-panel rounded-lg p-2 text-center">
+                                <p class="text-xs text-muted mb-1">Latest Rank</p>
+                                <p class="text-lg font-bold text-brand-400">${simData.latest.sim.estimatedRank.toLocaleString()}</p>
+                            </div>
+                            <div class="glass-panel rounded-lg p-2 text-center">
+                                <p class="text-xs text-muted mb-1">Best Rank</p>
+                                <p class="text-lg font-bold text-success-500">${simData.best.sim.estimatedRank.toLocaleString()}</p>
+                            </div>
+                            <div class="glass-panel rounded-lg p-2 text-center">
+                                <p class="text-xs text-muted mb-1">Avg Rank (Past 200 Qs)</p>
+                                <p class="text-lg font-bold text-purple-400">${simData.avg200Sim.estimatedRank.toLocaleString()}</p>
+                            </div>
+                        </div>
+                    </div>
+                    `).join('')}
+                </div>`}
+            </div>
+
+            <!-- Hourly Activity (Requirement 9: Flexible Scaling & Colorful Bars) -->
+            <div class="glass-card card-shade-activity-hour">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold opacity-90">🕒 Today's Activity by Hour</h3>
+                    <span class="text-xs text-brand-300 font-medium">Peak: ${maxQ} Qs/hr</span>
+                </div>
+                <div class="flex items-end gap-1.5 h-32 mb-2 border-b border-gray-700/50 pb-1">
+                    ${hourlyData.map(h => {
+                        // Dynamic colorful styling based on effort and hour period
+                        let barColor = 'glass-panel';
+                        if (h.questions > 0) {
+                            const ratio = h.questions / maxQ;
+                            if (ratio >= 0.75) {
+                                barColor = 'bg-gradient-to-t from-pink-500 via-purple-500 to-indigo-400 shadow-[0_0_12px_rgba(236,72,153,0.7)]';
+                            } else if (ratio >= 0.4) {
+                                barColor = 'bg-gradient-to-t from-cyan-500 to-blue-400 shadow-[0_0_10px_rgba(6,182,212,0.6)]';
+                            } else {
+                                barColor = 'bg-gradient-to-t from-emerald-500 to-teal-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]';
+                            }
+                        }
+                        // Flexible height scaling: minimum 8% for any activity, scaled to peak
+                        const barHeight = h.questions > 0 ? Math.max(Math.round((h.questions / maxQ) * 100), 8) : 2;
+
+                        return `
+                        <div class="flex-1 flex flex-col items-center group relative cursor-crosshair h-full justify-end">
+                            <div class="w-full rounded-t transition-all ${barColor} hover:brightness-125"
+                                 style="height: ${barHeight}%;"></div>
+                            ${h.questions > 0 ? `<div class="absolute bottom-full mb-2 glass-card border border-brand-500/40 rounded-lg px-2.5 py-1 text-xs opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap shadow-lg font-bold">${h.questions} Qs (${h.hour}:00)</div>` : ''}
+                        </div>`;
+                    }).join('')}
+                </div>
+                <div class="flex justify-between text-xs text-muted">
+                    <span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>11pm</span>
+                </div>
+            </div>
         </div>
 
         <div class="grid md:grid-cols-2 gap-6 mb-8">
@@ -1087,79 +1225,6 @@ async function initDashboard() {
               `).join('')}
             </div>`}
           </div>
-        </div>
-
-        <div class="grid md:grid-cols-2 gap-6 mb-8">
-            <!-- Hourly Activity (Requirement 9: Flexible Scaling & Colorful Bars) -->
-            <div class="glass-card">
-                <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-lg font-semibold opacity-90">🕒 Today's Activity by Hour</h3>
-                    <span class="text-xs text-brand-300 font-medium">Peak: ${maxQ} Qs/hr</span>
-                </div>
-                <div class="flex items-end gap-1.5 h-32 mb-2 border-b border-gray-700/50 pb-1">
-                    ${hourlyData.map(h => {
-                        // Dynamic colorful styling based on effort and hour period
-                        let barColor = 'glass-panel';
-                        if (h.questions > 0) {
-                            const ratio = h.questions / maxQ;
-                            if (ratio >= 0.75) {
-                                barColor = 'bg-gradient-to-t from-pink-500 via-purple-500 to-indigo-400 shadow-[0_0_12px_rgba(236,72,153,0.7)]';
-                            } else if (ratio >= 0.4) {
-                                barColor = 'bg-gradient-to-t from-cyan-500 to-blue-400 shadow-[0_0_10px_rgba(6,182,212,0.6)]';
-                            } else {
-                                barColor = 'bg-gradient-to-t from-emerald-500 to-teal-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]';
-                            }
-                        }
-                        // Flexible height scaling: minimum 8% for any activity, scaled to peak
-                        const barHeight = h.questions > 0 ? Math.max(Math.round((h.questions / maxQ) * 100), 8) : 2;
-
-                        return `
-                        <div class="flex-1 flex flex-col items-center group relative cursor-crosshair h-full justify-end">
-                            <div class="w-full rounded-t transition-all ${barColor} hover:brightness-125"
-                                 style="height: ${barHeight}%;"></div>
-                            ${h.questions > 0 ? `<div class="absolute bottom-full mb-2 glass-card border border-brand-500/40 rounded-lg px-2.5 py-1 text-xs opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap shadow-lg font-bold">${h.questions} Qs (${h.hour}:00)</div>` : ''}
-                        </div>`;
-                    }).join('')}
-                </div>
-                <div class="flex justify-between text-xs text-muted">
-                    <span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>11pm</span>
-                </div>
-            </div>
-
-            <!-- Rank Simulation Preparedness -->
-            <div class="glass-card relative">
-                <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-lg font-semibold opacity-90">🏅 Rank Preparedness</h3>
-                    <button id="open-rank-editor-btn" class="px-3 py-1.5 secondary-btn rounded-lg text-xs transition-colors cursor-pointer">
-                        ⚙️ Edit Config
-                    </button>
-                </div>
-                ${processedRankSims.length === 0 ? '<p class="text-muted text-sm mt-4">Take a test to see rank projections.</p>' : `
-                <div class="space-y-4 max-h-48 overflow-y-auto pr-2">
-                    ${processedRankSims.map(simData => `
-                    <div class="border border-gray-700/50 rounded-xl p-4 glass-panel">
-                        <div class="flex justify-between items-center mb-3">
-                            <p class="text-sm font-semibold opacity-90">${escapeHTML(simData.config.examName)}</p>
-                            <span class="text-xs glass-panel px-2 py-1 rounded opacity-70">Max: ${simData.config.maxMarks || (simData.config.totalQuestions * simData.config.marksPerCorrect)}</span>
-                        </div>
-                        <div class="grid grid-cols-3 gap-3">
-                            <div class="glass-panel rounded-lg p-2 text-center">
-                                <p class="text-xs text-muted mb-1">Latest Rank</p>
-                                <p class="text-lg font-bold text-brand-400">${simData.latest.sim.estimatedRank.toLocaleString()}</p>
-                            </div>
-                            <div class="glass-panel rounded-lg p-2 text-center">
-                                <p class="text-xs text-muted mb-1">Best Rank</p>
-                                <p class="text-lg font-bold text-success-500">${simData.best.sim.estimatedRank.toLocaleString()}</p>
-                            </div>
-                            <div class="glass-panel rounded-lg p-2 text-center">
-                                <p class="text-xs text-muted mb-1">Avg Rank (Past 200 Qs)</p>
-                                <p class="text-lg font-bold text-purple-400">${simData.avg200Sim.estimatedRank.toLocaleString()}</p>
-                            </div>
-                        </div>
-                    </div>
-                    `).join('')}
-                </div>`}
-            </div>
         </div>
 
         <!-- Recent Results -->
@@ -1709,6 +1774,29 @@ document.addEventListener('stateUpdated', initDashboard);
 window.addEventListener('focusModeUpdated', (e) => {
     if (_dashboardStudyBanner) {
         _dashboardStudyBanner.updateLiveFocusState(e.detail);
+    }
+    const studyValEl = document.getElementById('dash-study-time-val');
+    const studyFillEl = document.getElementById('dash-study-progress-fill');
+    const studyPctEl = document.getElementById('dash-study-pct-val');
+    if (studyValEl && window.AppState) {
+        const state = window.AppState.get() || {};
+        const dt = state.dailyTargets || {};
+        const targetHours = Math.max(0.1, Number(dt.hoursTarget || 2));
+        const targetSec = Math.round(targetHours * 3600);
+        const focusSec = Number(e.detail.todayFocusSeconds || 0);
+        const mcqSec = window._lastMcqSeconds || 0;
+        const totalSec = Math.floor(focusSec + mcqSec);
+        const formatHMS = (s) => {
+            const sec = Math.max(0, Math.floor(s || 0));
+            return [Math.floor(sec / 3600), Math.floor((sec % 3600) / 60), sec % 60]
+                .map(v => String(v).padStart(2, '0')).join(':');
+        };
+        studyValEl.textContent = (window.FocusModeEngine && typeof window.FocusModeEngine.formatHMS === 'function')
+            ? window.FocusModeEngine.formatHMS(totalSec)
+            : formatHMS(totalSec);
+        const pct = Math.min(100, Math.round((totalSec / targetSec) * 100));
+        if (studyFillEl) studyFillEl.style.width = `${pct}%`;
+        if (studyPctEl) studyPctEl.textContent = `${pct}%`;
     }
 });
 document.addEventListener('DOMContentLoaded', () => {
