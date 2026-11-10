@@ -481,7 +481,10 @@ def generate_topic_report(
     if not slug:
         slug = "clinical_topic"
 
-    output_path = (REPORTS_DIR / f"{slug}_report.html").resolve()
+    base_reports_dir = REPORTS_DIR.resolve()
+    output_path = (base_reports_dir / f"{slug}_report.html").resolve()
+    if not output_path.is_relative_to(base_reports_dir):
+        raise ValueError(f"Path traversal blocked for topic: {topic!r}")
 
     # Normalize clinical article body
     article_data = _normalize_article_payload(synth.get("unified_article"), display_title)

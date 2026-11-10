@@ -103,8 +103,9 @@ def read_markdown_body(
 ) -> str:
     """
     Reads and cleans an Obsidian markdown file for RAG synthesis and indexing.
-    Validates file extension, confines paths to allowed_root if specified, and
-    strips YAML frontmatter (anchored at start), Obsidian media embeds, and wikilinks.
+    Validates file extension, confines paths to allowed_root if specified, rejects
+    paths containing null bytes, and strips YAML frontmatter (anchored at start),
+    Obsidian media embeds, and wikilinks.
     """
     if not file_path or "\x00" in str(file_path):
         return ""

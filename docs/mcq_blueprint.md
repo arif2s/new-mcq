@@ -653,16 +653,25 @@ B. Obsidian & ZIM Parsers (parsers/obsidian_reader.py & parsers/zim_reader.py)
 import re
 from pathlib import Path
 
-def read_markdown_body(file_path: str) -> str:
-    """Strips YAML frontmatter and extracts body markdown."""
-    path = Path(file_path)
-    if not path.exists():
+from typing import Optional, Union
+
+def read_markdown_body(file_path: Union[str, Path], allowed_root: Optional[Path] = None) -> str:
+    """Strips YAML frontmatter and extracts body markdown with path traversal confinement."""
+    if not file_path or "\x00" in str(file_path):
         return ""
-    content = path.read_text(encoding="utf-8", errors="ignore")
+    try:
+        p = Path(file_path).resolve()
+        if p.suffix.lower() not in (".md", ".markdown") or not p.is_file():
+            return ""
+        if allowed_root is not None and not p.is_relative_to(Path(allowed_root).resolve()):
+            return ""
+        content = p.read_text(encoding="utf-8-sig", errors="replace")
+    except Exception:
+        return ""
     # Strip YAML frontmatter: --- ... ---
-    body = re.sub(r"^---[\s\S]*?---\s*", "", content, flags=re.MULTILINE)
+    body = re.sub(r"\A---\r?\n[\s\S]*?\r?\n---\s*(?:\r?\n|$)", "", content, count=1)
     # Simplify Obsidian wikilinks: [[Target|Label]] -> Label, [[Target]] -> Target
-    body = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]+)\]\]", r"\1", body)
+    body = re.sub(r"(?<!!)\[\[(?:[^|\]]*\|)?([^\]]+)\]\]", r"\1", body)
     return body.strip()
 
 # parsers/zim_reader.py
@@ -731,10 +740,15 @@ DOSSIER_TEMPLATE = """
 
 _JINJA_ENV = Environment(loader=BaseLoader(), autoescape=True)
 
+import re
+
 def generate_topic_report(topic: str, search_results: dict, synthesis_output: dict):
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    slug = topic.lower().replace(" ", "_")
-    output_path = REPORTS_DIR / f"{slug}_report.html"
+    slug = re.sub(r"[^a-z0-9]+", "_", topic.lower()).strip("_")
+    base_reports_dir = REPORTS_DIR.resolve()
+    output_path = (base_reports_dir / f"{slug}_report.html").resolve()
+    if not output_path.is_relative_to(base_reports_dir):
+        raise ValueError(f"Path traversal blocked for topic: {topic!r}")
 
     template = _JINJA_ENV.from_string(DOSSIER_TEMPLATE)
     html_content = template.render(topic=topic, search_results=search_results, synthesis=synthesis_output)
