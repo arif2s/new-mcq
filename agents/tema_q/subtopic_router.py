@@ -32,7 +32,7 @@ _HTML_TABLE_FIG_RE = re.compile(
     r"<(?:img|br|hr|input|meta|link)\b[^>]*/?>",
     flags=re.DOTALL | re.IGNORECASE,
 )
-_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_HTML_TAG_RE = re.compile(r"</?[a-zA-Z][a-zA-Z0-9:-]*(?:\s+[^<>]*?)?>")
 _MD_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^\)]*\)|!\[\[[^\]]+\]\]")
 _OBSIDIAN_EMBED_RE = re.compile(
     r"^\s*!\[\[.*?(?:\.png|\.jpg|\.jpeg|\.gif|\.svg|\.webp|\.pdf).*?\]\]\s*$",
@@ -52,6 +52,28 @@ _INLINE_FIG_REF_RE = re.compile(
 _SENTENCE_SPLIT_RE = re.compile(
     r"(?<=[.!?])(?<!\b[A-Z]\.)(?<!\bvs\.)(?<!\bVs\.)(?<!\beg\.)(?<!\bie\.)(?<!\bdr\.)(?<!\bDr\.)(?<!\bFig\.)(?<!\bTab\.)(?<!\bsp\.)(?<!\bssp\.)\s+"
 )
+_ABBREV_DOT_PLACEHOLDER = "\x00"
+_PROTECTED_ABBREVS_RE = re.compile(
+    r"\b(?:e\.g|i\.e|vs|dr|prof|st|fig|figs|tab|tabs|sp|ssp|et\s+al|"
+    r"i\.v|i\.m|p\.o|s\.c|b\.i\.d|t\.i\.d|q\.i\.d|q\.d|q\.h\.s|p\.r\.n|c\.f)\.",
+    re.IGNORECASE,
+)
+
+
+def split_clinical_sentences(text: str) -> List[str]:
+    """Splits clinical prose into sentences while preserving medical & Latin abbreviations."""
+    if not text or not text.strip():
+        return []
+    masked = _PROTECTED_ABBREVS_RE.sub(
+        lambda m: m.group(0).replace(".", _ABBREV_DOT_PLACEHOLDER),
+        text.strip(),
+    )
+    parts = _SENTENCE_SPLIT_RE.split(masked)
+    return [
+        p.replace(_ABBREV_DOT_PLACEHOLDER, ".").strip()
+        for p in parts
+        if p and p.strip()
+    ]
 _NUMERIC_OR_CLINICAL_SIGNAL_RE = re.compile(
     r"\b(?:\d+(?:\.\d+)?\s*(?:mg|g|mcg|ml|l|mmol|meq|mmhg|cm|mm|%|iu|hrs?|days?|wks?|mos?|yrs?)|"
     r"gram[- ]?(?:positive|negative)|acid[- ]?fast|congo\s+red|gold\s+standard|first[- ]?line|drug\s+of\s+choice|doc\b|triad\b|vector\b)",
@@ -117,7 +139,7 @@ def sanitize_clinical_prose(raw_text: str) -> str:
 
         # Drop figure/table/diagram captions
         if _CAPTION_LINE_RE.match(stripped):
-            skip_next_caption_continuation = True
+            skip_next_caption_continuation = not bool(re.search(r'[.!?][\"\'\*\)]*\s*$', stripped))
             continue
 
         if skip_next_caption_continuation and len(stripped.split()) <= 14 and not stripped.startswith("#"):
@@ -704,7 +726,7 @@ def route_and_prune_subtopics(
             for blk in h_blocks:
                 t = getattr(blk, "text", "")
                 if t:
-                    h_sents.extend(s.strip() for s in _SENTENCE_SPLIT_RE.split(t) if s.strip())
+                    h_sents.extend(s.strip() for s in split_clinical_sentences(t) if s.strip())
             if not h_sents:
                 continue
             pruned_h_text = prune_solar_sentences(
@@ -729,7 +751,7 @@ def route_and_prune_subtopics(
         for pb in primary_blocks:
             text = getattr(pb, "text", "")
             if text:
-                primary_sents.extend(s.strip() for s in _SENTENCE_SPLIT_RE.split(text) if s.strip())
+                primary_sents.extend(s.strip() for s in split_clinical_sentences(text) if s.strip())
 
         if not primary_sents:
             continue
@@ -765,7 +787,7 @@ def route_and_prune_subtopics(
             for sb in sec_blocks:
                 text = getattr(sb, "text", "")
                 if text:
-                    sec_sents.extend(s.strip() for s in _SENTENCE_SPLIT_RE.split(text) if s.strip())
+                    sec_sents.extend(s.strip() for s in split_clinical_sentences(text) if s.strip())
             if not sec_sents:
                 continue
             pruned_sec = prune_solar_sentences(
@@ -842,7 +864,7 @@ def route_subtopic_blocks(
     for block in primary_blocks:
         text = getattr(block, "text", "")
         if text:
-            primary_sents.extend(s.strip() for s in _SENTENCE_SPLIT_RE.split(text) if s.strip())
+            primary_sents.extend(s.strip() for s in split_clinical_sentences(text) if s.strip())
 
     if not primary_sents:
         return None
@@ -872,6 +894,7 @@ __all__ = [
     "RawProseBlock",
     "RoutedSubtopicBucket",
     "sanitize_clinical_prose",
+    "split_clinical_sentences",
     "prune_solar_sentences",
     "route_and_prune_subtopics",
     "route_subtopic_blocks",

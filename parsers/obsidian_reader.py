@@ -26,6 +26,7 @@ _FRONTMATTER_RE = re.compile(
     r"\A---\s*[\r\n]+(?:(.*?)[\r\n]+)?(?:---|\.\.\.)\s*(?:[\r\n]+|\Z)",
     flags=re.DOTALL,
 )
+_YAML_FRONTMATTER_RE = re.compile(r"\A---\r?\n[\s\S]*?\r?\n---\s*(?:\r?\n|$)")
 
 # Comments and embeds for plain-text RAG body
 _DELETIONS_RE = re.compile(r"%%.*?%%|!\[\[.*?\]\]", flags=re.DOTALL)
@@ -33,9 +34,14 @@ _COMMENTS_ONLY_RE = re.compile(r"%%.*?%%", flags=re.DOTALL)
 
 # Obsidian Image/Asset Embeds: ![[image.png]] or ![[folder/image.png|400]]
 _IMAGE_EMBED_RE = re.compile(r"!\[\[([^|\]]+)(?:\|([^\]]*))?\]\]")
+_OBSIDIAN_MEDIA_EMBED_RE = re.compile(
+    r"!\[\[[^\]|]+(?:\.(?:png|jpg|jpeg|gif|svg|webp|bmp|pdf))?(?:\|[^\]]*)?\]\]",
+    re.IGNORECASE,
+)
 
 # Obsidian Wikilinks: [[Target|Label]], [[Target#Heading|Label]], [[Target#Heading]], [[Target]], [[#Heading]]
-_WIKILINK_EXTRACT_RE = re.compile(r"\[\[([^|\]]+)(?:\|([^\]]*))?\]\]")
+_WIKILINK_EXTRACT_RE = re.compile(r"(?<!!)\[\[([^|\]]+)(?:\|([^\]]*))?\]\]")
+_OBSIDIAN_WIKILINK_RE = re.compile(r"(?<!!)\[\[(?:[^|\]]*\|)?([^\]]+)\]\]")
 
 # Markdown Heading Detector (ATX style)
 _HEADING_LINE_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
@@ -92,18 +98,29 @@ def _cached_read_markdown_body(normalized_path: str) -> str:
         return ""
 
 
-def read_markdown_body(file_path: Union[str, Path]) -> str:
+def read_markdown_body(
+    file_path: Union[str, Path], allowed_root: Optional[Path] = None
+) -> str:
     """
     Reads and cleans an Obsidian markdown file for RAG synthesis and indexing.
-    Caches results to eliminate disk I/O bottlenecks during search reranking.
+    Validates file extension, confines paths to allowed_root if specified, and
+    strips YAML frontmatter (anchored at start), Obsidian media embeds, and wikilinks.
     """
-    if not file_path:
+    if not file_path or "\x00" in str(file_path):
         return ""
     try:
-        norm_path = str(Path(file_path).resolve())
+        p = Path(file_path).resolve()
+        if p.suffix.lower() not in (".md", ".markdown") or not p.is_file():
+            return ""
+        if allowed_root is not None and not p.is_relative_to(Path(allowed_root).resolve()):
+            return ""
+        content = p.read_text(encoding="utf-8-sig", errors="replace")
     except Exception:
-        norm_path = str(file_path)
-    return _cached_read_markdown_body(norm_path)
+        return ""
+    body = _YAML_FRONTMATTER_RE.sub("", content, count=1)
+    body = _OBSIDIAN_MEDIA_EMBED_RE.sub("", body)
+    body = _OBSIDIAN_WIKILINK_RE.sub(r"\1", body)
+    return body.strip()
 
 
 def extract_obsidian_sections(file_path: Union[str, Path]) -> List[Dict[str, Any]]:

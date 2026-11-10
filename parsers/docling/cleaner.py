@@ -39,6 +39,15 @@ _BOUND_MEDICAL_PREFIXES = (
 
 _MEDICAL_PREFIXES = _HYPHENATED_MEDICAL_PREFIXES + _BOUND_MEDICAL_PREFIXES
 
+_VALID_MEDICAL_ALPHANUM_RE = re.compile(
+    r"\b(?:"
+    r"\d+(?:\.\d+)?(?:mcg|mmol|meq|mmhg|kcal|mg|ml|ul|iu|hrs?|days?|wks?|mos?|yrs?)|"
+    r"HbA1c|G6PD|C[1-9][a-z]|IL[0-9]+[A-Za-z]*|CYP[0-9][A-Z][0-9]+|"
+    r"SGLT[12]i?|PDE5i?|5-?HT[0-9][A-Z]?|B2M|C[1-8]|T(?:[1-9]|1[0-2])|L[1-5]|S[1-5]"
+    r")\b",
+    re.IGNORECASE,
+)
+
 # Lexical OCR anomaly patterns that indicate corrupted glyph recognition on a span
 _OCR_GARBLED_TOKEN_RE = re.compile(
     r"(?:[\ufffd\u25a1\u25a0]|[@#$%\^&\*~`|\\]{2,}|"
@@ -75,11 +84,13 @@ def is_ocr_garbled_text(text: str) -> bool:
     """
     if not text or len(text) < 3:
         return False
+    # Strip valid unspaced clinical dosages and biomedical alphanumeric tokens
+    cleaned = _VALID_MEDICAL_ALPHANUM_RE.sub("", text)
     # Ignore valid medical abbreviations with numbers like B12, C3a, T4, IgG4, H1N1, 500, 1000
     cleaned = re.sub(
         r"\b(?:Ig[A-Z]\d|B12|T[1-4]|C[1-9][a-z]?|H\dN\d|[A-Z]{1,3}\d{1,3}|[0-9]+(?:\.[0-9]+)?(?:dB|Hz|mm|cm|mg|ml|mL|kg|yr|yrs)?)\b",
         "",
-        text,
+        cleaned,
     )
     return bool(_OCR_GARBLED_TOKEN_RE.search(cleaned))
 

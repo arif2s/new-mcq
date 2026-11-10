@@ -279,7 +279,7 @@ _HTML_TABLE_FIG_RE = re.compile(
 )
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _MD_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^\)]*\)|!\[\[[^\]]+\]\]")
-_OBSIDIAN_EMBED_RE = re.compile(r"^\s*!\[\[.*?(?:\.png\vert{}\.jpg\vert{}\.jpeg\vert{}\.gif\vert{}\.svg\vert{}\.webp\vert{}\.pdf).*?\]\]\s*$", re.IGNORECASE)
+_OBSIDIAN_EMBED_RE = re.compile(r"^\s*!\[\[.*?(?:\.png|\.jpg|\.jpeg|\.gif|\.svg|\.webp|\.pdf).*?\]\]\s*$", re.IGNORECASE)
 _MD_TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
 _ASCII_GRID_ROW_RE = re.compile(r"^\s*\+[-=+:]+\+\s*$")
 _CAPTION_LINE_RE = re.compile(
@@ -288,7 +288,7 @@ _CAPTION_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 _INLINE_FIG_REF_RE = re.compile(
-    r"\(\s*(?:see\s+)?(?:Figures?\vert{}Figs?\.?\vert{}Tables?\vert{}Tabs?\.?\vert{}Boxes\vert{}Plates?)\s+[\dA-Za-z.\-,\s]+\)",
+    r"\(\s*(?:see\s+)?(?:Figures?|Figs?\.?|Tables?|Tabs?\.?|Boxes|Plates?)\s+[\dA-Za-z.\-,\s]+\)",
     re.IGNORECASE,
 )
 _SENTENCE_SPLIT_RE = re.compile(
