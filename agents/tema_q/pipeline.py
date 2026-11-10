@@ -91,6 +91,21 @@ def get_http_client() -> httpx.AsyncClient:
     return client
 
 
+async def close_thread_local_http_client() -> None:
+    """Closes the current thread's httpx.AsyncClient on its bound event loop."""
+    client: Optional[httpx.AsyncClient] = getattr(_thread_local, "client", None)
+    _thread_local.client = None
+    _thread_local.loop = None
+    if client is not None:
+        with _CLIENT_REGISTRY_LOCK:
+            _ACTIVE_CLIENTS.discard(client)
+        try:
+            if not client.is_closed:
+                await client.aclose()
+        except Exception:
+            pass
+
+
 async def close_http_client() -> None:
     """Closes all active HTTP clients across threads cleanly during lifespan teardown (Invariant 16)."""
     with _CLIENT_REGISTRY_LOCK:
@@ -100,6 +115,8 @@ async def close_http_client() -> None:
     for client in clients:
         try:
             if client and not client.is_closed:
+                # If the client's underlying transport is bound to an event loop that is closed,
+                # attempting to aclose() directly might raise RuntimeError. Safely guard against it.
                 await client.aclose()
         except Exception:
             pass

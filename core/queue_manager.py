@@ -242,19 +242,21 @@ class PriorityQueueWorker:
         self.prune_thread: Optional[threading.Thread] = None
         self.main_loop: Optional[asyncio.AbstractEventLoop] = None
 
-    def start(self) -> None:
+    def start(self, loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
+        if loop is not None:
+            self.main_loop = loop
+        elif self.main_loop is None or self.main_loop.is_closed():
+            try:
+                self.main_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                try:
+                    self.main_loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    self.main_loop = None
+
         if not self.running:
             self.running = True
             self._stop_event.clear()
-            if self.main_loop is None:
-                try:
-                    self.main_loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    try:
-                        self.main_loop = asyncio.get_event_loop()
-                    except RuntimeError:
-                        self.main_loop = None
-
             self._recover_interrupted_tasks()
             self.process_thread = threading.Thread(
                 target=self._process_loop, daemon=True, name="PriorityQueueWorker-Process"
@@ -270,6 +272,10 @@ class PriorityQueueWorker:
         """Stops background threads cleanly (Invariant 16)."""
         self.running = False
         self._stop_event.set()
+        current = threading.current_thread()
+        for t in (self.process_thread, self.prune_thread):
+            if t is not None and t.is_alive() and t is not current:
+                t.join(timeout=2.0)
         logger.info("PriorityQueueWorker stopped.")
 
     def _recover_interrupted_tasks(self) -> None:
@@ -328,152 +334,158 @@ class PriorityQueueWorker:
     def _process_loop(self) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        try:
+            while self.running:
+                task_id = None
+                session_id = None
+                topic = ""
+                try:
+                    task_data = self._claim_highest_priority_task()
+                    if not task_data:
+                        if self._stop_event.wait(0.8):
+                            break
+                        continue
 
-        while self.running:
-            task_id = None
-            session_id = None
-            topic = ""
-            try:
-                task_data = self._claim_highest_priority_task()
-                if not task_data:
-                    if self._stop_event.wait(0.8):
-                        break
-                    continue
+                    (
+                        task_id,
+                        task_type,
+                        priority,
+                        mcq_id,
+                        session_id,
+                        topic_col,
+                        payload_str,
+                    ) = task_data
+                    payload = json_lib.loads(payload_str) if payload_str else {}
+                    session_id = session_id or payload.get("session_id")
+                    topic = topic_col or payload.get("topic", "")
+                    task_type_upper = str(task_type).upper().strip()
 
-                (
-                    task_id,
-                    task_type,
-                    priority,
-                    mcq_id,
-                    session_id,
-                    topic_col,
-                    payload_str,
-                ) = task_data
-                payload = json_lib.loads(payload_str) if payload_str else {}
-                session_id = session_id or payload.get("session_id")
-                topic = topic_col or payload.get("topic", "")
-                task_type_upper = str(task_type).upper().strip()
-
-                if ws_manager and hasattr(ws_manager, "broadcast_task_update"):
-                    self._broadcast_ws(
-                        ws_manager.broadcast_task_update(
-                            task_id=task_id,
-                            status="processing",
-                            topic=topic,
-                            session_id=session_id,
-                            progress=0,
-                        )
-                    )
-
-                # 1. CSV Bank Precomputation
-                if (
-                    task_type_upper == "BATCH_PRECOMPUTE"
-                    and payload.get("action") == "load_csvs"
-                ):
-                    from server.routes_csv import load_csvs_background
-
-                    load_csvs_background()
-
-                # 2. Session Pipeline (Circle 2 References -> Optional Circle 3 LLM Notes & Explanations)
-                elif task_type_upper in ("SESSION_PROCESSING", "PROCESS_SESSION"):
-                    from agents.tema_q.session_processor import process_session_questions
-
-                    if session_id:
-                        loop.run_until_complete(
-                            process_session_questions(session_id, worker=self)
-                        )
-
-                # 3. Standalone Topic Synthesis or Session Topic Synthesis (Invariant 14)
-                elif task_type_upper in (
-                    "SESSION_EXPLAIN",
-                    "SYNTHESIZE_TOPIC",
-                    "SYNTHESIS",
-                    "BATCH_PRECOMPUTE",
-                ):
-                    from agents.tema_q.pipeline import run_tema_q_synthesis
-                    from parsers.tantivy_engine import search_index
-
-                    if session_id:
-                        self._set_session_stage(session_id, llm_status="processing")
-
-                    mcq_context = payload.get("mcq_context", None)
-                    search_results = search_index(topic, limit_per_source=3)
-                    self._persist_initial_references(topic, search_results)
-
-                    llm_on = is_llm_processing_enabled()
-                    if llm_on and not self._is_topic_fully_processed(topic):
-                        try:
-                            synthesis_output = loop.run_until_complete(
-                                run_tema_q_synthesis(
-                                    topic, search_results, mcq_context, skip_lm=False
-                                )
-                            )
-                        except TypeError:
-                            synthesis_output = loop.run_until_complete(
-                                run_tema_q_synthesis(topic, search_results, mcq_context)
-                            )
-
-                        try:
-                            generate_topic_report(topic, search_results, synthesis_output)
-                        except Exception as report_err:
-                            logger.warning(
-                                "Report generation skipped for '%s': %s", topic, report_err
-                            )
-
-                        self._persist_cached_synthesis(topic, synthesis_output, search_results)
-
-                # 4. Per-MCQ Detailed Explanation Generation
-                elif task_type_upper in ("MCQ_EXPLAIN", "EXPLAIN_MCQ"):
-                    from agents.tema_q.pipeline import generate_mcq_explanation
-
-                    if is_llm_processing_enabled():
-                        q_id = payload.get("question_id") or mcq_id
-                        q_data = payload.get("question_data", {})
-                        if q_id and q_data:
-                            if session_id:
-                                self._set_session_stage(session_id, llm_status="processing")
-                            exp_text = loop.run_until_complete(
-                                generate_mcq_explanation(q_data)
-                            )
-                            if exp_text:
-                                self._persist_mcq_explanation(session_id, str(q_id), exp_text)
-
-                self._update_task_status(task_id, "completed")
-                if session_id:
-                    self._refresh_session_completion_state(session_id)
-
-                if ws_manager and hasattr(ws_manager, "broadcast_task_update"):
-                    self._broadcast_ws(
-                        ws_manager.broadcast_task_update(
-                            task_id=task_id,
-                            status="completed",
-                            topic=topic,
-                            session_id=session_id,
-                            progress=100,
-                        )
-                    )
-
-            except Exception as exc:
-                logger.error("Task %s failed: %s", task_id, exc, exc_info=True)
-                if task_id is not None:
-                    self._update_task_status(task_id, "failed", str(exc))
-                    if session_id:
-                        self._refresh_session_completion_state(session_id)
                     if ws_manager and hasattr(ws_manager, "broadcast_task_update"):
                         self._broadcast_ws(
                             ws_manager.broadcast_task_update(
                                 task_id=task_id,
-                                status="failed",
+                                status="processing",
                                 topic=topic,
                                 session_id=session_id,
                                 progress=0,
                             )
                         )
 
-        try:
-            loop.close()
-        except Exception:
-            pass
+                    # 1. CSV Bank Precomputation
+                    if (
+                        task_type_upper == "BATCH_PRECOMPUTE"
+                        and payload.get("action") == "load_csvs"
+                    ):
+                        from server.routes_csv import load_csvs_background
+
+                        load_csvs_background()
+
+                    # 2. Session Pipeline (Circle 2 References -> Optional Circle 3 LLM Notes & Explanations)
+                    elif task_type_upper in ("SESSION_PROCESSING", "PROCESS_SESSION"):
+                        from agents.tema_q.session_processor import process_session_questions
+
+                        if session_id:
+                            loop.run_until_complete(
+                                process_session_questions(session_id, worker=self)
+                            )
+
+                    # 3. Standalone Topic Synthesis or Session Topic Synthesis (Invariant 14)
+                    elif task_type_upper in (
+                        "SESSION_EXPLAIN",
+                        "SYNTHESIZE_TOPIC",
+                        "SYNTHESIS",
+                        "BATCH_PRECOMPUTE",
+                    ):
+                        from agents.tema_q.pipeline import run_tema_q_synthesis
+                        from parsers.tantivy_engine import search_index
+
+                        if session_id:
+                            self._set_session_stage(session_id, llm_status="processing")
+
+                        mcq_context = payload.get("mcq_context", None)
+                        search_results = search_index(topic, limit_per_source=3)
+                        self._persist_initial_references(topic, search_results)
+
+                        llm_on = is_llm_processing_enabled()
+                        if llm_on and not self._is_topic_fully_processed(topic):
+                            try:
+                                synthesis_output = loop.run_until_complete(
+                                    run_tema_q_synthesis(
+                                        topic, search_results, mcq_context, skip_lm=False
+                                    )
+                                )
+                            except TypeError:
+                                synthesis_output = loop.run_until_complete(
+                                    run_tema_q_synthesis(topic, search_results, mcq_context)
+                                )
+
+                            try:
+                                generate_topic_report(topic, search_results, synthesis_output)
+                            except Exception as report_err:
+                                logger.warning(
+                                    "Report generation skipped for '%s': %s", topic, report_err
+                                )
+
+                            self._persist_cached_synthesis(topic, synthesis_output, search_results)
+
+                    # 4. Per-MCQ Detailed Explanation Generation
+                    elif task_type_upper in ("MCQ_EXPLAIN", "EXPLAIN_MCQ"):
+                        from agents.tema_q.pipeline import generate_mcq_explanation
+
+                        if is_llm_processing_enabled():
+                            q_id = payload.get("question_id") or mcq_id
+                            q_data = payload.get("question_data", {})
+                            if q_id and q_data:
+                                if session_id:
+                                    self._set_session_stage(session_id, llm_status="processing")
+                                exp_text = loop.run_until_complete(
+                                    generate_mcq_explanation(q_data)
+                                )
+                                if exp_text:
+                                    self._persist_mcq_explanation(session_id, str(q_id), exp_text)
+
+                    self._update_task_status(task_id, "completed")
+                    if session_id:
+                        self._refresh_session_completion_state(session_id)
+
+                    if ws_manager and hasattr(ws_manager, "broadcast_task_update"):
+                        self._broadcast_ws(
+                            ws_manager.broadcast_task_update(
+                                task_id=task_id,
+                                status="completed",
+                                topic=topic,
+                                session_id=session_id,
+                                progress=100,
+                            )
+                        )
+
+                except Exception as exc:
+                    logger.error("Task %s failed: %s", task_id, exc, exc_info=True)
+                    if task_id is not None:
+                        self._update_task_status(task_id, "failed", str(exc))
+                        if session_id:
+                            self._refresh_session_completion_state(session_id)
+                        if ws_manager and hasattr(ws_manager, "broadcast_task_update"):
+                            self._broadcast_ws(
+                                ws_manager.broadcast_task_update(
+                                    task_id=task_id,
+                                    status="failed",
+                                    topic=topic,
+                                    session_id=session_id,
+                                    progress=0,
+                                )
+                            )
+        finally:
+            try:
+                from agents.tema_q.pipeline import close_thread_local_http_client
+                loop.run_until_complete(close_thread_local_http_client())
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
+            try:
+                loop.close()
+            except Exception:
+                pass
 
     def _set_session_stage(
         self,

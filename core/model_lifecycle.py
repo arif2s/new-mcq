@@ -1,8 +1,20 @@
 from __future__ import annotations
 import gc
+import os
+import sys
 import threading
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Optional
+
+
+def get_gpu_enabled_subprocess_env(
+    base_env: Optional[dict[str, str]] = None,
+) -> dict[str, str]:
+    """Returns a subprocess environment dict with backend CPU-only CUDA masks removed."""
+    env = dict(base_env if base_env is not None else os.environ)
+    if env.get("CUDA_VISIBLE_DEVICES", "").strip() in ("", "-1"):
+        env.pop("CUDA_VISIBLE_DEVICES", None)
+    return env
 
 
 class LazyModelHolder:
@@ -35,12 +47,13 @@ class LazyModelHolder:
             self._instance = None
             self._last_used = 0.0
         gc.collect()
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except ImportError:
-            pass
+        torch_mod = sys.modules.get("torch")
+        if torch_mod is not None:
+            try:
+                if torch_mod.cuda.is_available():
+                    torch_mod.cuda.empty_cache()
+            except Exception:
+                pass
         return True
 
     def unload_if_idle(self, ttl_override: float | None = None) -> bool:
