@@ -73,7 +73,7 @@ class AsyncQueueWorker:
                             ORDER BY priority ASC, task_id ASC
                             LIMIT 1
                         )
-                        RETURNING task_id, task_type, payload, session_id, mcq_id;
+                        RETURNING task_id, task_type, payload, session_id, mcq_id, topic_name;
                         """
                     )
                     row = cursor.fetchone()
@@ -101,7 +101,7 @@ class AsyncQueueWorker:
                     if cursor.rowcount == 0:
                         return None
                     cursor.execute(
-                        "SELECT task_id, task_type, payload, session_id, mcq_id FROM task_queue WHERE task_id = ?",
+                        "SELECT task_id, task_type, payload, session_id, mcq_id, topic_name FROM task_queue WHERE task_id = ?",
                         (t_id,),
                     )
                     result = cursor.fetchone()
@@ -111,23 +111,81 @@ class AsyncQueueWorker:
         task_id = task["task_id"]
         task_type = str(task.get("task_type", "")).upper()
         session_id = task.get("session_id")
+        mcq_id = task.get("mcq_id")
 
         try:
             raw_payload = task.get("payload")
             payload = json_lib.loads(raw_payload) if isinstance(raw_payload, str) and raw_payload else (raw_payload or {})
+            session_id = session_id or payload.get("session_id")
+            topic = task.get("topic_name") or payload.get("topic", "")
+
+            # 1. Session Processing Pipeline
             if task_type in ("SESSION_PROCESSING", "PROCESS_SESSION"):
                 from agents.tema_q.session_processor import process_session_questions
                 if session_id:
                     await process_session_questions(session_id, worker=self)
+
+            # 2. Standalone Topic Synthesis or Session Topic Synthesis (Invariant 14)
+            elif task_type in (
+                "SESSION_EXPLAIN",
+                "SYNTHESIZE_TOPIC",
+                "SYNTHESIS",
+                "BATCH_PRECOMPUTE",
+            ):
+                from agents.tema_q.pipeline import run_tema_q_synthesis
+                from parsers.tantivy_engine import search_index
+
+                if session_id:
+                    await asyncio.to_thread(queue_worker._set_session_stage, session_id, llm_status="processing")
+
+                mcq_context = payload.get("mcq_context", None)
+                search_results = await asyncio.to_thread(search_index, topic, limit_per_source=3)
+                await asyncio.to_thread(queue_worker._persist_initial_references, topic, search_results)
+
+                llm_on = is_llm_processing_enabled()
+                if llm_on and not queue_worker._is_topic_fully_processed(topic):
+                    try:
+                        synthesis_output = await run_tema_q_synthesis(
+                            topic, search_results, mcq_context, skip_lm=False
+                        )
+                    except TypeError:
+                        synthesis_output = await run_tema_q_synthesis(topic, search_results, mcq_context)
+
+                    try:
+                        await asyncio.to_thread(generate_topic_report, topic, search_results, synthesis_output)
+                    except Exception as report_err:
+                        logger.warning(
+                            "Report generation skipped for '%s': %s", topic, report_err
+                        )
+
+                    await asyncio.to_thread(queue_worker._persist_cached_synthesis, topic, synthesis_output, search_results)
+
+            # 3. Per-MCQ Detailed Explanation Generation
             elif task_type in ("MCQ_EXPLAIN", "EXPLAIN_MCQ"):
                 from agents.tema_q.pipeline import generate_mcq_explanation
-                q_data = payload.get("question_data", {})
-                if q_data:
-                    await generate_mcq_explanation(q_data)
+                if is_llm_processing_enabled():
+                    q_id = payload.get("question_id") or mcq_id
+                    q_data = payload.get("question_data", {})
+                    if q_data:
+                        if session_id:
+                            await asyncio.to_thread(queue_worker._set_session_stage, session_id, llm_status="processing")
+                        exp_text = await generate_mcq_explanation(q_data)
+                        if exp_text:
+                            await asyncio.to_thread(self._persist_mcq_explanation, session_id, str(q_id), exp_text)
+
             await asyncio.to_thread(self._finalize_task, task_id, "completed", None)
+            if session_id:
+                await asyncio.to_thread(queue_worker._refresh_session_completion_state, session_id)
         except Exception as exc:
             logger.error("Task %d raised exception: %s", task_id, exc, exc_info=True)
             await asyncio.to_thread(self._finalize_task, task_id, "failed", str(exc))
+            if session_id:
+                await asyncio.to_thread(queue_worker._refresh_session_completion_state, session_id)
+
+    def _persist_mcq_explanation(
+        self, session_id: Optional[str], question_id: str, llm_explanation: str
+    ) -> None:
+        queue_worker._persist_mcq_explanation(session_id, question_id, llm_explanation)
 
     def _finalize_task(self, task_id: int, status: str, error_msg: Optional[str]) -> None:
         from core.database import get_db_connection
@@ -215,13 +273,16 @@ class PriorityQueueWorker:
         logger.info("PriorityQueueWorker stopped.")
 
     def _recover_interrupted_tasks(self) -> None:
-        """Resets tasks left in processing state from an abrupt shutdown back to pending."""
+        """Resets tasks left in processing/running state across both task_queue and queue_jobs."""
+        now_ts = _time.time()
         try:
             with closing(get_db_connection()) as conn:
                 conn.execute(
-                    "UPDATE task_queue SET status = 'pending', updated_at = unixepoch('now') "
-                    "WHERE LOWER(status) = 'processing'"
+                    "UPDATE task_queue SET status = 'pending', updated_at = ? "
+                    "WHERE LOWER(status) IN ('processing', 'running')",
+                    (now_ts,),
                 )
+                recover_interrupted_jobs(conn, target_status="PENDING")
         except Exception as exc:
             logger.warning("Could not recover interrupted tasks: %s", exc)
 
@@ -769,13 +830,13 @@ def persist_job_state(
 
 
 def recover_interrupted_jobs(conn: _sqlite3.Connection, target_status: str = "PENDING") -> int:
-    """Reset any jobs stranded in RUNNING state from an unclean server shutdown."""
+    """Reset any jobs stranded in RUNNING or PROCESSING state from an unclean server shutdown."""
     ensure_queue_jobs_table(conn)
     cur = conn.execute(
         """
         UPDATE queue_jobs
         SET status = ?, error_message = 'Recovered after server restart', updated_at = ?
-        WHERE status = 'RUNNING'
+        WHERE UPPER(status) IN ('RUNNING', 'PROCESSING')
         """,
         (target_status.upper(), _time.time()),
     )
