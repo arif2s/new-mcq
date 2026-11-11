@@ -949,6 +949,201 @@
               <p class="subtitle text-sm text-muted">Manage offline ontologies, biomedical NER models, diagnostics, and glassmorphic appearance.</p>
             </header>
 
+<!-- File: ui/index.html (Inside the Settings Tab Container) -->
+<div id="settings-boxes-grid" class="grid grid-cols-1 md:grid-cols-2 gap-6 my-6">
+
+  <!-- BOX 1: AI synthesis -->
+  <section class="box p-5 rounded-xl border border-slate-700/60 bg-slate-900/75 backdrop-blur-md" data-adaptive-contrast>
+    <div class="flex items-center justify-between border-b border-slate-700/50 pb-3 mb-4">
+      <h2 class="text-lg font-bold tracking-wide">AI synthesis</h2>
+      <span id="lm-detected-context-badge" class="text-xs px-2.5 py-1 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30">
+        Context: Auto (4096 tok)
+      </span>
+    </div>
+
+    <div class="space-y-4 text-sm">
+      <label class="flex items-center justify-between gap-3 cursor-pointer">
+        <div>
+          <div class="font-semibold">Enable LM Studio Synthesis &amp; MCQ Explanations</div>
+          <div class="text-xs opacity-75">Turn off to run in fast Reference-Only mode without GPU/LLM calls</div>
+        </div>
+        <input type="checkbox" id="setting-llm-enabled" data-setting-key="llmEnabled" class="w-5 h-5 accent-sky-500 rounded" checked />
+      </label>
+
+      <div class="pt-2 border-t border-slate-800/80">
+        <div class="font-semibold mb-2">Article Combination &amp; Summarization Mode</div>
+        <div class="space-y-2">
+          <label class="flex items-start gap-2.5 cursor-pointer">
+            <input type="radio" name="setting-synthesis-mode" value="tantivy_microedit" data-setting-key="synthesisMode" class="mt-1 accent-sky-500" checked />
+            <div>
+              <span class="font-medium">Tantivy Micro-Edit to Combine Articles (Default)</span>
+              <p class="text-xs opacity-75">Sends compact 150–280 word windows to weave net-new clinical facts and dosages across sources with high accuracy.</p>
+            </div>
+          </label>
+          <label class="flex items-start gap-2.5 cursor-pointer">
+            <input type="radio" name="setting-synthesis-mode" value="per_article_lm_summary" data-setting-key="synthesisMode" class="mt-1 accent-sky-500" />
+            <div>
+              <span class="font-medium">Separate LM Studio Summaries per Referenced Article</span>
+              <p class="text-xs opacity-75">Filters each article strictly to the target topic and sends larger passages for standalone per-source summaries.</p>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <label class="flex items-center justify-between gap-3 pt-2 border-t border-slate-800/80 cursor-pointer">
+        <div>
+          <div class="font-semibold">Heading-Wise Prompt Dispatch</div>
+          <div class="text-xs opacity-75">Dispatches Pass 1 section-by-section so small models retain 100% of numeric cutoffs</div>
+        </div>
+        <input type="checkbox" id="setting-heading-wise" data-setting-key="headingWise" class="w-5 h-5 accent-sky-500 rounded" checked />
+      </label>
+
+      <div class="pt-2 border-t border-slate-800/80">
+        <div class="flex items-center justify-between mb-1">
+          <label for="setting-lm-max-words" class="font-semibold">Max Words Sent to LM Studio per Pass</label>
+          <span class="text-xs opacity-75">0 = Auto-detect from LM Studio</span>
+        </div>
+        <input type="number" id="setting-lm-max-words" data-setting-key="lmMaxWordsOverride"
+               min="0" max="25000" step="100" value="0"
+               class="w-full px-3 py-1.5 rounded-lg bg-slate-800/90 border border-slate-700 text-sm focus:outline-none focus:border-sky-400" />
+      </div>
+
+      <label class="flex items-center justify-between gap-3 pt-2 border-t border-slate-800/80 cursor-pointer">
+        <div>
+          <div class="font-semibold">Record Pipeline Diagnostic Telemetry</div>
+          <div class="text-xs opacity-75">Save JSON execution &amp; dosage-retention traces to <code>storage/reports/</code></div>
+        </div>
+        <input type="checkbox" id="setting-collect-telemetry" data-setting-key="collectTelemetry" class="w-5 h-5 accent-sky-500 rounded" />
+      </label>
+    </div>
+  </section>
+
+  <!-- BOX 2: Note reader -->
+  <section class="box p-5 rounded-xl border border-slate-700/60 bg-slate-900/75 backdrop-blur-md" data-adaptive-contrast>
+    <div class="flex items-center justify-between border-b border-slate-700/50 pb-3 mb-4">
+      <h2 class="text-lg font-bold tracking-wide">Note reader</h2>
+      <span class="text-xs px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+        Reader &amp; Popups
+      </span>
+    </div>
+
+    <div class="space-y-4 text-sm">
+      <div>
+        <label for="setting-default-note-mode" class="font-semibold block mb-1">Default My Notes View Mode</label>
+        <select id="setting-default-note-mode" data-setting-key="defaultNoteMode"
+                class="w-full px-3 py-1.5 rounded-lg bg-slate-800/90 border border-slate-700 text-sm focus:outline-none focus:border-sky-400">
+          <option value="list" selected>List Mode (Topic checklist &amp; reference counters — Default)</option>
+          <option value="note">Note Mode (Full Markdown reading view with highlights)</option>
+        </select>
+      </div>
+
+      <label class="flex items-center justify-between gap-3 pt-2 border-t border-slate-800/80 cursor-pointer">
+        <div>
+          <div class="font-semibold">Auto-Highlight Extracted Topics in Note Mode</div>
+          <div class="text-xs opacity-75">Highlights all mentions of active topics; removing a topic in List Mode unwraps all mentions</div>
+        </div>
+        <input type="checkbox" id="setting-auto-highlight-topics" data-setting-key="autoHighlightNoteTopics" class="w-5 h-5 accent-sky-500 rounded" checked />
+      </label>
+
+      <label class="flex items-center justify-between gap-3 pt-2 border-t border-slate-800/80 cursor-pointer">
+        <div>
+          <div class="font-semibold">Pure-Prose Clinical Sanitizer</div>
+          <div class="text-xs opacity-75">Strips raw HTML clutter and broken table borders while preserving Markdown &amp; KaTeX</div>
+        </div>
+        <input type="checkbox" id="setting-sanitize-prose" data-setting-key="sanitizeClinicalProse" class="w-5 h-5 accent-sky-500 rounded" checked />
+      </label>
+
+      <label class="flex items-center justify-between gap-3 pt-2 border-t border-slate-800/80 cursor-pointer">
+        <div>
+          <div class="font-semibold">Granular Section Popup Previews</div>
+          <div class="text-xs opacity-75">Show deep-links that popup only the matching clinical section from .zim, Obsidian, or PDF</div>
+        </div>
+        <input type="checkbox" id="setting-section-popup" data-setting-key="sectionPopupPreview" class="w-5 h-5 accent-sky-500 rounded" checked />
+      </label>
+    </div>
+  </section>
+
+  <!-- BOX 3: Topic extraction strategy -->
+  <section class="box p-5 rounded-xl border border-slate-700/60 bg-slate-900/75 backdrop-blur-md" data-adaptive-contrast>
+    <div class="flex items-center justify-between border-b border-slate-700/50 pb-3 mb-4">
+      <h2 class="text-lg font-bold tracking-wide">Topic extraction strategy</h2>
+      <span class="text-xs px-2.5 py-1 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+        NLP Mining
+      </span>
+    </div>
+
+    <div class="space-y-4 text-sm">
+      <div>
+        <label for="setting-extractor-strategy" class="font-semibold block mb-1">Biomedical NER &amp; Entity Linker Engine</label>
+        <select id="setting-extractor-strategy" data-setting-key="extractorStrategy"
+                class="w-full px-3 py-1.5 rounded-lg bg-slate-800/90 border border-slate-700 text-sm focus:outline-none focus:border-sky-400">
+          <option value="medspacy" selected>MedSpaCy (PyRuSH + TargetMatcher + ConText Negation — Default)</option>
+          <option value="scispacy">SciSpaCy (Biomedical NER + UMLS / MeSH Knowledge Base Linker)</option>
+          <option value="hybrid">Hybrid Ensemble (MedSpaCy Negation Filter + SciSpaCy UMLS Linker)</option>
+        </select>
+      </div>
+
+      <label class="flex items-center justify-between gap-3 pt-2 border-t border-slate-800/80 cursor-pointer">
+        <div>
+          <div class="font-semibold">Enforce Global &amp; Per-Note Ignore Lists</div>
+          <div class="text-xs opacity-75">Filters topics against <code>Ignore_list.txt</code>, SQLite <code>ignored_topics</code>, and suppressed note topics</div>
+        </div>
+        <input type="checkbox" id="setting-enforce-ignore" data-setting-key="enforceIgnoreList" class="w-5 h-5 accent-sky-500 rounded" checked />
+      </label>
+
+      <label class="flex items-center justify-between gap-3 pt-2 border-t border-slate-800/80 cursor-pointer">
+        <div>
+          <div class="font-semibold">Morphological &amp; CUI Synonym Deduplication</div>
+          <div class="text-xs opacity-75">Collapses plural/singular variants (e.g., Amyloidoses &rarr; Amyloidosis) so topics never duplicate</div>
+        </div>
+        <input type="checkbox" id="setting-dedup-morph" data-setting-key="deduplicateMorphological" class="w-5 h-5 accent-sky-500 rounded" checked />
+      </label>
+    </div>
+  </section>
+
+  <!-- BOX 4: PDF engine -->
+  <section class="box p-5 rounded-xl border border-slate-700/60 bg-slate-900/75 backdrop-blur-md" data-adaptive-contrast>
+    <div class="flex items-center justify-between border-b border-slate-700/50 pb-3 mb-4">
+      <h2 class="text-lg font-bold tracking-wide">PDF engine</h2>
+      <span class="text-xs px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+        OCR &amp; Layout
+      </span>
+    </div>
+
+    <div class="space-y-4 text-sm">
+      <div>
+        <label for="setting-pdf-parser" class="font-semibold block mb-1">Primary PDF Extraction &amp; Heading Engine</label>
+        <select id="setting-pdf-parser" data-setting-key="pdfParser"
+                class="w-full px-3 py-1.5 rounded-lg bg-slate-800/90 border border-slate-700 text-sm focus:outline-none focus:border-sky-400">
+          <option value="docling_v2" selected>Docling v2 (Adaptive Layout + Visual Inspector + OCR Repair — Default)</option>
+          <option value="indra_base_heading_opt">Indra Base OCR + Heading Optimization (ONNX Layout + H1–H6 Calibrator)</option>
+          <option value="docling_v1_heading_opt">Docling v1 + TOC / Font-Size Heading Calibrator</option>
+          <option value="pymupdf_fast">Fast PyMuPDF Digital Slice (Zero-Overhead Raw Text)</option>
+        </select>
+      </div>
+
+      <div class="pt-2 border-t border-slate-800/80">
+        <label for="setting-pdf-profile" class="font-semibold block mb-1">Default Layout Analysis Profile</label>
+        <select id="setting-pdf-profile" data-setting-key="pdfLayoutProfile"
+                class="w-full px-3 py-1.5 rounded-lg bg-slate-800/90 border border-slate-700 text-sm focus:outline-none focus:border-sky-400">
+          <option value="native_digital" selected>Native Digital PDF (Default)</option>
+          <option value="hybrid_toc">Hybrid TOC + Visual Banner Calibration</option>
+          <option value="scanned_ocr">Scanned Textbook OCR Layer Recovery</option>
+        </select>
+      </div>
+
+      <label class="flex items-center justify-between gap-3 pt-2 border-t border-slate-800/80 cursor-pointer">
+        <div>
+          <div class="font-semibold">Vision-Language Model (VLM) Cropped Page Synthesis</div>
+          <div class="text-xs opacity-75">Send cropped base64 PDF page regions to LM Studio when a multimodal VLM is loaded</div>
+        </div>
+        <input type="checkbox" id="setting-vlm-synthesis" data-setting-key="vlmPageSynthesis" class="w-5 h-5 accent-sky-500 rounded" />
+      </label>
+    </div>
+  </section>
+
+</div>
+
             <!-- 0. ONE-CLICK COMPLETE OFFLINE DOWNLOAD CARD -->
             <div class="glass-card p-5 rounded-2xl bg-gradient-to-r from-brand-600/10 via-purple-600/10 to-emerald-600/10 border border-brand-500/30">
               <div class="flex items-center justify-between pb-3 mb-3 border-b border-gray-700/50">
@@ -1706,8 +1901,8 @@
     </template>
 
     <!-- APPLICATION SCRIPTS (STRICT LOADING ORDER) -->
-    <script src="/js/state.js" defer></script>
-    <script src="/js/app.js" defer></script>
+    <script src="/js/state.js" type="module"></script>
+    <script src="/js/app.js" type="module"></script>
     <script src="/js/test_features.js" defer></script>
     <script src="/js/dashboard.js" defer></script>
     <script src="/js/notes.js" type="module"></script>

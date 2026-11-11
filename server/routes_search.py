@@ -1270,12 +1270,16 @@ def search_semantic_hybrid(q: str = "", limit: int = 15) -> dict[str, Any]:
 
     matching_files = list(matching_files_map.values())[:limit]
 
+    from server.routes_state import get_persisted_app_settings
+    settings = get_persisted_app_settings()
+    allow_popups = bool(settings.get("sectionPopupPreview", True))
+
     return {
         "status": "ok",
         "query": raw_q,
         "query_decomposition": intent,
         "matching_files": matching_files,
-        "section_popup_links": deduped_popups[:limit],
+        "section_popup_links": deduped_popups[:limit] if allow_popups else [],
     }
 
 
@@ -1301,6 +1305,19 @@ def get_section_popup(
 
     aspect_syns = CLINICAL_ASPECT_TAXONOMY.get(aspect_key, [aspect_key] if aspect_key else [])
 
+    from server.routes_state import get_persisted_app_settings
+    settings = get_persisted_app_settings()
+    sanitize_prose = bool(settings.get("sanitizeClinicalProse", True))
+
+    def _maybe_sanitize(md: str) -> str:
+        if sanitize_prose and md:
+            try:
+                from agents.tema_q.subtopic_router import sanitize_clinical_prose
+                return sanitize_clinical_prose(md)
+            except Exception:
+                return md
+        return md
+
     if src == "pdf":
         rendered = render_pdf_section_via_indra_ocr(
             file_path=fp,
@@ -1310,6 +1327,7 @@ def get_section_popup(
             aspect_synonyms=aspect_syns,
             heading_hint=doc_title,
         )
+        final_content = _maybe_sanitize(rendered.get("rendered_text", ""))
         return {
             "status": "ok",
             "source_type": "pdf",
@@ -1318,7 +1336,7 @@ def get_section_popup(
             "page": page,
             "heading": rendered.get("heading") or f"Page {page}",
             "engine_profile": rendered.get("engine", "indra_base_heading_opt"),
-            "content_markdown": rendered.get("rendered_text", ""),
+            "content_markdown": final_content,
         }
 
     elif src == "obsidian":
@@ -1350,6 +1368,7 @@ def get_section_popup(
         heading, isolated_md = slice_section_by_heading(
             raw_md, core_entity=clean_entity, aspect_synonyms=aspect_syns
         )
+        final_content = _maybe_sanitize(isolated_md or raw_md)
         return {
             "status": "ok",
             "source_type": "obsidian",
@@ -1358,7 +1377,7 @@ def get_section_popup(
             "page": 1,
             "heading": heading or doc_title,
             "engine_profile": "obsidian_vault_reader",
-            "content_markdown": isolated_md or raw_md,
+            "content_markdown": final_content,
         }
 
     elif src == "zim":
@@ -1375,6 +1394,7 @@ def get_section_popup(
         heading, isolated_md = slice_section_by_heading(
             raw_zim, core_entity=clean_entity, aspect_synonyms=aspect_syns
         )
+        final_content = _maybe_sanitize(isolated_md or raw_zim)
         return {
             "status": "ok",
             "source_type": "zim",
@@ -1383,11 +1403,12 @@ def get_section_popup(
             "page": 1,
             "heading": heading or doc_title,
             "engine_profile": "zim_b_tree_reader",
-            "content_markdown": isolated_md or raw_zim,
+            "content_markdown": final_content,
         }
 
     else:
         # Fallback generic section slicer
+        final_content = _maybe_sanitize(f"# {doc_title}\n\nSection content for {clean_entity}.")
         return {
             "status": "ok",
             "source_type": src or "unknown",
@@ -1396,5 +1417,5 @@ def get_section_popup(
             "page": page,
             "heading": doc_title or "Overview",
             "engine_profile": "generic_reader",
-            "content_markdown": f"# {doc_title}\n\nSection content for {clean_entity}.",
+            "content_markdown": final_content,
         }

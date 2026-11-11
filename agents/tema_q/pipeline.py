@@ -324,41 +324,64 @@ def _get_pdf_parser_setting() -> str:
 
 
 def _extract_pdf_sync(file_path: str, page: int) -> str:
-    parser = _get_pdf_parser_setting()
-    if parser in ("docling_v1_heading_opt", "docling_v1"):
-        try:
-            from parsers.docling import extract_structured_layout_v1_heading_opt
-            res = extract_structured_layout_v1_heading_opt(file_path, page)
-            if res:
-                return res
-        except Exception as exc:
-            logger.warning("docling_v1_heading_opt failed, falling back: %s", exc)
-    elif parser in ("indra_base_heading_opt", "indra"):
+    from server.routes_state import get_persisted_app_settings
+    settings = get_persisted_app_settings()
+    active_parser = str(settings.get("pdfParser") or "docling_v2")
+    active_profile = str(settings.get("pdfLayoutProfile") or "native_digital")
+
+    raw_md = ""
+    if active_parser == "indra_base_heading_opt":
         try:
             from parsers.indra import extract_page_with_indra_base_heading_opt
-            res_dict = extract_page_with_indra_base_heading_opt(
-                file_path, page_number=page, render_page_image=False
-            )
-            if res_dict and res_dict.get("markdown"):
-                return str(res_dict["markdown"])
+            res = extract_page_with_indra_base_heading_opt(file_path, page_number=page, render_page_image=False)
+            raw_md = str(res.get("markdown") or res.get("text") or "")
         except Exception as exc:
-            logger.warning("indra_base_heading_opt failed, falling back: %s", exc)
-    elif parser == "docling_v2":
+            logger.warning("indra_base_heading_opt failed in _extract_pdf_sync: %s", exc)
+            raw_md = extract_page_slice(file_path, page)
+    elif active_parser == "docling_v1_heading_opt":
         try:
-            from parsers.docling import extract_structured_layout as extract_v2
-            res = extract_v2(file_path, page)
-            if res:
-                return res
+            from parsers.pdf_extractor import extract_structured_layout_v1_heading_opt
+            raw_md = extract_structured_layout_v1_heading_opt(file_path, page)
         except Exception as exc:
-            logger.warning("Docling v2 extraction failed, falling back to fitz: %s", exc)
-    elif parser == "docling":
+            try:
+                from parsers.docling import extract_structured_layout_v1_heading_opt
+                doc_res = extract_structured_layout_v1_heading_opt(file_path, page)
+                raw_md = str(doc_res.get("markdown") if isinstance(doc_res, dict) else (doc_res or ""))
+            except Exception as e2:
+                logger.warning("docling_v1_heading_opt failed in _extract_pdf_sync: %s / %s", exc, e2)
+                raw_md = extract_page_slice(file_path, page)
+    elif active_parser == "pymupdf_fast":
         try:
-            res = extract_structured_layout(file_path, page)
-            if res:
-                return res
+            from parsers.pdf_extractor import extract_page_slice
+            raw_md = extract_page_slice(file_path, page)
         except Exception as exc:
-            logger.warning("Docling extraction failed, falling back to fitz: %s", exc)
-    return extract_page_slice(file_path, page)
+            logger.warning("extract_page_slice failed in _extract_pdf_sync: %s", exc)
+            raw_md = ""
+    else:
+        # Default: docling_v2
+        try:
+            from parsers.docling.engine import extract_page_with_docling_v2
+            res = extract_page_with_docling_v2(file_path, page, profile=active_profile)
+            if isinstance(res, dict):
+                raw_md = str(res.get("markdown") or res.get("text") or "")
+            else:
+                raw_md = str(res or "")
+        except Exception as exc:
+            try:
+                from parsers.docling import extract_structured_layout as extract_v2
+                raw_md = extract_v2(file_path, page) or ""
+            except Exception as e2:
+                logger.warning("Docling v2 extraction failed, falling back to page slice: %s / %s", exc, e2)
+                raw_md = extract_page_slice(file_path, page)
+
+    if bool(settings.get("sanitizeClinicalProse", True)):
+        try:
+            from agents.tema_q.subtopic_router import sanitize_clinical_prose
+            raw_md = sanitize_clinical_prose(raw_md)
+        except Exception as s_exc:
+            logger.debug("sanitize_clinical_prose failed: %s", s_exc)
+
+    return raw_md
 
 
 async def extract_topics_from_mcq(
@@ -847,41 +870,34 @@ async def run_tema_q_synthesis(
     topic: str,
     search_results: dict,
     mcq_context: Optional[dict] = None,
-    skip_lm: bool = False,
+    skip_lm: Optional[bool] = None,
     model_id: Optional[str] = None,
-    heading_wise: bool = True,
-    collect_telemetry: bool = False,
+    heading_wise: Optional[bool] = None,
+    collect_telemetry: Optional[bool] = None,
     synthesis_mode: Optional[str] = None,
     user_max_words_override: Optional[int] = None,
 ) -> dict:
     """Executes multi-pass clinical synthesis and variance auditing across resolved sources."""
+    from server.routes_state import get_persisted_app_settings
+    settings = get_persisted_app_settings()
+
+    # Apply saved settings when caller does not pass an explicit override
+    if skip_lm is None:
+        skip_lm = not bool(settings.get("llmEnabled", True))
+    if heading_wise is None:
+        heading_wise = bool(settings.get("headingWise", True))
+    if collect_telemetry is None:
+        collect_telemetry = bool(settings.get("collectTelemetry", False))
+    if not synthesis_mode:
+        synthesis_mode = str(settings.get("synthesisMode") or "tantivy_microedit")
+    if user_max_words_override is None:
+        user_max_words_override = int(settings.get("lmMaxWordsOverride") or 0)
+
     topic_key = re.sub(r"[\s_]+", "-", (topic or "").lower().strip())
     flat_refs = _flatten_top_references(search_results)
 
-    # Read default synthesis_mode and user_max_words_override from SQLite user_state if omitted
     effective_synthesis_mode = (synthesis_mode or "").strip().lower()
     effective_max_words_override = user_max_words_override
-
-    if not effective_synthesis_mode or effective_max_words_override is None:
-        try:
-            with closing(get_db_connection()) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT value FROM user_state WHERE key = 'app_persistence'")
-                row = cursor.fetchone()
-                if row:
-                    raw_val = row[0] if isinstance(row, tuple) else row["value"]
-                    app_persist = json.loads(raw_val)
-                    if isinstance(app_persist, dict):
-                        if not effective_synthesis_mode:
-                            effective_synthesis_mode = str(
-                                app_persist.get("synthesisMode") or "tantivy_microedit"
-                            ).strip().lower()
-                        if effective_max_words_override is None:
-                            val = app_persist.get("lmMaxWordsOverride")
-                            if val is not None and int(val) > 0:
-                                effective_max_words_override = int(val)
-        except Exception as exc:
-            logger.debug("Failed reading app_persistence for synthesis mode: %s", exc)
 
     if effective_synthesis_mode not in ("tantivy_microedit", "per_article_lm_summary"):
         effective_synthesis_mode = "tantivy_microedit"

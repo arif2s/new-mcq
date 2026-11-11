@@ -64,7 +64,59 @@ _KNOWN_APP_PERSISTENCE_FIELDS = {
     "inspectorOpen",
     "auto_remove_completed_sets",
     "autoRemoveCompletedSets",
+    "synthesisMode",
+    "headingWise",
+    "lmMaxWordsOverride",
+    "collectTelemetry",
+    "defaultNoteMode",
+    "autoHighlightNoteTopics",
+    "sanitizeClinicalProse",
+    "sectionPopupPreview",
+    "enforceIgnoreList",
+    "deduplicateMorphological",
+    "pdfLayoutProfile",
+    "vlmPageSynthesis",
 }
+
+DEFAULT_BACKEND_SETTINGS: Dict[str, Any] = {
+    "llmEnabled": True,
+    "synthesisMode": "tantivy_microedit",
+    "headingWise": True,
+    "lmMaxWordsOverride": 0,
+    "collectTelemetry": False,
+    "defaultNoteMode": "list",
+    "autoHighlightNoteTopics": True,
+    "sanitizeClinicalProse": True,
+    "sectionPopupPreview": True,
+    "extractorStrategy": "medspacy",
+    "enforceIgnoreList": True,
+    "deduplicateMorphological": True,
+    "pdfParser": "docling_v2",
+    "pdfLayoutProfile": "native_digital",
+    "vlmPageSynthesis": False,
+}
+
+
+def get_persisted_app_settings() -> Dict[str, Any]:
+    """
+    Reads the saved settings JSON from SQLite `user_state` (key = 'app_persistence')
+    and merges it over DEFAULT_BACKEND_SETTINGS. Survives server restarts.
+    """
+    merged = dict(DEFAULT_BACKEND_SETTINGS)
+    try:
+        with closing(get_db_connection()) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM user_state WHERE key = 'app_persistence'")
+            row = cursor.fetchone()
+            if row:
+                raw_val = row[0] if isinstance(row, tuple) else row["value"]
+                if raw_val:
+                    saved = json.loads(raw_val) if isinstance(raw_val, str) else raw_val
+                    if isinstance(saved, dict):
+                        merged.update(saved)
+    except Exception:
+        pass
+    return merged
 
 
 class StateUpdate(BaseModel):
@@ -300,11 +352,19 @@ def import_state(
 
 @router.get("")
 @router.get("/")
-def get_all_state() -> Dict[str, Any]:
-    """Retrieves all stored user state key-value pairs."""
-    result: Dict[str, Any] = {}
+def get_all_state(key: Optional[str] = None) -> Any:
+    """Retrieves all stored user state key-value pairs, or a specific key if requested."""
     with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
+        if key:
+            cursor.execute("SELECT value FROM user_state WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            if row:
+                raw_val = row[0] if isinstance(row, tuple) else row["value"]
+                return _deserialize_value(raw_val)
+            return {}
+
+        result: Dict[str, Any] = {}
         cursor.execute("SELECT key, value FROM user_state")
         for row in cursor.fetchall():
             k = str(row[0] if isinstance(row, tuple) else row["key"])

@@ -1832,20 +1832,28 @@ def extract_topics_local(
     question: str = "",
     options: Optional[Any] = None,
     explanation: str = "",
-    strategy: str = "medspacy",
+    strategy: Optional[str] = None,
     use_zim_refinement: bool = False,
     use_tantivy_refinement: bool = False,
     text: Optional[str] = None,
+    suppressed_norms: Optional[Set[str]] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """
     Main extraction interface. Resolves clinical concepts, protects subtypes,
     and returns verified and doubtful classifications conforming to TopicExtractorOutputDict (Section 4).
     """
+    from server.routes_state import get_persisted_app_settings
+    settings = get_persisted_app_settings()
+
+    active_strategy = strategy or str(settings.get("extractorStrategy") or "medspacy")
+    enforce_ignore = bool(settings.get("enforceIgnoreList", True))
+    dedup_morph = bool(settings.get("deduplicateMorphological", True))
+
     raw_input_text = text if (text is not None and not question) else question
     input_text = clean_html_prose(raw_input_text)
     explanation_clean = clean_html_prose(explanation)
-    ignored_keys = get_ignored_topics_set()
+    ignored_keys = get_ignored_topics_set() if enforce_ignore else set()
     active_pipelines = _get_active_spacy_pipelines()
 
     raw_candidates: List[Dict[str, Any]] = []
@@ -2208,6 +2216,21 @@ def extract_topics_local(
                 "score": round(float(item["score"]), 3),
             }
         )
+
+    if dedup_morph:
+        from core.topic_filter import deduplicate_note_topics
+        deduped = deduplicate_note_topics(
+            topic_details or filtered_all_topics or [],
+            ignored_norms=ignored_keys if enforce_ignore else set(),
+            suppressed_norms=(suppressed_norms or set()) if enforce_ignore else set(),
+        )
+        if deduped:
+            deduped_names = [d["topic_text"] for d in deduped]
+            name_to_detail = {td["name"]: td for td in topic_details}
+            topic_details = [name_to_detail[name] for name in deduped_names if name in name_to_detail]
+            filtered_all_topics = [name for name in deduped_names if name in filtered_set or not filtered_set]
+            if main_topic and main_topic not in deduped_names and deduped_names:
+                main_topic = deduped_names[0]
 
     return {
         "main_topic": main_topic,

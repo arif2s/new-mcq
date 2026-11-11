@@ -690,6 +690,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (window.AppState && window.AppState.fetch) {
         await window.AppState.fetch();
     }
+    if (typeof window.loadSettingsFromServer === 'function') {
+        await window.loadSettingsFromServer();
+    }
 
     window.closeInspector();
     document.getElementById('close-inspector-btn')?.addEventListener('click', () => {

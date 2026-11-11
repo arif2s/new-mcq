@@ -796,10 +796,13 @@ export class LectureNoteEditor {
       safeHtml = this._escapeHtml(rawMd).replace(/\n/g, '<br>');
     }
 
-    // Highlight recognized topics in HTML (excluding any suppressed / deleted topics)
+    // Highlight recognized topics in HTML (excluding any suppressed / deleted topics) if autoHighlightNoteTopics is not false
     const suppressed = (this.note && this.note.suppressed_topics) || [];
-    const highlightedHtml = highlightRecognizedTopicsInHtml(safeHtml, this.items, suppressed);
-    viewport.innerHTML = highlightedHtml;
+    const shouldHighlight = window.appState?.autoHighlightNoteTopics !== false;
+    const finalHtml = shouldHighlight
+      ? highlightRecognizedTopicsInHtml(safeHtml, this.items, suppressed)
+      : safeHtml;
+    viewport.innerHTML = finalHtml;
 
     // Attach double-click listener to switch to editing mode
     viewport.addEventListener('dblclick', (e) => {

@@ -36,8 +36,49 @@ const DEFAULT_PERSISTENCE = {
 
     // AI Synthesis Mode & LM Studio Word Limit Settings
     synthesisMode: 'tantivy_microedit', // 'tantivy_microedit' | 'per_article_lm_summary'
-    lmMaxWordsOverride: 0 // 0 = Auto-detect from LM Studio loaded_context_length
+    lmMaxWordsOverride: 0, // 0 = Auto-detect from LM Studio loaded_context_length
+
+    // 4 Settings Boxes (AI synthesis, Note reader, Topic extraction, PDF engine)
+    headingWise: true,
+    collectTelemetry: false,
+    defaultNoteMode: 'list',
+    autoHighlightNoteTopics: true,
+    sanitizeClinicalProse: true,
+    sectionPopupPreview: true,
+    enforceIgnoreList: true,
+    deduplicateMorphological: true,
+    pdfLayoutProfile: 'native_digital',
+    vlmPageSynthesis: false
 };
+
+export const DEFAULT_APP_SETTINGS = {
+  // Box 1: AI synthesis
+  llmEnabled: true,
+  synthesisMode: "tantivy_microedit",
+  headingWise: true,
+  lmMaxWordsOverride: 0,
+  collectTelemetry: false,
+
+  // Box 2: Note reader
+  defaultNoteMode: "list",
+  autoHighlightNoteTopics: true,
+  sanitizeClinicalProse: true,
+  sectionPopupPreview: true,
+
+  // Box 3: Topic extraction strategy
+  extractorStrategy: "medspacy",
+  enforceIgnoreList: true,
+  deduplicateMorphological: true,
+
+  // Box 4: PDF engine
+  pdfParser: "docling_v2",
+  pdfLayoutProfile: "native_digital",
+  vlmPageSynthesis: false,
+};
+
+// Ensure appState initializes with defaults before server hydration
+window.DEFAULT_APP_SETTINGS = DEFAULT_APP_SETTINGS;
+window.appState = Object.assign({}, DEFAULT_APP_SETTINGS, window.appState || {});
 
 let appState = JSON.parse(JSON.stringify(DEFAULT_PERSISTENCE));
 let _stateLoadedFromServer = false;
@@ -594,3 +635,109 @@ window.AppState = {
         }, delayMs);
     };
 })();
+
+export async function loadSettingsFromServer() {
+  try {
+    const res = await fetch("/api/state?key=app_persistence");
+    if (res.ok) {
+      const payload = await res.json();
+      const saved = payload?.value || payload?.data || payload || {};
+      if (saved && typeof saved === "object") {
+        Object.assign(window.appState, DEFAULT_APP_SETTINGS, saved);
+        if (typeof saved.llmEnabled === "boolean") {
+          window.appState.skipLMStudio = !saved.llmEnabled;
+        } else if (typeof saved.skipLMStudio === "boolean") {
+          window.appState.llmEnabled = !saved.skipLMStudio;
+        }
+        Object.assign(appState, saved);
+      }
+    }
+  } catch (err) {
+    console.warn("Could not hydrate settings from /api/state, using defaults:", err);
+  }
+  syncSettingsControlsToDOM();
+  await refreshLmStudioContextBadge();
+}
+
+export async function saveSettingsToServer() {
+  try {
+    await fetch("/api/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        key: "app_persistence",
+        value: window.appState,
+      }),
+    });
+  } catch (err) {
+    console.error("Failed to persist settings to /api/state:", err);
+  }
+}
+
+export function syncSettingsControlsToDOM() {
+  const controls = document.querySelectorAll("[data-setting-key]");
+  controls.forEach((el) => {
+    const key = el.dataset.settingKey;
+    const val = window.appState[key] ?? DEFAULT_APP_SETTINGS[key];
+    if (el.type === "checkbox") {
+      el.checked = Boolean(val);
+    } else if (el.type === "radio") {
+      el.checked = String(el.value) === String(val);
+    } else if (el.type === "number") {
+      el.value = Number(val || 0);
+    } else {
+      el.value = String(val);
+    }
+  });
+}
+
+export async function refreshLmStudioContextBadge() {
+  const badge = document.getElementById("lm-detected-context-badge");
+  if (!badge) return;
+  try {
+    const override = Number(window.appState.lmMaxWordsOverride || 0);
+    const res = await fetch(`/api/models/context-info?max_words=${override}`);
+    if (res.ok) {
+      const info = await res.json();
+      badge.textContent = `Context: ${info.loaded_context_length_tokens} tok (~${info.effective_summary_word_limit}w summary / ${info.microedit_word_limit}w micro-edit)`;
+    }
+  } catch (_) {
+    // Keep existing badge text if LM Studio is offline
+  }
+}
+
+// Delegated listener so any change in the 4 Settings boxes persists immediately
+document.addEventListener("change", async (e) => {
+  const el = e.target.closest("[data-setting-key]");
+  if (!el) return;
+
+  const key = el.dataset.settingKey;
+  let newValue;
+  if (el.type === "checkbox") {
+    newValue = Boolean(el.checked);
+  } else if (el.type === "number") {
+    newValue = Math.max(0, parseInt(el.value || "0", 10));
+  } else {
+    newValue = el.value;
+  }
+
+  window.appState[key] = newValue;
+  if (key === "llmEnabled") {
+    window.appState.skipLMStudio = !newValue;
+    if (window.AppState) {
+      window.AppState.get().llmEnabled = newValue;
+      window.AppState.get().skipLMStudio = !newValue;
+    }
+  }
+  await saveSettingsToServer();
+
+  if (key === "lmMaxWordsOverride") {
+    await refreshLmStudioContextBadge();
+  }
+});
+
+// Also expose globally on window
+window.loadSettingsFromServer = loadSettingsFromServer;
+window.saveSettingsToServer = saveSettingsToServer;
+window.syncSettingsControlsToDOM = syncSettingsControlsToDOM;
+window.refreshLmStudioContextBadge = refreshLmStudioContextBadge;

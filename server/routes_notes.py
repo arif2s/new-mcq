@@ -648,7 +648,7 @@ class LectureNoteMetaPayload(BaseModel):
     title: str = "Untitled Note"
     shade_index: int = 0
     is_pinned: int = 0
-    note_mode: str = "list"
+    note_mode: Optional[str] = None
     content_markdown: str = ""
     card_color: str = ""
     items: Optional[list] = None
@@ -1199,11 +1199,22 @@ def _extract_and_sync_note_topics_sync(note_id: str, markdown_override: Optional
 
 
 def _upsert_lecture_note_sync(payload: LectureNoteMetaPayload, background_mining: bool = False) -> Dict[str, Any]:
+    from server.routes_state import get_persisted_app_settings
+    default_mode_setting = str(get_persisted_app_settings().get("defaultNoteMode") or "list").strip().lower()
+    if default_mode_setting not in ("notes", "note", "list"):
+        default_mode_setting = "list"
+    if default_mode_setting == "note":
+        default_mode_setting = "notes"
+
     note_id = (payload.note_id or "").strip() or f"note_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
     title = (payload.title or "").strip() or "Untitled Note"
-    mode = (payload.note_mode or "list").strip().lower()
-    if mode not in ("notes", "list"):
+    raw_mode = (payload.note_mode or "").strip().lower() if payload.note_mode else default_mode_setting
+    if raw_mode in ("note", "notes"):
+        mode = "notes"
+    elif raw_mode == "list":
         mode = "list"
+    else:
+        mode = default_mode_setting
     content_md = payload.content_markdown if payload.content_markdown is not None else ""
     color = (payload.card_color or "").strip()
 
