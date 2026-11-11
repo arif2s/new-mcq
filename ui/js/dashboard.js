@@ -79,14 +79,14 @@ class DashboardStudyBanner {
 
           <!-- Right: Live Focus Mode Control & Today's Telemetry -->
           <div class="flex flex-wrap items-center gap-3 shrink-0">
-            <div class="px-3.5 py-2 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center gap-2.5">
+            <div class="focus-mode-box px-3.5 py-2 rounded-xl glass-card flex items-center gap-2.5">
               <span id="banner-focus-dot" class="${
                 focusState.isRunning ? 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping' :
                 focusState.isPausedByTimeout ? 'w-2.5 h-2.5 rounded-full bg-amber-400' : 'w-2.5 h-2.5 rounded-full bg-slate-500'
               }"></span>
               <div>
-                <div class="text-[10px] uppercase tracking-wider text-slate-400">Focus Timer</div>
-                <div id="banner-focus-timer" class="text-sm font-mono font-bold text-white">${formatHMS(focusState.todayFocusSeconds)}</div>
+                <div class="text-[10px] uppercase tracking-wider opacity-75 font-semibold">Focus Timer</div>
+                <div id="banner-focus-timer" class="text-sm font-mono font-bold">${formatHMS(focusState.todayFocusSeconds)}</div>
               </div>
             </div>
 

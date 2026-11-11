@@ -557,7 +557,12 @@ window.openLocalResource = async function(type, pathOrId, extraPageOrTitle = 1, 
             }
         } else {
             try {
-                const qParams = new URLSearchParams({ file_path: pathOrId });
+                const qParams = new URLSearchParams();
+                if (pathOrId.includes('/') || pathOrId.includes('\\') || pathOrId.endsWith('.md')) {
+                    qParams.set('file_path', pathOrId);
+                } else {
+                    qParams.set('title', pathOrId);
+                }
                 if (anchor) qParams.set('anchor', anchor);
                 const res = await fetch(`/api/notes/obsidian-note?${qParams.toString()}`);
                 const data = await res.json();
@@ -1140,6 +1145,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.documentElement.style.setProperty('--accent-hover', `rgb(${rHover}, ${gHover}, ${bHover})`);
             document.documentElement.style.setProperty('--input-focus', `rgba(${rBtn}, ${gBtn}, ${bBtn}, 0.35)`);
 
+            document.documentElement.style.setProperty('--bg-dominant-hue', String(Math.round(domHue)));
+            document.documentElement.style.setProperty('--bg-dominant-sat', String(Math.round(btnSat * 100)));
+
             // Contrast-safe brand text tokens derived from wallpaper accent
             if (theme === 'dark') {
                 const [rB4, gB4, bB4] = hslToRgb(buttonHue, 0.85, 0.75);
@@ -1203,6 +1211,43 @@ document.addEventListener('DOMContentLoaded', async () => {
             console.debug('Palette extraction skipped:', err);
         }
     }
+
+    /**
+     * Localized wallpaper luminance and contrast detector.
+     * Evaluates the active wallpaper background color in a specific bounding client rect or normalized (x, y)
+     * position, returning high-contrast text color, muted text color, and text shadow irrespective of light/dark theme.
+     */
+    window.getLocalizedContrastForElement = function(element) {
+        if (!element || typeof element.getBoundingClientRect !== 'function') {
+            return { textColor: '#FFFFFF', mutedColor: '#CBD5E1', isDarkBg: true };
+        }
+        try {
+            const rect = element.getBoundingClientRect();
+            const vpW = window.innerWidth || 1920;
+            const vpH = window.innerHeight || 1080;
+            const cx = Math.max(0, Math.min(1, (rect.left + rect.width / 2) / vpW));
+            const cy = Math.max(0, Math.min(1, (rect.top + rect.height / 2) / vpH));
+
+            // Map (cx, cy) to quadrant (1: top-left, 2: top-right, 3: bottom-left, 4: bottom-right)
+            const qIdx = (cy < 0.5 ? (cx < 0.5 ? 1 : 2) : (cx < 0.5 ? 3 : 4));
+            const rootStyle = getComputedStyle(document.documentElement);
+            const cardColorStr = rootStyle.getPropertyValue(`--card-color-${qIdx}`).trim();
+            if (cardColorStr) {
+                const parts = cardColorStr.split(',').map(s => parseInt(s.trim(), 10));
+                if (parts.length >= 3) {
+                    const lum = getRelativeLuminance(parts[0], parts[1], parts[2]);
+                    const isDarkBg = lum < 0.38;
+                    return {
+                        textColor: isDarkBg ? '#F8FAFC' : '#0F172A',
+                        mutedColor: isDarkBg ? '#CBD5E1' : '#334155',
+                        textShadow: isDarkBg ? '0 1px 2px rgba(0, 0, 0, 0.45)' : '0 1px 1px rgba(255, 255, 255, 0.6)',
+                        isDarkBg
+                    };
+                }
+            }
+        } catch (_) {}
+        return { textColor: '#F8FAFC', mutedColor: '#CBD5E1', isDarkBg: true };
+    };
 
     // =========================================================
     // Global Event Delegation (Citations, Modals & MCQ Extractor)

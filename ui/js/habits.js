@@ -1039,11 +1039,11 @@ async function initHabits() {
             </div>
             <!-- Dual-Location Focus Control in Habit Tracker -->
             <div class="flex items-center gap-3">
-              <div class="px-4 py-2 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center gap-3">
+              <div class="focus-mode-box px-4 py-2 rounded-xl glass-card flex items-center gap-3">
                 <span id="habit-focus-dot" class="w-2.5 h-2.5 rounded-full ${isFocusRunning ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}"></span>
                 <div>
-                  <div class="text-[10px] uppercase tracking-wider text-slate-400">Focus Mode</div>
-                  <div id="habit-focus-timer-text" class="text-sm font-mono font-bold text-white">${focusTimerFormatted}</div>
+                  <div class="text-[10px] uppercase tracking-wider opacity-75 font-semibold">Focus Mode</div>
+                  <div id="habit-focus-timer-text" class="text-sm font-mono font-bold">${focusTimerFormatted}</div>
                 </div>
               </div>
               <button

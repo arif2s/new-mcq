@@ -298,20 +298,38 @@ export class LectureNoteEditor {
   }
 
   _getCardStyle() {
+    const isLightMode = typeof document !== 'undefined' &&
+                        (document.documentElement.classList.contains('light') ||
+                         document.body.classList.contains('light-theme') ||
+                         document.body.classList.contains('light-mode'));
+
     if (this.note.card_color && this.note.card_color.startsWith('rgba')) {
       const match = this.note.card_color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
       if (match) {
-        const [, r, g, b] = match;
+        let [, r, g, b] = match.map(Number);
+        if (isLightMode) {
+          // Adapt sampled color dynamically to light theme
+          r = Math.min(255, Math.round(r * 0.35 + 240 * 0.65));
+          g = Math.min(255, Math.round(g * 0.35 + 242 * 0.65));
+          b = Math.min(255, Math.round(b * 0.35 + 245 * 0.65));
+          return {
+            background: `linear-gradient(155deg, rgba(${r}, ${g}, ${b}, 0.88) 0%, rgba(${r}, ${g}, ${b}, 0.96) 100%)`,
+            borderColor: `rgba(${r - 30}, ${g - 30}, ${b - 30}, 0.25)`,
+            isLightCard: true
+          };
+        }
         return {
           background: `linear-gradient(155deg, rgba(${r}, ${g}, ${b}, 0.82) 0%, rgba(${r}, ${g}, ${b}, 0.92) 100%)`,
-          borderColor: `rgba(${r}, ${g}, ${b}, 0.5)`
+          borderColor: `rgba(${r}, ${g}, ${b}, 0.5)`,
+          isLightCard: false
         };
       }
     }
     const shade = computeNoteCardShadeStyle(this.note.shade_index || 0);
     return {
       background: shade.background,
-      borderColor: shade.borderColor
+      borderColor: shade.borderColor,
+      isLightCard: isLightMode
     };
   }
 
@@ -375,7 +393,7 @@ export class LectureNoteEditor {
         </div>
 
         <!-- Topic Carousel Sub-View Container (Overlay/Drawer) -->
-        <div id="note-topic-carousel-container" class="${this.isCarouselOpen ? '' : 'hidden'} absolute inset-0 z-40 bg-slate-950/90 rounded-2xl flex flex-col p-6 backdrop-blur-xl border border-sky-500/30">
+        <div id="note-topic-carousel-container" class="${this.isCarouselOpen ? '' : 'hidden'} absolute inset-0 z-40 rounded-2xl flex flex-col p-6 backdrop-blur-xl border border-sky-500/30 shadow-2xl">
           ${this._renderTopicCarouselContent()}
         </div>
       </div>
@@ -526,17 +544,17 @@ export class LectureNoteEditor {
 
       <!-- Slide Main Content: Topic References & Summary -->
       <div class="flex-1 overflow-y-auto space-y-4 pr-1">
-        <div class="p-4 rounded-xl bg-slate-900/70 border border-slate-700/60">
+        <div class="carousel-panel-box p-4 rounded-xl bg-slate-900/70 border border-slate-700/60">
           <div class="flex items-start justify-between gap-3">
             <div>
               <span class="text-[10px] font-bold uppercase tracking-wider text-brand-400">Recognized Clinical Entity</span>
-              <h2 class="text-xl font-black text-white mt-0.5">${this._escapeHtml(safeTitle)}</h2>
+              <h2 class="text-xl font-black mt-0.5">${this._escapeHtml(safeTitle)}</h2>
             </div>
             <div class="flex items-center gap-2">
-              <span class="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              <span class="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                 ${activeItem.mcq_count || 0} MCQs Available
               </span>
-              <span class="px-2.5 py-1 rounded-full text-xs font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
+              <span class="px-2.5 py-1 rounded-full text-xs font-bold bg-sky-500/20 text-sky-400 border border-sky-500/30">
                 ${allRefs.length} References
               </span>
             </div>
@@ -544,10 +562,10 @@ export class LectureNoteEditor {
         </div>
 
         <div>
-          <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Verified Local Document References</h4>
+          <h4 class="text-xs font-bold uppercase tracking-wider opacity-75 mb-2">Verified Local Document References</h4>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-2.5" id="carousel-refs-grid">
             ${allRefs.length === 0 ? `
-              <div class="col-span-full p-6 text-center text-xs text-slate-400 bg-slate-900/40 rounded-xl border border-white/5">
+              <div class="carousel-panel-box col-span-full p-6 text-center text-xs opacity-75 bg-slate-900/40 rounded-xl border border-white/5">
                 No local textbook or note references found for "${this._escapeHtml(safeTitle)}".
               </div>
             ` : allRefs.map((r, rIdx) => `
@@ -556,14 +574,14 @@ export class LectureNoteEditor {
                 <div>
                   <div class="flex items-center justify-between text-[10px] mb-1">
                     <span class="font-bold px-1.5 py-0.5 rounded ${
-                      r._type === 'obsidian' ? 'bg-sky-500/20 text-sky-300' :
-                      r._type === 'pdf' ? 'bg-rose-500/20 text-rose-300' : 'bg-blue-500/20 text-blue-300'
+                      r._type === 'obsidian' ? 'bg-sky-500/20 text-sky-400' :
+                      r._type === 'pdf' ? 'bg-rose-500/20 text-rose-400' : 'bg-blue-500/20 text-blue-400'
                     }">${r._badge}</span>
-                    ${r.page ? `<span class="text-slate-400 font-mono">Page ${r.page}</span>` : ''}
+                    ${r.page ? `<span class="opacity-75 font-mono">Page ${r.page}</span>` : ''}
                   </div>
-                  <div class="text-xs font-bold text-slate-100 truncate">${this._escapeHtml(r.title || 'Document')}</div>
+                  <div class="text-xs font-bold truncate">${this._escapeHtml(r.title || 'Document')}</div>
                   ${r.heading ? `<div class="text-[11px] text-sky-400 truncate mt-0.5">${this._escapeHtml(r.heading)}</div>` : ''}
-                  ${r.snippet ? `<p class="text-[11px] text-slate-400 mt-1 line-clamp-2">${this._escapeHtml(r.snippet)}</p>` : ''}
+                  ${r.snippet ? `<p class="text-[11px] opacity-75 mt-1 line-clamp-2">${this._escapeHtml(r.snippet)}</p>` : ''}
                 </div>
               </div>
             `).join('')}
@@ -1187,7 +1205,7 @@ export class MyNotesController {
         <!-- Main Viewport: Either Grid View or Editor View -->
         <div id="notes-view-content" class="flex-1 min-h-0 overflow-hidden relative">
           <!-- Multi-Column Grid View -->
-          <div id="notes-grid-view" class="h-full flex flex-col">
+          <div id="notes-grid-view" class="h-full flex flex-col min-h-0 min-w-0">
             <div id="my-notes-grid" class="flex-1 overflow-y-auto pr-1" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; align-content: start;">
               <!-- Note Cards injected here -->
             </div>
@@ -1377,15 +1395,32 @@ export class MyNotesController {
       return;
     }
 
+    const isLightMode = typeof document !== 'undefined' &&
+                        (document.documentElement.classList.contains('light') ||
+                         document.body.classList.contains('light-theme') ||
+                         document.body.classList.contains('light-mode'));
+
     gridEl.innerHTML = notes.map((n) => {
       let cardBg = '';
       let cardBorder = '';
+      let isLightCard = isLightMode;
+
       if (n.card_color && n.card_color.startsWith('rgba')) {
         const match = n.card_color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
         if (match) {
-          const [, r, g, b] = match;
-          cardBg = `linear-gradient(155deg, rgba(${r}, ${g}, ${b}, 0.82) 0%, rgba(${r}, ${g}, ${b}, 0.92) 100%)`;
-          cardBorder = `rgba(${r}, ${g}, ${b}, 0.5)`;
+          let [, r, g, b] = match.map(Number);
+          if (isLightMode) {
+            r = Math.min(255, Math.round(r * 0.35 + 240 * 0.65));
+            g = Math.min(255, Math.round(g * 0.35 + 242 * 0.65));
+            b = Math.min(255, Math.round(b * 0.35 + 245 * 0.65));
+            cardBg = `linear-gradient(155deg, rgba(${r}, ${g}, ${b}, 0.88) 0%, rgba(${r}, ${g}, ${b}, 0.96) 100%)`;
+            cardBorder = `rgba(${r - 30}, ${g - 30}, ${b - 30}, 0.25)`;
+            isLightCard = true;
+          } else {
+            cardBg = `linear-gradient(155deg, rgba(${r}, ${g}, ${b}, 0.82) 0%, rgba(${r}, ${g}, ${b}, 0.92) 100%)`;
+            cardBorder = `rgba(${r}, ${g}, ${b}, 0.5)`;
+            isLightCard = false;
+          }
         }
       }
       if (!cardBg) {
@@ -1617,10 +1652,13 @@ export class MyNotesController {
       (refObj) => {
         // Open reference document
         const type = refObj._type || refObj.source_type || 'pdf';
-        const target = refObj.file_path || refObj.path || refObj.title || '';
-        const page = refObj.page || 1;
+        const target = refObj.file_path || refObj.path || refObj.title || refObj.doc_id || '';
+        const page = refObj.page || refObj.page_number || 1;
         if (typeof window.openLocalResource === 'function') {
-          window.openLocalResource(type, target, page, { anchor: refObj.heading });
+          window.openLocalResource(type, target, page, {
+            anchor: refObj.heading || refObj.heading_path || '',
+            zimPath: refObj.zim_path || (type === 'zim' ? refObj.file_path : undefined)
+          });
         }
       }
     );

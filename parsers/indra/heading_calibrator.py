@@ -346,8 +346,16 @@ def calibrate_page_blocks(
             score += 0.30
         if distinct_color or has_bg_fill:
             score += 0.28
+        alpha_words = [w for w in text.split() if any(c.isalpha() for c in w)]
+        is_title_case = bool(
+            alpha_words
+            and not FINITE_PROSE_PUNCT_RE.search(text)
+            and sum(1 for w in alpha_words if w[0].isupper() or w.lower() in {'of', 'and', 'in', 'on', 'at', 'to', 'for', 'the', 'a', 'an', 'by', 'with', 'from'}) / len(alpha_words) >= 0.8
+        )
         if prefix_family or (text.isupper() and word_count <= 12):
             score += 0.15
+        elif is_title_case and word_count <= 10 and size_ratio >= 1.30:
+            score += 0.25
         if prefix_family in promoted_families:
             score += 0.25
 

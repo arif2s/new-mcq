@@ -492,6 +492,27 @@ async def get_page_data(
         active_profile=active_profile,
     )
 
+    # If layout_boxes and lines are empty, extract text blocks via pymupdf fallback
+    if not layout_boxes and not lines:
+        try:
+            import pymupdf
+            doc_fitz = pymupdf.open(normalized_file_path)
+            if 0 <= page_number - 1 < len(doc_fitz):
+                p_fitz = doc_fitz[page_number - 1]
+                for b_idx, blk in enumerate(p_fitz.get_text("blocks")):
+                    bx0, by0, bx1, by1, btext, _, _ = blk
+                    clean_btext = btext.strip()
+                    if not clean_btext:
+                        continue
+                    lines.append({
+                        "text": clean_btext,
+                        "box_pt": [bx0, by0, bx1, by1],
+                        "role": "heading" if b_idx == 0 or len(clean_btext.split()) <= 6 else "paragraph"
+                    })
+            doc_fitz.close()
+        except Exception as e_fitz:
+            logger.debug("PyMuPDF fallback block extraction failed: %s", e_fitz)
+
     # Prefer synchronized layout_boxes if available to reflect calibrated labels & heading levels
     if layout_boxes:
         for idx, lb in enumerate(layout_boxes):

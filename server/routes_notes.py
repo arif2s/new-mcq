@@ -608,6 +608,8 @@ def extract_topics_from_note_markdown(markdown_text: str, suppressed_keys: Optio
     # 1. Explicit Obsidian [[Wikilink]] or [[Target|Alias]] notations
     for match in _WIKILINK_TOPIC_RE.finditer(markdown_text):
         target = (match.group(1) or match.group(2) or "").strip()
+        if "#" in target:
+            target = target.split("#", 1)[0].strip()
         if target:
             _add(target)
 
@@ -619,7 +621,16 @@ def extract_topics_from_note_markdown(markdown_text: str, suppressed_keys: Optio
     except Exception as exc:
         logger.warning("Clinical NLP extraction error from note markdown: %s", exc)
 
-    return ordered_topics
+    # Final pass deduplication preserving first casing
+    deduped: list[str] = []
+    final_seen_keys: set[str] = set()
+    for t in ordered_topics:
+        k = normalize_topic_key(t)
+        if k and k not in final_seen_keys:
+            final_seen_keys.add(k)
+            deduped.append(t)
+
+    return deduped
 
 
 class LectureNoteMetaPayload(BaseModel):

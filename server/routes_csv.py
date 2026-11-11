@@ -588,18 +588,37 @@ def _build_mcq_query(
 
     kw = req.get_keyword()
     if kw:
-        # Sanitize FTS5 special control characters and hyphens
-        clean_kw = re.sub(r"[^\w\s]", " ", kw).strip()
-        tokens = [
-            t.strip()
-            for t in clean_kw.split()
-            if t.strip() and t.upper() not in {"AND", "OR", "NOT", "NEAR"}
-        ]
-        if tokens:
-            fts_terms = [f'"{token}"*' for token in tokens]
-            query += " JOIN csv_questions_fts f ON q.rowid = f.rowid"
-            conditions.append("f.csv_questions_fts MATCH ?")
-            params.append(" AND ".join(fts_terms))
+        # Support boolean OR combination (e.g. from My Notes combined topics: 'topic1 OR topic2')
+        if re.search(r"\bOR\b", kw, flags=re.IGNORECASE):
+            raw_clauses = re.split(r"\bOR\b", kw, flags=re.IGNORECASE)
+            fts_clauses = []
+            for cl in raw_clauses:
+                clean = re.sub(r"[^\w\s]", " ", cl).strip()
+                tokens = [
+                    t.strip()
+                    for t in clean.split()
+                    if t.strip() and t.upper() not in {"AND", "OR", "NOT", "NEAR"}
+                ]
+                if tokens:
+                    clause_str = " ".join(f'"{token}"*' for token in tokens)
+                    fts_clauses.append(f"({clause_str})")
+            if fts_clauses:
+                query += " JOIN csv_questions_fts f ON q.rowid = f.rowid"
+                conditions.append("f.csv_questions_fts MATCH ?")
+                params.append(" OR ".join(fts_clauses))
+        else:
+            # Sanitize FTS5 special control characters and hyphens
+            clean_kw = re.sub(r"[^\w\s]", " ", kw).strip()
+            tokens = [
+                t.strip()
+                for t in clean_kw.split()
+                if t.strip() and t.upper() not in {"AND", "OR", "NOT", "NEAR"}
+            ]
+            if tokens:
+                fts_terms = [f'"{token}"*' for token in tokens]
+                query += " JOIN csv_questions_fts f ON q.rowid = f.rowid"
+                conditions.append("f.csv_questions_fts MATCH ?")
+                params.append(" AND ".join(fts_terms))
 
     subjects = req.get_subjects_list()
     if subjects:
