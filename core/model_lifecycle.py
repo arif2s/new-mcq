@@ -73,6 +73,22 @@ class LazyModelHolder:
             return False
 
 
+class ContextLengthExceededError(ValueError):
+    """Raised when prompt/input tokens exceed the loaded model context window."""
+
+    def __init__(
+        self,
+        message: str,
+        required_tokens: int = 0,
+        model_limit: int = 0,
+        excess_tokens: int = 0,
+    ) -> None:
+        super().__init__(message)
+        self.required_tokens = required_tokens
+        self.model_limit = model_limit
+        self.excess_tokens = excess_tokens
+
+
 class ModelLifecycleManager:
     """Queries LM Studio native REST API (/api/v0/models) for loaded_context_length
     and dynamically scales input/output word and token budgets for 4k–60k+ models."""
@@ -84,6 +100,52 @@ class ModelLifecycleManager:
         self._cached_max_tokens: int = 32768
         self._active_model_id: str = str(DEFAULT_MODEL or "local-model")
         self._last_probe_ts: float = 0.0
+        self._user_max_words_override: Optional[int] = None
+        self._user_max_input_tokens: Optional[int] = None
+        self._user_max_output_tokens: Optional[int] = None
+        self._strict_overflow_check: bool = False
+
+    @property
+    def active_model_id(self) -> str:
+        """Public getter for currently active model ID."""
+        return self._active_model_id
+
+    @property
+    def cached_context_tokens(self) -> int:
+        """Public getter for live or cached context window tokens."""
+        return self._cached_context_tokens
+
+    @property
+    def user_max_words_override(self) -> Optional[int]:
+        return self._user_max_words_override
+
+    @user_max_words_override.setter
+    def user_max_words_override(self, val: Optional[int]) -> None:
+        self._user_max_words_override = val
+
+    @property
+    def user_max_input_tokens(self) -> Optional[int]:
+        return self._user_max_input_tokens
+
+    @user_max_input_tokens.setter
+    def user_max_input_tokens(self, val: Optional[int]) -> None:
+        self._user_max_input_tokens = val
+
+    @property
+    def user_max_output_tokens(self) -> Optional[int]:
+        return self._user_max_output_tokens
+
+    @user_max_output_tokens.setter
+    def user_max_output_tokens(self, val: Optional[int]) -> None:
+        self._user_max_output_tokens = val
+
+    @property
+    def strict_overflow_check(self) -> bool:
+        return self._strict_overflow_check
+
+    @strict_overflow_check.setter
+    def strict_overflow_check(self, val: bool) -> None:
+        self._strict_overflow_check = bool(val)
 
     def calculate_budgets_from_tokens(
         self,
@@ -91,6 +153,9 @@ class ModelLifecycleManager:
         max_ctx: int = 32768,
         model_id: Optional[str] = None,
         user_max_words_override: Optional[int] = None,
+        user_max_input_tokens: Optional[int] = None,
+        user_max_output_tokens: Optional[int] = None,
+        strict_overflow_check: Optional[bool] = None,
     ) -> dict[str, Any]:
         loaded_ctx = max(2048, int(loaded_ctx or self._cached_context_tokens or MAX_CONTEXT_TOKENS or 4096))
         max_ctx = max(loaded_ctx, int(max_ctx or 32768))
@@ -98,14 +163,25 @@ class ModelLifecycleManager:
         # Scale factor relative to legacy 4096-token baseline
         scale_factor = max(1.0, loaded_ctx / 4096.0)
 
-        # Reserve 22% for output completion and system prompt framing
-        usable_input_tokens = max(1024, int((loaded_ctx - 600) * 0.78))
-        max_output_tokens = max(800, min(12000, int(loaded_ctx * 0.22)))
+        # Output completion tokens: user override or dynamically proportional (22% of context, capped between 800 and 12,000)
+        eff_user_out = user_max_output_tokens or self._user_max_output_tokens
+        if eff_user_out is not None and int(eff_user_out) > 0:
+            max_output_tokens = max(16, min(int(eff_user_out), loaded_ctx - 100))
+        else:
+            max_output_tokens = max(800, min(12000, int(loaded_ctx * 0.22)))
+
+        # Reserve output completion and chat/system overhead (minimum 600 tokens or safe_max_out + 64)
+        overhead = max(600, max_output_tokens + 64)
+        eff_user_in = user_max_input_tokens or self._user_max_input_tokens
+        if eff_user_in is not None and int(eff_user_in) > 0:
+            usable_input_tokens = max(16, min(int(eff_user_in), max(16, loaded_ctx - overhead)))
+        else:
+            usable_input_tokens = max(1024, int((loaded_ctx - 600) * 0.78))
 
         # Convert token capacity to words (1 clinical word ~= 1.35 tokens)
         auto_summary_word_limit = max(650, int(usable_input_tokens / 1.35))
 
-        override_val = int(user_max_words_override or 0)
+        override_val = int(user_max_words_override or self._user_max_words_override or 0)
         if override_val > 100:
             effective_summary_words = min(override_val, auto_summary_word_limit)
         else:
@@ -114,13 +190,21 @@ class ModelLifecycleManager:
         # Scale per-stage word caps proportionally for 30k-60k context windows
         primary_source_input_words = max(650, min(25000, int(effective_summary_words * 0.70)))
         secondary_source_input_words = max(450, min(18000, int(effective_summary_words * 0.50)))
-        microedit_word_limit = max(280, min(6000, int(effective_summary_words // 3)))
+
+        # Microedit word limit: stays compact (150-280) on standard context (<=8192) or scales dynamically
+        # with loaded context up to 6000 words on high-context (16k-64k+) models.
         if override_val > 0:
-            microedit_word_limit = min(microedit_word_limit, max(150, override_val))
+            microedit_word_limit = max(150, min(override_val, override_val // 6))
+        elif loaded_ctx <= 8192:
+            microedit_word_limit = 280
+        else:
+            microedit_word_limit = max(280, min(6000, int(280 * scale_factor)))
 
         primary_max_words = max(500, min(8000, int(500 * scale_factor)))
         combined_max_words = max(1000, min(15000, int(1000 * scale_factor)))
         subtopic_block_char_limit = max(600, min(18000, int(600 * scale_factor)))
+
+        strict_check = self._strict_overflow_check if strict_overflow_check is None else bool(strict_overflow_check)
 
         return {
             "model_id": model_id or self._active_model_id,
@@ -137,11 +221,17 @@ class ModelLifecycleManager:
             "combined_max_words": combined_max_words,
             "subtopic_block_char_limit": subtopic_block_char_limit,
             "user_max_words_override": override_val if override_val > 0 else None,
+            "user_max_input_tokens": eff_user_in if eff_user_in is not None and int(eff_user_in) > 0 else None,
+            "user_max_output_tokens": eff_user_out if eff_user_out is not None and int(eff_user_out) > 0 else None,
+            "strict_overflow_check": strict_check,
         }
 
     async def get_active_model_context_info(
         self,
         user_max_words_override: Optional[int] = None,
+        user_max_input_tokens: Optional[int] = None,
+        user_max_output_tokens: Optional[int] = None,
+        strict_overflow_check: Optional[bool] = None,
         client: Optional[httpx.AsyncClient] = None,
     ) -> dict[str, Any]:
         loaded_ctx = self._cached_context_tokens
@@ -190,6 +280,9 @@ class ModelLifecycleManager:
             max_ctx=max_ctx,
             model_id=model_id,
             user_max_words_override=user_max_words_override,
+            user_max_input_tokens=user_max_input_tokens,
+            user_max_output_tokens=user_max_output_tokens,
+            strict_overflow_check=strict_overflow_check,
         )
 
 

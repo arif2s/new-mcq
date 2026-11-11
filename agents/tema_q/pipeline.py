@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import threading
+import time
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 # Enforce Invariant 1: Zero VRAM for backend processes
@@ -39,6 +40,7 @@ from agents.tema_q.prompts import (
     TOPIC_EXTRACTION_SYSTEM_PROMPT,
     VLM_PAGE_SYNTHESIS_SYSTEM_PROMPT,
 )
+from core.model_lifecycle import ContextLengthExceededError, model_lifecycle
 from parsers.pdf_topic_indexer import lookup_pdf_topic_pages, render_topic_pages_to_base64
 from agents.tema_q.subtopic_router import route_and_prune_subtopics
 from config import DEFAULT_MODEL, LM_STUDIO_TIMEOUT, LM_STUDIO_URL, MAX_CONTEXT_TOKENS
@@ -155,6 +157,13 @@ def parse_llm_json(response_str: str) -> Union[dict, list]:
     }
 
 
+# Pre-computed token lengths for static system prompts to avoid repeated tokenization
+_STATIC_PROMPT_TOKENS: Dict[str, int] = {}
+_TRUNCATION_SUFFIX = "\n[...TRUNCATED...]"
+_TRUNCATION_SUFFIX_TOKENS: List[int] = _tokenizer.encode(_TRUNCATION_SUFFIX) if _tokenizer else []
+_TRUNCATION_SUFFIX_TOKENS_LEN = len(_TRUNCATION_SUFFIX_TOKENS) if _TRUNCATION_SUFFIX_TOKENS else 7
+
+
 def count_tokens(text: str) -> int:
     """Calculates token length using tiktoken or safe 4-char character approximation."""
     if not text:
@@ -167,25 +176,67 @@ def count_tokens(text: str) -> int:
     return max(1, len(str(text)) // 4)
 
 
-def truncate_to_token_limit(text: str, max_tokens: int) -> str:
-    """Bounds text to max_tokens to prevent LM Studio context overflow (Invariant 4)."""
+# Cache static system prompt tokens at module level
+_STATIC_PROMPT_TOKENS[PASS1_CLINICAL_SYSTEM_PROMPT] = count_tokens(PASS1_CLINICAL_SYSTEM_PROMPT)
+_STATIC_PROMPT_TOKENS[PASS2_AUDIT_SYSTEM_PROMPT] = count_tokens(PASS2_AUDIT_SYSTEM_PROMPT)
+_STATIC_PROMPT_TOKENS[DISTRACTOR_ANALYSIS_PROMPT] = count_tokens(DISTRACTOR_ANALYSIS_PROMPT)
+_STATIC_PROMPT_TOKENS[EXPLANATION_GENERATION_PROMPT] = count_tokens(EXPLANATION_GENERATION_PROMPT)
+_STATIC_PROMPT_TOKENS[TOPIC_EXTRACTION_SYSTEM_PROMPT] = count_tokens(TOPIC_EXTRACTION_SYSTEM_PROMPT)
+_STATIC_PROMPT_TOKENS[VLM_PAGE_SYNTHESIS_SYSTEM_PROMPT] = count_tokens(VLM_PAGE_SYNTHESIS_SYSTEM_PROMPT)
+
+
+def truncate_with_count(
+    text: str,
+    max_tokens: int,
+    pre_encoded_tokens: Optional[List[int]] = None,
+) -> Tuple[str, int]:
+    """
+    Single-pass tokenizer: encodes text once (or uses pre_encoded_tokens), checks token length,
+    reserves suffix token space, truncates strictly within max_tokens, and returns both string
+    and exact token count. Guarantees returned tokens never exceed max_tokens.
+    """
     if not text:
-        return ""
-    max_tokens = max(16, int(max_tokens or 512))
+        return "", 0
+    max_tokens = max(0, int(max_tokens if max_tokens is not None else 512))
+    if max_tokens == 0:
+        return "", 0
+
     text_str = str(text)
     if _tokenizer:
         try:
-            tokens = _tokenizer.encode(text_str)
-            if len(tokens) > max_tokens:
-                return _tokenizer.decode(tokens[:max_tokens]) + "\n[...TRUNCATED...]"
-            return text_str
+            tokens = pre_encoded_tokens if pre_encoded_tokens is not None else _tokenizer.encode(text_str)
+            total_tokens = len(tokens)
+            if total_tokens <= max_tokens:
+                return text_str, total_tokens
+
+            suffix_tokens = _TRUNCATION_SUFFIX_TOKENS or _tokenizer.encode(_TRUNCATION_SUFFIX)
+            suffix_len = len(suffix_tokens)
+            if max_tokens <= suffix_len:
+                # Suffix itself would exceed or match max_tokens: slice raw tokens directly
+                truncated = _tokenizer.decode(tokens[:max_tokens])
+                return truncated, len(tokens[:max_tokens])
+
+            keep_len = max_tokens - suffix_len
+            truncated = _tokenizer.decode(tokens[:keep_len]) + _TRUNCATION_SUFFIX
+            exact_count = keep_len + suffix_len
+            return truncated, exact_count
         except Exception:
             pass
 
+    # Fallback 4-char approximation
     char_limit = max_tokens * 4
-    if len(text_str) > char_limit:
-        return text_str[:char_limit] + "\n[...TRUNCATED...]"
-    return text_str
+    if len(text_str) <= char_limit:
+        return text_str, max(1, len(text_str) // 4)
+
+    suffix_chars = len(_TRUNCATION_SUFFIX)
+    keep_chars = max(0, char_limit - suffix_chars)
+    truncated = text_str[:keep_chars] + _TRUNCATION_SUFFIX
+    return truncated, max_tokens
+
+
+def truncate_to_token_limit(text: str, max_tokens: int) -> str:
+    """Bounds text to max_tokens to prevent LM Studio context overflow (thin wrapper around truncate_with_count)."""
+    return truncate_with_count(text, max_tokens)[0]
 
 
 async def call_llm_async(
@@ -195,28 +246,82 @@ async def call_llm_async(
     model_id: Optional[str] = None,
     telemetry_meta: Optional[Dict[str, Any]] = None,
     context_length_tokens: Optional[int] = None,
+    strict_overflow_check: Optional[bool] = None,
 ) -> str:
-    """Async chat completion against local LM Studio server with dynamic context token ceiling."""
-    import time
-    from core.model_lifecycle import model_lifecycle
-
+    """
+    Async chat completion against local LM Studio server with dynamic context token ceiling.
+    Strictly satisfies Invariant 4: sys_tokens + user_tokens + safe_max_out + 64 <= effective_ctx
+    under all possible model context configurations.
+    """
     t0 = time.perf_counter()
-    active_model = str(model_id or model_lifecycle._active_model_id or DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    active_model = str(model_id or model_lifecycle.active_model_id or DEFAULT_MODEL).strip() or DEFAULT_MODEL
 
     # Dynamic context ceiling: prefer passed context_length_tokens, then live cached LM Studio context
     effective_ctx = max(
-        2048,
-        int(context_length_tokens or model_lifecycle._cached_context_tokens or MAX_CONTEXT_TOKENS),
+        512,
+        int(context_length_tokens or model_lifecycle.cached_context_tokens or MAX_CONTEXT_TOKENS),
     )
-    dynamic_out_cap = max(1500, min(12000, int(effective_ctx * 0.25)))
-    safe_max_out = max(16, min(int(max_tokens or 800), dynamic_out_cap))
 
     sys_str = str(system_prompt or "").strip()
-    sys_tokens = count_tokens(sys_str)
+    if sys_str in _STATIC_PROMPT_TOKENS:
+        sys_tokens = _STATIC_PROMPT_TOKENS[sys_str]
+    else:
+        sys_tokens = count_tokens(sys_str)
+        if len(_STATIC_PROMPT_TOKENS) < 20 and len(sys_str) < 5000:
+            _STATIC_PROMPT_TOKENS[sys_str] = sys_tokens
 
-    available_user_tokens = max(256, effective_ctx - sys_tokens - safe_max_out - 64)
-    bounded_user_prompt = truncate_to_token_limit(str(user_prompt or ""), available_user_tokens)
-    user_tokens = count_tokens(bounded_user_prompt)
+    chat_overhead = 64
+    # Ensure sys_tokens + chat_overhead leaves room for output + user
+    remaining_budget = max(0, effective_ctx - sys_tokens - chat_overhead)
+
+    # Dynamic out cap proportionally scales to 25% of context, bounded by remaining budget
+    # Do not impose unsafe large floors (like 1500) that would force context breach
+    prop_out_cap = max(16, int(effective_ctx * 0.25))
+    requested_out = int(max_tokens if max_tokens is not None else 800)
+    safe_max_out = max(16, min(requested_out, prop_out_cap, max(16, remaining_budget - 16)))
+
+    available_user_tokens = max(0, effective_ctx - sys_tokens - safe_max_out - chat_overhead)
+
+    # Single-pass tokenization of user prompt
+    raw_user_str = str(user_prompt or "")
+    user_raw_tokens: Optional[List[int]] = None
+    if _tokenizer:
+        try:
+            user_raw_tokens = _tokenizer.encode(raw_user_str)
+            raw_user_tokens = len(user_raw_tokens)
+        except Exception:
+            user_raw_tokens = None
+            raw_user_tokens = max(1, len(raw_user_str) // 4)
+    else:
+        raw_user_tokens = max(1, len(raw_user_str) // 4)
+
+    strict_check = (
+        model_lifecycle.strict_overflow_check
+        if strict_overflow_check is None
+        else bool(strict_overflow_check)
+    )
+
+    if strict_check and raw_user_tokens > available_user_tokens:
+        excess = raw_user_tokens - available_user_tokens
+        total_req = sys_tokens + raw_user_tokens + safe_max_out + chat_overhead
+        raise ContextLengthExceededError(
+            f"User prompt ({raw_user_tokens} tokens) exceeds available context window ({available_user_tokens} tokens) "
+            f"for model limit {effective_ctx} tokens (system: {sys_tokens}, output: {safe_max_out}, overhead: {chat_overhead}, "
+            f"excess: {excess} tokens). Adjust prompt length or increase context window in LM Studio.",
+            required_tokens=total_req,
+            model_limit=effective_ctx,
+            excess_tokens=excess,
+        )
+
+    bounded_user_prompt, user_tokens = truncate_with_count(
+        raw_user_str, available_user_tokens, pre_encoded_tokens=user_raw_tokens
+    )
+
+    # Guarantee invariant: sys_tokens + user_tokens + safe_max_out + 64 <= effective_ctx
+    if sys_tokens + user_tokens + safe_max_out + chat_overhead > effective_ctx:
+        # Final safety adjustment
+        allowed_user = max(0, effective_ctx - sys_tokens - safe_max_out - chat_overhead)
+        bounded_user_prompt, user_tokens = truncate_with_count(raw_user_str, allowed_user)
 
     url = f"{LM_STUDIO_URL}/chat/completions"
     payload = {
@@ -1435,8 +1540,11 @@ async def run_tema_q_synthesis(
                     sec_json_str = ""
 
                     if lm_available:
+                        loaded_ctx = int(ctx_info["loaded_context_length_tokens"])
+                        # Dynamic Pass 2 baseline points budget scaled to loaded context window
+                        pass2_base_pts_budget = max(800, min(8000, int(loaded_ctx * 0.25)))
                         bounded_base_pts = truncate_to_token_limit(
-                            json.dumps(subtopic_node.get("clinical_points", [])), 1200
+                            json.dumps(subtopic_node.get("clinical_points", [])), pass2_base_pts_budget
                         )
                         prompt_header = (
                             f"Clinical Topic: {topic}\n"
@@ -1447,17 +1555,30 @@ async def run_tema_q_synthesis(
                             f"Secondary Reference:\n"
                         )
                         used_tokens = count_tokens(pass2_sys_prompt) + count_tokens(prompt_header) + 500
-                        available_tokens = max(100, ctx_info["loaded_context_length_tokens"] - used_tokens)
+                        available_tokens = max(100, loaded_ctx - used_tokens)
                         novel_sec_text = truncate_to_token_limit(novel_sec_text, available_tokens)
                         sec_msg = f"{prompt_header}{novel_sec_text}"
-                        try:
-                            sec_json_str = await call_llm_async(
+
+                        # Run concurrent variance detection alongside Pass 2 LLM request
+                        from agents.tema_q.auditor import detect_clinical_variances
+                        base_pts_text = " ".join(
+                            str(p.get("point") or "") for p in subtopic_node.get("clinical_points", []) if isinstance(p, dict)
+                        )
+
+                        async def _do_pass2_call() -> str:
+                            return await call_llm_async(
                                 pass2_sys_prompt,
                                 sec_msg,
                                 max_tokens=500,
                                 model_id=active_model,
                                 telemetry_meta=sec_call_meta,
-                                context_length_tokens=ctx_info["loaded_context_length_tokens"],
+                                context_length_tokens=loaded_ctx,
+                            )
+
+                        try:
+                            sec_json_str, detected_pass2_vars = await asyncio.gather(
+                                _do_pass2_call(),
+                                asyncio.to_thread(detect_clinical_variances, base_pts_text, novel_sec_text),
                             )
                             sec_parsed = parse_llm_json(sec_json_str)
                             if isinstance(sec_parsed, list):
@@ -1466,11 +1587,13 @@ async def run_tema_q_synthesis(
                                     "subtopic": sub_title,
                                     "conditional_context": "",
                                     "clinical_points": sec_parsed,
-                                    "discrepancies": "",
+                                    "discrepancies": detected_pass2_vars or "",
                                 }
                             elif isinstance(sec_parsed, dict):
                                 sec_json = sec_parsed
                                 sec_json["subtopic"] = sub_title
+                                if detected_pass2_vars and not sec_json.get("discrepancies"):
+                                    sec_json["discrepancies"] = detected_pass2_vars
                         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.HTTPError):
                             lm_available = False
                         except Exception as exc:
@@ -1600,13 +1723,13 @@ async def run_tema_q_synthesis(
             links_md.append(f"- [{r_title} ({r_type}, p.{ref_s.get('page', 1)})]({r_link}) — [Open Dossier]({r_rep})")
         enhanced_markdown = f"{enhanced_markdown}\n" + "\n".join(links_md)
 
-    # Detect variances if discrepancies empty
+    # Detect variances if discrepancies empty (run off-thread to prevent blocking event loop)
     from agents.tema_q.auditor import detect_clinical_variances
     raw_discrepancies = final_article.get("discrepancies", "")
     if not raw_discrepancies and len(documents) > 1:
         base_t = str(documents[0].get("raw_text") or "")
         sec_t = str(documents[1].get("raw_text") or "")
-        detected_vars = detect_clinical_variances(base_t, sec_t)
+        detected_vars = await asyncio.to_thread(detect_clinical_variances, base_t, sec_t)
         if detected_vars:
             final_article["discrepancies"] = detected_vars
 
@@ -1617,7 +1740,8 @@ async def run_tema_q_synthesis(
     ).strip()
 
     # Pass 3: Optional MCQ Distractor Audit
-    distractor_output = "Distractors audited against clinical reference criteria."
+    # When mcq_context is not provided or has no options, default to "N/A" to avoid fake audit box
+    distractor_output = "N/A"
     if mcq_context and mcq_context.get("options") and lm_available:
         opts = mcq_context["options"] if isinstance(mcq_context["options"], dict) else {}
         correct_ans = (
@@ -1626,7 +1750,9 @@ async def run_tema_q_synthesis(
             or mcq_context.get("answer")
             or ""
         )
-        bounded_synthesis_md = truncate_to_token_limit(enhanced_markdown, 1800)
+        loaded_ctx = int(ctx_info.get("loaded_context_length_tokens") or MAX_CONTEXT_TOKENS)
+        pass3_md_budget = max(1000, min(8000, int(loaded_ctx * 0.35)))
+        bounded_synthesis_md = truncate_to_token_limit(enhanced_markdown, pass3_md_budget)
         distractor_user_msg = (
             f"Topic: {topic}\n"
             f"Question: {mcq_context.get('question', '')}\n"
@@ -1640,7 +1766,11 @@ async def run_tema_q_synthesis(
         )
         try:
             distractor_output = await call_llm_async(
-                DISTRACTOR_ANALYSIS_PROMPT, distractor_user_msg, max_tokens=300
+                DISTRACTOR_ANALYSIS_PROMPT,
+                distractor_user_msg,
+                max_tokens=300,
+                model_id=active_model,
+                context_length_tokens=loaded_ctx,
             )
         except Exception:
             distractor_output = "Distractor analysis skipped (LM Studio unresponsive)."

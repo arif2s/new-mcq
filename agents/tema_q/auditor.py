@@ -549,11 +549,47 @@ def deduplicate_clinical_nodes(
     return retained_nodes
 
 
+def normalize_mcq_options(raw_options: Any) -> Tuple[List[str], Dict[str, str]]:
+    """
+    Normalizes MCQ options across list and dict representations.
+    Strips whitespace-only entries, assigns canonical 'A', 'B', 'C', 'D' keys,
+    and returns both an ordered list of non-empty options and a key-mapped dict.
+    """
+    if isinstance(raw_options, list):
+        cleaned_list: List[str] = [str(o).strip() for o in raw_options if str(o).strip()]
+        opt_dict: Dict[str, str] = {
+            chr(65 + i): opt for i, opt in enumerate(cleaned_list)
+        }
+        return cleaned_list, opt_dict
+
+    if isinstance(raw_options, dict):
+        # Sort single-letter keys (A, B, C, D) in alphabetical order
+        sorted_keys = sorted(
+            raw_options.keys(),
+            key=lambda k: (0, str(k).upper()) if len(str(k)) == 1 and str(k).isalpha() else (1, str(k)),
+        )
+        cleaned_dict: Dict[str, str] = {}
+        cleaned_list: List[str] = []
+        for k in sorted_keys:
+            val = str(raw_options[k]).strip()
+            if val:
+                key_upper = str(k).strip().upper()
+                cleaned_dict[key_upper] = val
+                cleaned_list.append(val)
+        return cleaned_list, cleaned_dict
+
+    return [], {}
+
+
 __all__ = [
     "detect_clinical_variances",
     "merge_json_nodes",
     "filter_novel_secondary_sentences",
     "deduplicate_clinical_nodes",
+    "normalize_mcq_options",
+    "deterministic_mcq_sanity_check",
+    "evaluate_audit_verdict",
+    "run_audited_generation_with_retry",
 ]
 
 
@@ -583,19 +619,50 @@ def evaluate_audit_verdict(raw_llm_output: str, min_score_threshold: float = 0.7
 
 
 def deterministic_mcq_sanity_check(mcq: dict[str, _Any]) -> tuple[bool, str]:
-    """Fast zero-LLM pre-check ensuring stem, options, and single correct answer are well-formed."""
+    """
+    Fast zero-LLM pre-check ensuring stem, options, and single correct answer are well-formed.
+    Supports both list and dict options, strips empty/whitespace strings, and validates
+    that designated correct answer matches either a valid option key or option text.
+    """
+    if not isinstance(mcq, dict):
+        return False, "MCQ payload must be a dictionary."
+
     question = str(mcq.get("question") or mcq.get("stem") or "").strip()
-    options = mcq.get("options") or []
-    answer = str(mcq.get("correct_answer") or mcq.get("answer") or "").strip()
+    raw_options = mcq.get("options")
+    answer = str(
+        mcq.get("correct_answer")
+        or mcq.get("answer")
+        or mcq.get("correct_opt")
+        or ""
+    ).strip()
+
     if len(question) < 10:
         return False, "Question stem is too short (<10 chars)."
-    if not isinstance(options, list) or len(options) < 2:
-        return False, "MCQ must provide at least 2 options."
-    norm_opts = [str(o).strip() for o in options if str(o).strip()]
+
+    norm_opts, opt_dict = normalize_mcq_options(raw_options)
+    if len(norm_opts) < 2:
+        return False, "MCQ must provide at least 2 non-empty options."
+
     if len(set(o.lower() for o in norm_opts)) != len(norm_opts):
         return False, "MCQ contains duplicate distractor options."
+
     if not answer:
         return False, "MCQ is missing a designated correct_answer."
+
+    # Validate that answer matches either a valid option key ('A', 'B', ...) or exact option text
+    ans_upper = answer.upper()
+    valid_keys = set(opt_dict.keys())
+    valid_texts_lower = {o.lower() for o in norm_opts}
+
+    matches_key = ans_upper in valid_keys
+    matches_text = answer.lower() in valid_texts_lower
+
+    if not (matches_key or matches_text):
+        return (
+            False,
+            f"Designated correct answer '{answer}' does not match any valid option key ({', '.join(sorted(valid_keys))}) or option text.",
+        )
+
     return True, "OK"
 
 
@@ -610,6 +677,7 @@ def run_audited_generation_with_retry(
     """
     Executes iterative generation with deterministic sanity checks and rubric audits.
     Guarantees explicit audit verification flags and structured error boundaries.
+    Retries when generate_fn raises transient exceptions until max_retries is exhausted.
     """
     critique: Optional[str] = None
     last_candidate: Dict[str, Any] = {}
@@ -618,9 +686,12 @@ def run_audited_generation_with_retry(
         try:
             candidate = generate_fn(critique)
         except Exception as exc:
+            critique = f"Generation exception raised: {str(exc)}"
+            if attempt < max_retries:
+                continue
             return {
                 "audit_passed": False,
-                "audit_critique": f"Generation exception raised: {str(exc)}",
+                "audit_critique": critique,
                 "error": True,
             }
 
@@ -643,11 +714,14 @@ def run_audited_generation_with_retry(
                 return candidate
             critique = verdict.critique
         except Exception as exc:
+            critique = f"Auditor exception raised: {str(exc)}"
             candidate["audit_passed"] = False
-            candidate["audit_critique"] = f"Auditor exception raised: {str(exc)}"
+            candidate["audit_critique"] = critique
+            if attempt < max_retries:
+                continue
             return candidate
 
     last_candidate["audit_passed"] = False
-    if "audit_critique" not in last_candidate:
+    if "audit_critique" not in last_candidate or not last_candidate["audit_critique"]:
         last_candidate["audit_critique"] = "Maximum retries exceeded without satisfying audit criteria."
     return last_candidate
