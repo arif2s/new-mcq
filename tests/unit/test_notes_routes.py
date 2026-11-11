@@ -116,12 +116,17 @@ async def test_note_mode_and_markdown_extraction_sync():
         content_markdown="# Nephrology\nTreat [[Nephrotic syndrome]] promptly."
     ))
     assert create_res["status"] == "success"
+    assert create_res.get("mining_status") == "populating"
     note = create_res["note"]
     assert note["note_mode"] == "notes"
     assert note["card_color"] == "rgba(100, 150, 200, 0.28)"
     assert note["content_markdown"] == "# Nephrology\nTreat [[Nephrotic syndrome]] promptly."
-    # Extracted topics should include Nephrotic syndrome
-    items = create_res["items"]
+
+    # Give the background task a moment to finish mining
+    await asyncio.sleep(0.4)
+    refreshed = await get_single_lecture_note(note["note_id"])
+    assert refreshed["mining_status"] == "ready"
+    items = refreshed["items"]
     assert any(it["topic_text"] == "Nephrotic syndrome" for it in items)
 
 
@@ -137,7 +142,10 @@ async def test_ignore_list_and_suppressed_topics_deduplication():
         note_id = note_res["note"]["note_id"]
 
         synced = await extract_and_sync_note_topics(note_id, {"content_markdown": "Patient with [[Asthma]], [[ignoredterm]], [[Asthma]]."})
-        items = synced["items"]
+        assert synced.get("mining_status") == "populating"
+        await asyncio.sleep(0.4)
+        refreshed = await get_single_lecture_note(note_id)
+        items = refreshed["items"]
         topic_texts = [it["topic_text"].lower() for it in items]
         # 'ignoredterm' should be excluded
         assert "ignoredterm" not in topic_texts
@@ -156,5 +164,7 @@ async def test_ignore_list_and_suppressed_topics_deduplication():
 
         # Re-syncing should not re-add asthma because it is now suppressed for this note
         resynced = await extract_and_sync_note_topics(note_id, {"content_markdown": "Patient with [[Asthma]] again."})
-        resynced_texts = [it["topic_text"].lower() for it in resynced["items"]]
+        await asyncio.sleep(0.4)
+        refreshed2 = await get_single_lecture_note(note_id)
+        resynced_texts = [it["topic_text"].lower() for it in refreshed2["items"]]
         assert "asthma" not in resynced_texts

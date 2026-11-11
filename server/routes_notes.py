@@ -20,7 +20,7 @@ import urllib.parse
 # Enforce Invariant 1: Zero VRAM for backend processes
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response
 from pydantic import BaseModel
 
 try:
@@ -31,9 +31,11 @@ except ImportError:
     _NOTE_CONFIG = None
 
 from config import VAULTS_DIR
-from core.database import get_db_connection
+from core.database import get_db_connection, atomic_transaction
+from core.topic_filter import canonicalize_topic_norm, deduplicate_note_topics
 from parsers.obsidian_reader import read_obsidian_for_browser
 from parsers.zim_reader import get_zim_article_html, get_zim_asset
+from server.ws_manager import ws_manager
 
 logger = logging.getLogger(__name__)
 
@@ -579,6 +581,8 @@ from agents.tema_q.topic_extractor import extract_topics_local, get_ignored_topi
 
 _WIKILINK_TOPIC_RE = re.compile(r"(?<!!)\[\[(?:([^|\]]+)\|)?([^\]]+)\]\]")
 
+_NOTE_MINING_STATE: dict[str, dict] = {}
+
 
 def extract_topics_from_note_markdown(markdown_text: str, suppressed_keys: Optional[set[str]] = None) -> list[str]:
     """Extracts guaranteed topics from [[Wikilinks]] and automated medical entities from prose, adhering to the global ignore list and suppressed keys."""
@@ -710,7 +714,7 @@ def _count_matching_mcqs_sync(conn, topic_text: str) -> int:
     return int(row["cnt"] or 0) if row else 0
 
 
-def _resolve_topic_refs_and_mcqs(topic_text: str, force_refresh: bool = False) -> Dict[str, Any]:
+def _resolve_topic_refs_and_mcqs(topic_text: str, force_refresh: bool = False, conn: Optional[Any] = None) -> Dict[str, Any]:
     """
     Resolves references (Obsidian, PDF, ZIM) and MCQ counts for a topic line.
     Checks cached_syntheses first (<1ms), falling back to search_index + pdf_topic_index.
@@ -720,7 +724,7 @@ def _resolve_topic_refs_and_mcqs(topic_text: str, force_refresh: bool = False) -
     cached_refs: Optional[Dict[str, list]] = None
 
     if not force_refresh and topic_key:
-        with closing(get_db_connection()) as conn:
+        if conn is not None:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT top_references FROM cached_syntheses WHERE topic_key = ?",
@@ -734,6 +738,21 @@ def _resolve_topic_refs_and_mcqs(topic_text: str, force_refresh: bool = False) -
                         cached_refs = parsed
                 except Exception:
                     pass
+        else:
+            with closing(get_db_connection()) as db_conn:
+                cursor = db_conn.cursor()
+                cursor.execute(
+                    "SELECT top_references FROM cached_syntheses WHERE topic_key = ?",
+                    (topic_key,),
+                )
+                row = cursor.fetchone()
+                if row and row["top_references"]:
+                    try:
+                        parsed = json.loads(row["top_references"])
+                        if isinstance(parsed, dict) and any(parsed.get(k) for k in ("obsidian", "pdf", "zim")):
+                            cached_refs = parsed
+                    except Exception:
+                        pass
 
     if cached_refs is None:
         search_res = _safe_search_index(clean_topic, limit_per_source=4)
@@ -771,7 +790,7 @@ def _resolve_topic_refs_and_mcqs(topic_text: str, force_refresh: bool = False) -
     pdf_list = cached_refs.get("pdf") or []
     zim_list = cached_refs.get("zim") or []
 
-    with closing(get_db_connection()) as conn:
+    if conn is not None:
         mcq_cnt = _count_matching_mcqs_sync(conn, clean_topic)
         if topic_key:
             conn.execute(
@@ -797,6 +816,33 @@ def _resolve_topic_refs_and_mcqs(topic_text: str, force_refresh: bool = False) -
                     1 if zim_list else 0,
                 ),
             )
+    else:
+        with closing(get_db_connection()) as db_conn:
+            mcq_cnt = _count_matching_mcqs_sync(db_conn, clean_topic)
+            if topic_key:
+                db_conn.execute(
+                    """
+                    INSERT INTO cached_syntheses (
+                        topic_key, display_title, enhanced_explanation, distractor_analysis,
+                        unified_article, variance_audit, top_references,
+                        has_obsidian_note, has_pdf_match, has_zim_match, updated_at
+                    ) VALUES (?, ?, '', '', '', '', ?, ?, ?, ?, unixepoch('now'))
+                    ON CONFLICT(topic_key) DO UPDATE SET
+                        top_references = excluded.top_references,
+                        has_obsidian_note = excluded.has_obsidian_note,
+                        has_pdf_match = excluded.has_pdf_match,
+                        has_zim_match = excluded.has_zim_match,
+                        updated_at = unixepoch('now')
+                    """,
+                    (
+                        topic_key,
+                        clean_topic,
+                        json.dumps(cached_refs),
+                        1 if obs_list else 0,
+                        1 if pdf_list else 0,
+                        1 if zim_list else 0,
+                    ),
+                )
 
     return {
         "topic_key": topic_key,
@@ -916,6 +962,119 @@ def _get_lecture_notes_sync(page: int = 1, page_size: int = 12, q: Any = "") -> 
     }
 
 
+def _mine_and_populate_note_items_sync(note_id: str) -> None:
+    """Runs in a worker thread via asyncio.to_thread. Extracts, deduplicates, and populates items."""
+    _NOTE_MINING_STATE[note_id] = {"status": "populating", "updated_at": time.time()}
+    try:
+        with closing(get_db_connection()) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT content_markdown, suppressed_topics_json FROM user_lecture_notes WHERE note_id = ?",
+                (note_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                _NOTE_MINING_STATE[note_id] = {"status": "ready", "updated_at": time.time()}
+                return
+
+            content_md = str(row["content_markdown"] or "")
+            try:
+                suppressed_list = json.loads(row["suppressed_topics_json"] or "[]")
+            except Exception:
+                suppressed_list = []
+
+        if not content_md.strip():
+            with closing(get_db_connection()) as conn:
+                conn.execute("DELETE FROM user_lecture_note_items WHERE note_id = ?", (note_id,))
+            _NOTE_MINING_STATE[note_id] = {"status": "ready", "updated_at": time.time()}
+            try:
+                ws_manager.broadcast_sync({"type": "note_topics_ready", "note_id": note_id})
+            except Exception:
+                pass
+            return
+
+        ignored_set = get_ignored_topics_set()
+        suppressed_set = {canonicalize_topic_norm(s) for s in suppressed_list if s}
+
+        wikilink_candidates: list[str] = []
+        for match in _WIKILINK_TOPIC_RE.finditer(content_md):
+            target = (match.group(1) or match.group(2) or "").strip()
+            if "#" in target:
+                target = target.split("#", 1)[0].strip()
+            if target:
+                wikilink_candidates.append(target)
+
+        try:
+            extracted = extract_topics_local(question=content_md)
+            raw_details = extracted.get("topic_details") or extracted.get("all_topics") or []
+        except Exception as exc:
+            logger.warning("Error running extract_topics_local in background: %s", exc)
+            raw_details = []
+
+        combined_candidates = list(wikilink_candidates) + list(raw_details)
+        deduped_topics = deduplicate_note_topics(combined_candidates, ignored_set, suppressed_set)
+
+        with closing(get_db_connection()) as conn:
+            with atomic_transaction(conn) as cursor:
+                cursor.execute(
+                    """
+                    SELECT topic_key, item_id, mcq_count, ref_count, obsidian_count, pdf_count, zim_count, references_json
+                    FROM user_lecture_note_items WHERE note_id = ?
+                    """,
+                    (note_id,),
+                )
+                existing_map = {
+                    canonicalize_topic_norm(r["topic_key"]): dict(r) for r in cursor.fetchall()
+                }
+
+                cursor.execute("DELETE FROM user_lecture_note_items WHERE note_id = ?", (note_id,))
+                for idx, t_item in enumerate(deduped_topics):
+                    t_norm = t_item["topic_norm"]
+                    t_key = t_item["topic_key"]
+                    t_text = t_item["topic_text"]
+                    prev = existing_map.get(t_norm)
+                    if prev:
+                        cursor.execute(
+                            """
+                            INSERT INTO user_lecture_note_items (
+                                item_id, note_id, line_order, topic_text, topic_key,
+                                mcq_count, ref_count, obsidian_count, pdf_count, zim_count,
+                                references_json, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))
+                            """,
+                            (
+                                prev["item_id"], note_id, idx, t_text, t_key,
+                                prev["mcq_count"], prev["ref_count"], prev["obsidian_count"],
+                                prev["pdf_count"], prev["zim_count"], prev["references_json"],
+                            ),
+                        )
+                    else:
+                        resolved = _resolve_topic_refs_and_mcqs(t_text, force_refresh=False, conn=conn)
+                        cursor.execute(
+                            """
+                            INSERT INTO user_lecture_note_items (
+                                item_id, note_id, line_order, topic_text, topic_key,
+                                mcq_count, ref_count, obsidian_count, pdf_count, zim_count,
+                                references_json, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))
+                            """,
+                            (
+                                f"item_{uuid.uuid4().hex[:12]}", note_id, idx, t_text, t_key,
+                                resolved["mcq_count"], resolved["ref_count"], resolved["obsidian_count"],
+                                resolved["pdf_count"], resolved["zim_count"], json.dumps(resolved["references"]),
+                            ),
+                        )
+
+        _NOTE_MINING_STATE[note_id] = {"status": "ready", "updated_at": time.time()}
+        try:
+            ws_manager.broadcast_sync({"type": "note_topics_ready", "note_id": note_id})
+        except Exception as exc:
+            logger.debug("Failed broadcasting note_topics_ready: %s", exc)
+    except Exception as exc:
+        logger.error("Background note mining failed for %s: %s", note_id, exc)
+        _NOTE_MINING_STATE[note_id] = {"status": "error", "error": str(exc), "updated_at": time.time()}
+
+
 def _get_single_lecture_note_sync(note_id: str) -> Optional[Dict[str, Any]]:
     with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
@@ -960,11 +1119,18 @@ def _get_single_lecture_note_sync(note_id: str) -> Optional[Dict[str, Any]]:
                 item_dict["references"] = {"obsidian": [], "pdf": [], "zim": []}
             items.append(item_dict)
 
-        return {
+        mining_info = _NOTE_MINING_STATE.get(note_id, {})
+        mining_status = mining_info.get("status", "ready")
+
+        resp: Dict[str, Any] = {
             "status": "success",
             "note": note_dict,
             "items": items,
+            "mining_status": mining_status,
         }
+        if mining_status == "populating":
+            resp["message"] = "Populating... Please wait"
+        return resp
 
 
 def _extract_and_sync_note_topics_sync(note_id: str, markdown_override: Optional[str] = None) -> Dict[str, Any]:
@@ -1027,7 +1193,7 @@ def _extract_and_sync_note_topics_sync(note_id: str, markdown_override: Optional
     return single or {"status": "success", "note": dict(note_row), "items": []}
 
 
-def _upsert_lecture_note_sync(payload: LectureNoteMetaPayload) -> Dict[str, Any]:
+def _upsert_lecture_note_sync(payload: LectureNoteMetaPayload, background_mining: bool = False) -> Dict[str, Any]:
     note_id = (payload.note_id or "").strip() or f"note_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
     title = (payload.title or "").strip() or "Untitled Note"
     mode = (payload.note_mode or "list").strip().lower()
@@ -1076,12 +1242,16 @@ def _upsert_lecture_note_sync(payload: LectureNoteMetaPayload) -> Dict[str, Any]
                     line_order=idx,
                     topic_text=it.get("topic_text"),
                 ))
-    elif content_md.strip():
-        # Automatically extract & merge topics when saving markdown prose
+    elif content_md.strip() and not background_mining:
+        # Synchronous fallback if background mining is not requested
         _extract_and_sync_note_topics_sync(note_id, markdown_override=content_md)
 
     single = _get_single_lecture_note_sync(note_id)
-    return single or {"status": "success", "note": dict(saved), "items": []}
+    resp = single or {"status": "success", "note": dict(saved), "items": []}
+    if background_mining:
+        resp["mining_status"] = "populating"
+        resp["message"] = "Populating... Please wait"
+    return resp
 
 
 def _delete_lecture_note_sync(note_id: str) -> bool:
@@ -1168,50 +1338,101 @@ def _upsert_lecture_note_item_sync(note_id: str, payload: LectureNoteItemPayload
     }
 
 
-def _delete_lecture_note_item_sync(note_id: str, item_id: str) -> bool:
+def _delete_lecture_note_item_sync(
+    note_id: str,
+    item_id: Optional[str] = None,
+    topic_key: Optional[str] = None,
+    topic_text: Optional[str] = None,
+    global_ignore: bool = False,
+) -> bool:
+    clean_item_id = str(item_id) if item_id and not hasattr(item_id, "default") else None
+    clean_topic_key = str(topic_key) if topic_key and not hasattr(topic_key, "default") else None
+    clean_topic_text = str(topic_text).strip() if topic_text and not hasattr(topic_text, "default") else None
+    clean_global_ignore = bool(global_ignore) if not hasattr(global_ignore, "default") else False
+
     with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            "SELECT topic_text, topic_key FROM user_lecture_note_items WHERE note_id = ? AND item_id = ?",
-            (note_id, item_id),
-        )
-        item_row = cursor.fetchone()
+        conditions = ["note_id = ?"]
+        params: list[Any] = [note_id]
+        sub_conds = []
+        if clean_item_id:
+            sub_conds.append("item_id = ?")
+            params.append(clean_item_id)
+        if clean_topic_key:
+            sub_conds.append("topic_key = ?")
+            params.append(clean_topic_key)
+        if clean_topic_text:
+            sub_conds.append("LOWER(topic_text) = LOWER(?)")
+            params.append(clean_topic_text)
+
+        if not sub_conds:
+            return False
+
+        conditions.append(f"({' OR '.join(sub_conds)})")
+        where_clause = " AND ".join(conditions)
 
         cursor.execute(
-            "DELETE FROM user_lecture_note_items WHERE note_id = ? AND item_id = ?",
-            (note_id, item_id),
+            f"SELECT item_id, topic_text, topic_key FROM user_lecture_note_items WHERE {where_clause}",
+            tuple(params),
+        )
+        matching_rows = [dict(r) for r in cursor.fetchall()]
+
+        cursor.execute(
+            f"DELETE FROM user_lecture_note_items WHERE {where_clause}",
+            tuple(params),
         )
         deleted = cursor.rowcount > 0
-        if deleted:
-            # Register deleted topic key into suppressed_topics_json so it isn't automatically re-extracted
-            if item_row:
-                t_key = item_row["topic_key"]
-                t_text = (item_row["topic_text"] or "").strip().lower()
-                cursor.execute(
-                    "SELECT suppressed_topics_json FROM user_lecture_notes WHERE note_id = ?",
-                    (note_id,),
-                )
-                note_row = cursor.fetchone()
-                existing_suppressed: list = []
-                if note_row and note_row["suppressed_topics_json"]:
-                    try:
-                        existing_suppressed = json.loads(note_row["suppressed_topics_json"])
-                    except Exception:
-                        existing_suppressed = []
-                if t_key and t_key not in existing_suppressed:
-                    existing_suppressed.append(t_key)
-                if t_text and t_text not in existing_suppressed:
-                    existing_suppressed.append(t_text)
 
-                conn.execute(
-                    "UPDATE user_lecture_notes SET suppressed_topics_json = ?, updated_at = unixepoch('now') WHERE note_id = ?",
-                    (json.dumps(existing_suppressed), note_id),
-                )
-            else:
-                conn.execute(
-                    "UPDATE user_lecture_notes SET updated_at = unixepoch('now') WHERE note_id = ?",
-                    (note_id,),
-                )
+        cursor.execute(
+            "SELECT suppressed_topics_json FROM user_lecture_notes WHERE note_id = ?",
+            (note_id,),
+        )
+        note_row = cursor.fetchone()
+        existing_suppressed: list = []
+        if note_row and note_row["suppressed_topics_json"]:
+            try:
+                existing_suppressed = json.loads(note_row["suppressed_topics_json"])
+            except Exception:
+                existing_suppressed = []
+
+        suppressed_changed = False
+        terms_to_globally_ignore: list[str] = []
+
+        for it in matching_rows:
+            t_key = it["topic_key"]
+            t_text = (it["topic_text"] or "").strip()
+            t_norm = canonicalize_topic_norm(t_text)
+            for k in (t_key, t_text.lower(), t_norm):
+                if k and k not in existing_suppressed:
+                    existing_suppressed.append(k)
+                    suppressed_changed = True
+            if t_text:
+                terms_to_globally_ignore.append(t_text)
+
+        if clean_topic_text or clean_topic_key:
+            for cand in (clean_topic_key, clean_topic_text.lower() if clean_topic_text else None, canonicalize_topic_norm(clean_topic_text) if clean_topic_text else None):
+                if cand and cand not in existing_suppressed:
+                    existing_suppressed.append(cand)
+                    suppressed_changed = True
+            if clean_topic_text:
+                terms_to_globally_ignore.append(clean_topic_text)
+
+        if suppressed_changed:
+            conn.execute(
+                "UPDATE user_lecture_notes SET suppressed_topics_json = ?, updated_at = unixepoch('now') WHERE note_id = ?",
+                (json.dumps(existing_suppressed), note_id),
+            )
+        elif deleted:
+            conn.execute(
+                "UPDATE user_lecture_notes SET updated_at = unixepoch('now') WHERE note_id = ?",
+                (note_id,),
+            )
+
+        if clean_global_ignore and terms_to_globally_ignore:
+            from agents.tema_q.topic_extractor import add_ignored_topic
+            for term in terms_to_globally_ignore:
+                add_ignored_topic(term)
+
         return deleted
 
 
@@ -1242,17 +1463,34 @@ async def get_single_lecture_note(note_id: str) -> Dict[str, Any]:
 @router.post("")
 @router.post("/")
 @router.post("/lecture-notes")
-async def upsert_lecture_note(payload: LectureNoteMetaPayload) -> Dict[str, Any]:
-    """Creates or updates a note's metadata and items."""
-    return await asyncio.to_thread(_upsert_lecture_note_sync, payload=payload)
+async def upsert_lecture_note(payload: LectureNoteMetaPayload, background_tasks: BackgroundTasks = None) -> Dict[str, Any]:
+    """Creates or updates a note's metadata and items immediately, offloading mining to background."""
+    should_mine = bool(payload.content_markdown and payload.content_markdown.strip() and not payload.items)
+    result = await asyncio.to_thread(_upsert_lecture_note_sync, payload=payload, background_mining=should_mine)
+    note_id = result.get("note", {}).get("note_id")
+    if should_mine and note_id:
+        _NOTE_MINING_STATE[note_id] = {"status": "populating", "updated_at": time.time()}
+        if background_tasks is not None:
+            background_tasks.add_task(asyncio.to_thread, _mine_and_populate_note_items_sync, note_id)
+        else:
+            asyncio.create_task(asyncio.to_thread(_mine_and_populate_note_items_sync, note_id))
+    return result
 
 
 @router.put("/{note_id}")
 @router.put("/lecture-notes/{note_id}")
-async def update_lecture_note(note_id: str, payload: LectureNoteMetaPayload) -> Dict[str, Any]:
-    """Updates / auto-saves a note's metadata and markdown content."""
+async def update_lecture_note(note_id: str, payload: LectureNoteMetaPayload, background_tasks: BackgroundTasks = None) -> Dict[str, Any]:
+    """Updates / auto-saves a note's metadata and markdown content immediately, offloading mining to background."""
     payload.note_id = note_id
-    return await asyncio.to_thread(_upsert_lecture_note_sync, payload=payload)
+    should_mine = bool(payload.content_markdown and payload.content_markdown.strip() and not payload.items)
+    result = await asyncio.to_thread(_upsert_lecture_note_sync, payload=payload, background_mining=should_mine)
+    if should_mine and note_id:
+        _NOTE_MINING_STATE[note_id] = {"status": "populating", "updated_at": time.time()}
+        if background_tasks is not None:
+            background_tasks.add_task(asyncio.to_thread, _mine_and_populate_note_items_sync, note_id)
+        else:
+            asyncio.create_task(asyncio.to_thread(_mine_and_populate_note_items_sync, note_id))
+    return result
 
 
 @router.delete("/{note_id}")
@@ -1265,10 +1503,23 @@ async def delete_lecture_note(note_id: str) -> Dict[str, Any]:
 
 @router.post("/{note_id}/extract-topics")
 @router.post("/lecture-notes/{note_id}/extract-topics")
-async def extract_and_sync_note_topics(note_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Extracts explicit wikilinks and NLP topics from note markdown and merges with items."""
+async def extract_and_sync_note_topics(note_id: str, payload: Optional[Dict[str, Any]] = None, background_tasks: BackgroundTasks = None) -> Dict[str, Any]:
+    """Extracts explicit wikilinks and NLP topics from note markdown in background, returning immediate populating status."""
     md_override = payload.get("content_markdown") if payload and isinstance(payload, dict) else None
-    return await asyncio.to_thread(_extract_and_sync_note_topics_sync, note_id=note_id, markdown_override=md_override)
+    if md_override is not None:
+        with closing(get_db_connection()) as conn:
+            conn.execute(
+                "UPDATE user_lecture_notes SET content_markdown = ?, updated_at = unixepoch('now') WHERE note_id = ?",
+                (md_override, note_id),
+            )
+    _NOTE_MINING_STATE[note_id] = {"status": "populating", "updated_at": time.time()}
+    if background_tasks is not None:
+        background_tasks.add_task(asyncio.to_thread, _mine_and_populate_note_items_sync, note_id)
+    else:
+        asyncio.create_task(asyncio.to_thread(_mine_and_populate_note_items_sync, note_id))
+
+    note_data = await asyncio.to_thread(_get_single_lecture_note_sync, note_id=note_id)
+    return note_data or {"status": "success", "mining_status": "populating", "message": "Populating... Please wait", "items": []}
 
 
 @router.post("/{note_id}/items")
@@ -1288,7 +1539,40 @@ async def edit_lecture_note_item(note_id: str, item_id: str, payload: LectureNot
 
 @router.delete("/{note_id}/items/{item_id}")
 @router.delete("/lecture-notes/{note_id}/items/{item_id}")
-async def delete_lecture_note_item(note_id: str, item_id: str) -> Dict[str, Any]:
-    """Removes a topic line from a lecture note."""
-    deleted = await asyncio.to_thread(_delete_lecture_note_item_sync, note_id=note_id, item_id=item_id)
+async def delete_lecture_note_item(
+    note_id: str,
+    item_id: str,
+    topic_key: Optional[str] = None,
+    topic_text: Optional[str] = None,
+    global_ignore: bool = False,
+) -> Dict[str, Any]:
+    """Removes a topic line from a lecture note and appends to suppressed_topics_json."""
+    deleted = await asyncio.to_thread(
+        _delete_lecture_note_item_sync,
+        note_id=note_id,
+        item_id=item_id,
+        topic_key=str(topic_key) if topic_key else None,
+        topic_text=str(topic_text) if topic_text else None,
+        global_ignore=bool(global_ignore),
+    )
+    return {"status": "success", "deleted": deleted}
+
+
+@router.delete("/{note_id}/topics")
+@router.delete("/lecture-notes/{note_id}/topics")
+async def delete_lecture_note_topic(
+    note_id: str,
+    topic_key: Optional[str] = None,
+    topic_text: Optional[str] = None,
+    global_ignore: bool = False,
+) -> Dict[str, Any]:
+    """Removes a topic from a lecture note by topic_key or topic_text and suppresses it."""
+    deleted = await asyncio.to_thread(
+        _delete_lecture_note_item_sync,
+        note_id=note_id,
+        item_id=None,
+        topic_key=str(topic_key) if topic_key else None,
+        topic_text=str(topic_text) if topic_text else None,
+        global_ignore=bool(global_ignore),
+    )
     return {"status": "success", "deleted": deleted}
