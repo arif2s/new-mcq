@@ -21,7 +21,7 @@
       4. *Configuration & Toggle*: Controlled via environment variable (`ENABLE_BACKEND_GPU=0|1`) or `config.py` setting, defaulting to `0` (CPU-only) to protect baseline user hardware.
   - *CPU Execution Time*: Multi-stage hybrid search pipeline < 250ms on CPU (enforced via cached singletons for embedder, reranker, and LanceDB).
   - *RAM Allocation*: Tantivy < 250 MB; LanceDB + CPUEmbedding < 500 MB; Primary SQLite MMAP cap = 512 MB; Ontology KB SQLite MMAP cap = 256 MB; SciSpaCy NLP + Linker < 500 MB; Docling CPU Converter + FlashRank + LRU Caches < 1.0 GB; **total Python process < 3.5 GB** (operating within ~5 GB available system RAM).
-  - *LLM Context Limit*: Hard budget capped at 4096 tokens per request via `tiktoken` truncation.
+  - *LLM Context Limit & Dynamic Scaling*: Dynamic input/output token budgeting dynamically calibrated via LM Studio's native REST API (`/api/v0/models`) across 2,048–60,000+ token context windows. Automatically reserves 22% of context for output completions and scales clinical word limits, microedit ceilings, and subtopic block character limits proportionally, falling back to a 4,096-token baseline via `tiktoken` bounding if the LM Studio endpoint is unreachable.
 
 ---
 
@@ -47,7 +47,7 @@
 │       └── telemetry.py               # Full-pipeline diagnostic telemetry, HeadingDispatchTrace, PipelineDiagnosticTrace, and automated anomaly detection.
 ├── core/
 │   ├── database.py                    # SQLite schema initialization, WAL/MMAP PRAGMAs, question_metadata tracking, and atomic transaction helpers.
-│   ├── model_lifecycle.py             # LazyModelHolder for low-RAM lazy loading and idle memory eviction of heavy models.
+│   ├── model_lifecycle.py             # ModelLifecycleManager for dynamic LM Studio context scaling (4k-60k+ tokens) & LazyModelHolder for low-RAM lazy loading/eviction.
 │   ├── queue_manager.py               # Asynchronous priority task queue worker (P1/P2/P3), persistent job recovery, and WebSocket broadcaster.
 │   ├── scheduler.py                   # FSRS v4.5 spaced repetition scheduling algorithm, retrievability decay, and dynamic retention tuning.
 │   ├── topic_filter.py                # Ignore_list.txt stopword & token validation filter (is_valid_topic, filter_topics).
@@ -159,10 +159,13 @@
 - `agents.tema_q.pipeline`:
   - `get_http_client() -> httpx.AsyncClient`
   - `close_http_client() -> None`
+  - `close_thread_local_http_client() -> None`: Closes the thread-local `httpx.AsyncClient` on its bound event loop.
   - `parse_llm_json(response_str: str) -> Union[dict, list]`
   - `count_tokens(text: str) -> int`
   - `truncate_to_token_limit(text: str, max_tokens: int) -> str`
   - `call_llm_async(system_prompt: str, user_prompt: str, max_tokens: int = 500) -> str`
+  - `call_vlm_page_images_async(system_prompt: str, topic: str, subtopic: str, heading_path: str, page_images: list[tuple[int, str]], max_tokens: int = 600) -> str`
+  - `generate_referenced_topic_summaries(topic: str, documents: list[dict[str, Any]], ctx_info: dict[str, Any], active_model: str, lm_available: bool = True, client: Optional[httpx.AsyncClient] = None) -> list[dict[str, Any]]`: Generates structured per-article summaries and hyperlink metadata for top references via LM Studio.
   - `resolve_documents(search_results: dict) -> list[dict[str, Any]]`
   - `resolve_primary_and_secondary_docs(search_results: dict) -> tuple[str, str]`
   - `extract_topics_from_mcq(question: str, options: dict, explanation: str = "", skip_lm: bool = True, extractor_strategy: str = "medspacy") -> dict`
@@ -215,6 +218,10 @@
   - `map_fsrs_state_to_status(state: int, stability: float = 0.0, reps: int = 0) -> str`: Maps FSRS numeric state and stability to UI status labels (`'new'`, `'learning'`, `'review'`, `'mastered'`).
   - `calculate_fsrs_next_interval(rating: int, state: int, difficulty: float, stability: float, reps: int, lapses: int, now: Optional[float] = None, requested_retention: Optional[float] = None, max_interval_days: Optional[int] = None) -> dict[str, Any]`: Computes updated FSRS v4.5 metrics using exact power-law interval scaling ($I = S \cdot \text{scaler}$ adhering to user-configured retention and capped at `max_interval_days`), $D_0(3)$ mean reversion, stability floor protection ($\ge 0.1$), and optional `due_timestamp` calculation; when `rating == 1` ('Again'), forces `interval_days = 0`, `interval_seconds = 0`, and sets `due_timestamp = now` so lapsed cards repeat on the next quiz set; returns `FSRS Stats Dict`.
 - `core.model_lifecycle`:
+  - `class ModelLifecycleManager`: Dynamic LM Studio context window prober and proportional word/token budget allocator.
+    - `calculate_budgets_from_tokens(loaded_ctx: int, max_ctx: int = 32768, model_id: Optional[str] = None, user_max_words_override: Optional[int] = None) -> dict[str, Any]`: Computes scaled input/output tokens (`usable_input_tokens`, `max_output_tokens` up to 12,000), word limits (`primary_source_input_words`, `secondary_source_input_words`, `microedit_word_limit`, `primary_max_words`, `combined_max_words`), and `subtopic_block_char_limit`.
+    - `get_active_model_context_info(user_max_words_override: Optional[int] = None, client: Optional[httpx.AsyncClient] = None) -> dict[str, Any]`: Queries LM Studio native REST endpoint (`/api/v0/models`) with fallback to cached/configured token bounds.
+  - `model_lifecycle`: Singleton instance of `ModelLifecycleManager`.
   - `class LazyModelHolder`: Thread-safe lazy loader and memory releaser (`is_loaded`, `get()`, `release_memory()`, `unload_if_idle(ttl_override)`) supporting zero-VRAM baseline and automatic idle memory eviction.
   - `get_gpu_enabled_subprocess_env() -> dict[str, str]`: Generates a clean child subprocess environment removing empty or "-1" `CUDA_VISIBLE_DEVICES` so external LLMs can access GPU while backend remains bounded on CPU.
 - `core.topic_filter`:
@@ -420,6 +427,7 @@
   - `DELETE /api/notes/lecture-notes/{note_id}`: Cascading deletion of lecture note and associated items.
   - `POST /api/notes/lecture-notes/{note_id}/items`: Creates or updates a lecture note line item, resolving medical topic reference counts and caching reference details.
   - `DELETE /api/notes/lecture-notes/{note_id}/items/{item_id}`: Deletes a specific lecture note line item.
+  - `GET /api/notes/topic/{topic_key}/summary`: Returns LM Studio enhanced explanation, per-article summaries, and clickable referenced topic summary links for any Viewer or My Notes topic.
 - `server.routes_queue`:
   - `GET /api/queue/topic_files_sync_status`: Compares `Ignore_list.txt` and `topic.txt` against SQLite and returns diff counts.
   - `POST /api/queue/topic_files_sync_apply`: Synchronizes flat files and database tables bidirectionally.
@@ -597,6 +605,8 @@ cached_syntheses (
   has_obsidian_note INTEGER DEFAULT 0,
   has_pdf_match INTEGER DEFAULT 0,
   has_zim_match INTEGER DEFAULT 0,
+  per_article_summaries_json TEXT DEFAULT '[]',
+  referenced_topics_json TEXT DEFAULT '[]',
   created_at REAL DEFAULT (unixepoch('now')),
   updated_at REAL DEFAULT (unixepoch('now'))
 );
@@ -779,6 +789,8 @@ obsidian_notes (
   breadcrumb_path TEXT DEFAULT '',
   contextual_search_text TEXT DEFAULT '',
   content_markdown TEXT DEFAULT '',
+  llm_summary TEXT DEFAULT '',
+  referenced_summaries_json TEXT DEFAULT '[]',
   created_at REAL DEFAULT (unixepoch('now')),
   updated_at REAL DEFAULT (unixepoch('now'))
 );
@@ -791,6 +803,10 @@ user_lecture_notes (
   title TEXT NOT NULL DEFAULT 'Untitled Note',
   shade_index INTEGER DEFAULT 0,
   is_pinned INTEGER DEFAULT 0,
+  note_mode TEXT DEFAULT 'list',
+  content_markdown TEXT DEFAULT '',
+  card_color TEXT DEFAULT '',
+  suppressed_topics_json TEXT DEFAULT '[]',
   created_at REAL DEFAULT (unixepoch('now')),
   updated_at REAL DEFAULT (unixepoch('now'))
 );
@@ -809,6 +825,8 @@ user_lecture_note_items (
   pdf_count INTEGER DEFAULT 0,
   zim_count INTEGER DEFAULT 0,
   references_json TEXT DEFAULT '{}',
+  llm_summary TEXT DEFAULT '',
+  referenced_summaries_json TEXT DEFAULT '[]',
   updated_at REAL DEFAULT (unixepoch('now')),
   FOREIGN KEY(note_id) REFERENCES user_lecture_notes(note_id) ON DELETE CASCADE
 );
@@ -920,6 +938,8 @@ CREATE INDEX idx_qm_last_attempt ON question_metadata(last_attempt_ts);
       "unified_article": str,
       "variance_audit": str,
       "top_references": list[ChunkDict],
+      "per_article_summaries": list[dict[str, Any]],  # Structured per-reference LM Studio summaries
+      "reference_links": list[dict[str, Any]],        # Clickable reference summary links & report URLs
   }
   ```
 
@@ -1098,6 +1118,11 @@ CREATE INDEX idx_qm_last_attempt ON question_metadata(last_attempt_ts);
 - `task_queue.status`: `"pending" | "processing" | "completed" | "failed" | "ignored"`
 - `mcq_bank.state` / `csv_questions.state` (FSRS v4.5): `0=New, 1=Learning, 2=Review, 3=Relearning`
 - `cached_syntheses.top_references` (JSON): `list[{ "title": str, "source_type": str, "file_path": str, "page": int, "snippet": str }]`
+- `cached_syntheses.per_article_summaries_json` (JSON): `list[{ "ref_topic_key": str, "ref_display_title": str, "source": str, "source_type": str, "page": int, "summary_markdown": str, "summary_link": str, "report_url": str }]`
+- `cached_syntheses.referenced_topics_json` (JSON): `list[{ "ref_topic_key": str, "ref_display_title": str, "summary_link": str, "report_url": str }]`
+- `user_lecture_notes.suppressed_topics_json` (JSON): `list[str]`
+- `user_lecture_note_items.referenced_summaries_json` (JSON): `list[dict]`
+- `obsidian_notes.referenced_summaries_json` (JSON): `list[dict]`
 - `quiz_sessions.topic_list_json` (JSON): `list[str]`
 - `session_questions.question_topics_json` (JSON): `list[str]`
 - `user_state.value` (JSON/string): Key-value store payloads
@@ -1152,11 +1177,13 @@ CREATE INDEX idx_qm_last_attempt ON question_metadata(last_attempt_ts);
 3. Asynchronous RAG Synthesis & Queue Pipeline:
    server/routes_queue.py / routes_sessions.py -> Enqueue Task into SQLite task_queue (status='pending')
      └── core/queue_manager.py (PriorityQueueWorker loop)
+           ├── core/model_lifecycle.py (get_active_model_context_info -> probes LM Studio /api/v0/models & scales token/word budgets)
            ├── parsers/tantivy_engine.py & lancedb_engine.py (Retrieve topic references)
-           ├── agents/tema_q/pipeline.py (Pass 1 Clinical + Pass 2 Audit + Distractor Analysis via LM Studio)
+           ├── agents/tema_q/pipeline.py (Pass 1 Clinical + Pass 2 Audit + Distractor Analysis via LM Studio with dynamic ceilings)
+           ├── agents/tema_q/pipeline.py (generate_referenced_topic_summaries -> generates structured summaries and links for each reference)
            ├── agents/tema_q/auditor.py (Detect discrepancies, staging variances & merge JSON subtopic nodes)
-           ├── core/reporter.py (Generate Jinja2 HTML report in storage/reports)
-           ├── mutates -> SQLite (cached_syntheses including variance_audit)
+           ├── core/reporter.py (Generate Jinja2 HTML report in storage/reports with clickable reference summary boxes and hyperlinks)
+           ├── mutates -> SQLite (cached_syntheses including per_article_summaries_json, referenced_topics_json, variance_audit)
            └── server/ws_manager.py (Broadcast WS notification to ui/js/queue.js & hub.js)
 
 4. Theme & Palette Dynamic Engine:
@@ -1226,7 +1253,7 @@ CREATE INDEX idx_qm_last_attempt ON question_metadata(last_attempt_ts);
    - Every SQLite connection returned by `get_db_connection()` MUST apply connection-scoped PRAGMAs (`journal_mode = WAL`, `busy_timeout = 20000`, `foreign_keys = ON`, `synchronous = NORMAL`, `mmap_size = 536870912`, `temp_store = MEMORY`, `cache_size = -64000`).
    - Primary SQLite MMAP MUST be capped at 512 MB (`536870912`) and `ontology_kb.db` MMAP at 256 MB (`268435456`) so the entire Python process (including all cached CPU ML singletons) stays strictly below the **3.5 GB total RAM ceiling**.
    - Schema initialization (`initialize_database()`) MUST execute column additions (`_safe_add_column`) and legacy `task_queue` FK removal (`_migrate_task_queue_schema`) BEFORE executing `CREATE INDEX IF NOT EXISTS`, and MUST inspect `csv_questions_fts_docsize` (not `csv_questions_fts`) when checking external-content FTS5 synchronization.
-4. **Token Caps**: Prompts to LM Studio MUST be tiktoken-bounded to 4096 tokens total context length via `truncate_to_token_limit`.
+4. **Token Caps & Dynamic Context Ceilings**: Prompts to LM Studio MUST be tiktoken-bounded dynamically via `ModelLifecycleManager` context budgets (calibrated between 2,048 and 60,000+ tokens based on active LM Studio model metadata), falling back to a safe 4,096-token baseline via `truncate_to_token_limit` when LM Studio REST API is unreachable.
 5. **DOM & Security Safety**: Frontend vanilla JS MUST NEVER raw-interpolate user strings into `innerHTML`; use `escapeHTML()`, `DOMPurify.sanitize()`, or DOM element construction.
 6. **External Readers Interop & Path Safety**: SumatraPDF invocation MUST validate `.pdf` file extensions and use `-reuse-instance` and `-page <num>`. Obsidian URI invocation MUST use `obsidian://open?vault=...&file=...`.
 7. **Offline Asset Self-Containment**: Vendor scripts (Tailwind, Marked, DOMPurify, KaTeX, interact.js) MUST be saved under `ui/vendor/` and automatically checked and downloaded at startup using atomic temp-file replacement (`config.ensure_offline_vendor_assets()`) to avoid 0-byte file corruption and guarantee complete offline execution.
@@ -1275,3 +1302,5 @@ CREATE INDEX idx_qm_last_attempt ON question_metadata(last_attempt_ts);
 50. **Accessible WAI-ARIA Semantics for Quiz Option Cards**: In `ui/js/quiz.js`, multiple-choice question options MUST implement full WAI-ARIA radiogroup semantics (`role="radiogroup"` on option lists, `role="radio"` and `aria-checked` on option cards). Options MUST support comprehensive keyboard navigation via numeric keys '1'-'4', alphabet keys 'A'-'D', Arrow keys, and Enter/Space activation, maintaining complete accessibility compliance.
 51. **Medical HTML Cleaning & Logging Hygiene**: In `agents/tema_q/topic_extractor.py`, medical candidate text extraction MUST clean input prose using `clean_html_prose`, converting HTML/XML inline and block tags into whitespace boundaries to prevent word concatenation across tags. Windows asyncio Proactor loops MUST catch and suppress `ConnectionResetError` [WinError 10054] during socket teardown in `run.py` and `server/app.py`, and PyFastNER syntax warnings MUST be suppressed via `_PyFastNERLogFilter`.
 52. **Candidate vs Ignored Topic Chip Styling & Mutual Exclusivity**: In `ui/js/quiz.js` and `server/routes_queue.py`, topic review modals MUST strictly enforce mutual exclusivity between verified and ignored/excluded topics. Ignored topics MUST display with greyed text in a red-tinted strike-through container (`border-red-500/40 bg-red-500/15 line-through`), visually separated from doubtful candidate topics in plain grey. Topics sort with unreviewed candidates first, confirmed topics next-to-last, and excluded topics last, each featuring an inline '✕' removal button.
+53. **LM Studio Dynamic Context Scaling & Proportional Word Budgeting**: In `core/model_lifecycle.py` and `agents/tema_q/pipeline.py`, the RAG synthesis coordinator MUST query LM Studio native endpoint `/api/v0/models` to discover `loaded_context_length` for active models (supporting 4k–60k+ context windows). Input and output budgets (`usable_input_tokens`, `max_output_tokens` up to 12,000, `primary_source_input_words`, `secondary_source_input_words`, `microedit_word_limit`, `primary_max_words`, `combined_max_words`, and `subtopic_block_char_limit`) MUST dynamically scale relative to baseline, preventing arbitrary clamping to 4,096 tokens or 650 words when large context models are active.
+54. **Referenced Topic Summaries, HTML Hyperlink Dossiers & Anti-Poisoning Persistence**: In `agents/tema_q/pipeline.py`, `core/queue_manager.py`, `core/reporter.py`, and `server/routes_notes.py`, multi-article RAG synthesis MUST produce structured LM Studio summaries and hyperlinks (`summary_link` and `report_url`) for every referenced source document. Summaries are persisted in SQLite `cached_syntheses` (`per_article_summaries_json`, `referenced_topics_json`), `user_lecture_note_items` (`llm_summary`, `referenced_summaries_json`), and `obsidian_notes`, and rendered as clickable reference summary boxes in HTML dossiers (`generate_topic_report`). When LM Studio generation fails or yields empty summaries, `_is_topic_fully_processed` MUST NOT mark referenced summaries as complete to prevent cache poisoning with empty placeholders.
