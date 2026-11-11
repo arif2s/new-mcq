@@ -485,27 +485,100 @@
     }
 
     // =========================================================
-    // 2. Database Queries View
+    // 2. Database Queries & Semantic Hybrid Search View (Issues #14, #15, #16)
     // =========================================================
+    function openIsolatedSectionModal(popupUrl, headingHint) {
+        const modal = document.getElementById('isolated-section-popup-modal');
+        const srcBadge = document.getElementById('section-popup-source-badge');
+        const engineBadge = document.getElementById('section-popup-engine-badge');
+        const titleEl = document.getElementById('section-popup-title');
+        const headingEl = document.getElementById('section-popup-heading');
+        const pageBadge = document.getElementById('section-popup-page-badge');
+        const bodyEl = document.getElementById('section-popup-body');
+        const closeBtn = document.getElementById('close-section-popup-btn');
+
+        if (!modal) return;
+        modal.style.display = 'flex';
+
+        if (bodyEl) {
+            bodyEl.innerHTML = '<div class="text-center py-12 text-brand-300 animate-pulse font-mono">Loading isolated section...</div>';
+        }
+        if (headingEl) {
+            headingEl.textContent = headingHint || 'Resolving Section...';
+        }
+
+        const dismiss = () => {
+            modal.style.display = 'none';
+        };
+
+        if (closeBtn) closeBtn.onclick = dismiss;
+        modal.onclick = (e) => {
+            if (e.target === modal) dismiss();
+        };
+
+        fetch(popupUrl)
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    if (srcBadge) {
+                        const st = (data.source_type || 'doc').toUpperCase();
+                        srcBadge.textContent = st;
+                        srcBadge.className = `px-2.5 py-0.5 rounded text-[11px] font-bold font-mono ${
+                            st === 'PDF' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40' :
+                            st === 'OBSIDIAN' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40' :
+                            'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                        }`;
+                    }
+                    if (engineBadge) {
+                        engineBadge.textContent = data.engine_profile || 'Indra Base OCR + Heading Opt';
+                    }
+                    if (titleEl) {
+                        titleEl.textContent = data.title || 'Document Section';
+                    }
+                    if (headingEl) {
+                        headingEl.textContent = data.heading || headingHint || 'Overview';
+                    }
+                    if (pageBadge) {
+                        pageBadge.textContent = data.source_type === 'pdf' ? `Page ${data.page || 1}` : 'Article View';
+                    }
+                    if (bodyEl) {
+                        const content = data.content_markdown || '*(Empty section content)*';
+                        if (window.renderMarkdownAndMath) {
+                            window.renderMarkdownAndMath(content, bodyEl);
+                        } else if (window.marked && window.DOMPurify) {
+                            bodyEl.innerHTML = window.DOMPurify.sanitize(window.marked.parse(content));
+                        } else {
+                            bodyEl.textContent = content;
+                        }
+                    }
+                } else {
+                    if (bodyEl) bodyEl.innerHTML = `<p class="text-danger-300 font-semibold">Failed to load section: ${escapeHTML(data.message || 'Unknown error')}</p>`;
+                }
+            })
+            .catch(err => {
+                if (bodyEl) bodyEl.innerHTML = `<p class="text-danger-300">Error loading section: ${escapeHTML(err.message)}</p>`;
+            });
+    }
+
     async function renderDbQueriesView(container) {
         container.innerHTML = `
             <div class="card glass-card mb-6">
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                     <div class="md:col-span-2">
-                        <label for="db-query-input" class="text-xs font-bold text-muted mb-1 block">Search Query</label>
-                        <input type="text" id="db-query-input" class="glass-input text-xs w-full py-2" value="amyloidosis" placeholder="Enter term or topic to search..." />
+                        <label for="db-query-input" class="text-xs font-bold text-muted mb-1 block">Clinical Search Query (Intent Decomposition)</label>
+                        <input type="text" id="db-query-input" class="glass-input text-xs w-full py-2" value="treatment of amyloidosis" placeholder="e.g. treatment of amyloidosis, diagnosis of celiac..." />
                     </div>
                     <div>
                         <label class="text-xs font-bold text-muted mb-1 block">Database Target</label>
                         <div class="segmented-group w-full flex flex-wrap" id="db-target-group" role="radiogroup" aria-label="Database Target Selection">
-                            <button type="button" class="segmented-btn btn-sm flex-1 active" data-value="all" role="radio" aria-checked="true">All</button>
+                            <button type="button" class="segmented-btn btn-sm flex-1 active" data-value="all" role="radio" aria-checked="true">All (Semantic)</button>
                             <button type="button" class="segmented-btn btn-sm flex-1" data-value="lancedb" role="radio" aria-checked="false">LanceDB</button>
                             <button type="button" class="segmented-btn btn-sm flex-1" data-value="pdf" role="radio" aria-checked="false">PDF</button>
                             <button type="button" class="segmented-btn btn-sm flex-1" data-value="obsidian" role="radio" aria-checked="false">Obsidian</button>
                             <button type="button" class="segmented-btn btn-sm flex-1" data-value="zim" role="radio" aria-checked="false">ZIM</button>
                         </div>
                         <select id="db-target-select" class="hidden" aria-hidden="true">
-                            <option value="all" selected>Hybrid Search</option>
+                            <option value="all" selected>Semantic Hybrid Search</option>
                             <option value="lancedb">LanceDB Vector &amp; FTS</option>
                             <option value="pdf">PDF Textbooks Only</option>
                             <option value="obsidian">Obsidian Vaults Only</option>
@@ -518,15 +591,54 @@
                         </button>
                     </div>
                 </div>
+
+                <!-- Semantic Intent Pill Banner (Issues #14, #15, #16) -->
+                <div id="semantic-intent-banner" class="hidden mt-3 p-2.5 rounded-xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-between text-xs font-mono">
+                    <div class="flex items-center gap-2 truncate">
+                        <span class="text-brand-300 font-bold">🧠 Semantic Intent Decomposed:</span>
+                        <span id="semantic-intent-pill" class="text-emerald-400 font-bold"></span>
+                    </div>
+                    <span id="semantic-intent-synonyms" class="text-muted text-[11px] truncate max-w-md hidden md:inline"></span>
+                </div>
             </div>
 
+            <!-- Two-Tier Organized Results: Matched Files vs Granular Section Popups -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                <!-- 1. Matching Parent Files List -->
+                <div class="card glass-card flex flex-col">
+                    <div class="flex items-center justify-between mb-3 pb-2 border-b border-gray-700/50">
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-brand-300 flex items-center gap-1.5">
+                            <span>📁</span> Matching Parent Files (<span id="test-search-files-count">0</span>)
+                        </h4>
+                        <span class="text-[11px] text-muted">Click file to open full document</span>
+                    </div>
+                    <div id="test-search-files-list" class="space-y-2.5 max-h-128 overflow-y-auto pr-1">
+                        <p class="text-xs text-muted py-4 text-center">Execute search to view matching documents.</p>
+                    </div>
+                </div>
+
+                <!-- 2. Granular Matching Article Sections (Deep-Link Popups) -->
+                <div class="card glass-card flex flex-col">
+                    <div class="flex items-center justify-between mb-3 pb-2 border-b border-gray-700/50">
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                            <span>📑</span> Matching Article Sections — Click for Isolated Popup (<span id="test-search-sections-count">0</span>)
+                        </h4>
+                        <span class="text-[11px] text-muted">Slices exact heading</span>
+                    </div>
+                    <div id="test-search-section-links" class="space-y-2.5 max-h-128 overflow-y-auto pr-1">
+                        <p class="text-xs text-muted py-4 text-center">Execute search to inspect isolated section popups.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Standard Raw Candidates List (Fallback / LanceDB inspect) -->
             <div class="card glass-card">
                 <div class="flex items-center justify-between mb-4 pb-2 border-b border-gray-700/50">
-                    <h4 class="text-sm font-bold text-brand-300">Query Results &amp; Search Chunks</h4>
+                    <h4 class="text-sm font-bold text-brand-300">Raw Candidates &amp; Search Chunks</h4>
                     <span id="db-search-stats" class="text-xs text-muted">Ready to query</span>
                 </div>
-                <div id="db-results-container" class="space-y-4 max-h-128 overflow-y-auto pr-2">
-                    <p class="text-xs text-muted">Enter a search query above to inspect raw matched database records.</p>
+                <div id="db-results-container" class="space-y-4 max-h-96 overflow-y-auto pr-2">
+                    <p class="text-xs text-muted">Raw chunks will appear here.</p>
                 </div>
             </div>
         `;
@@ -535,6 +647,17 @@
         const targetSelect = document.getElementById('db-target-select');
         const targetGroup = document.getElementById('db-target-group');
         const searchBtn = document.getElementById('run-db-search-btn');
+        const statsEl = document.getElementById('db-search-stats');
+        const resultsContainer = document.getElementById('db-results-container');
+
+        const intentBanner = document.getElementById('semantic-intent-banner');
+        const intentPill = document.getElementById('semantic-intent-pill');
+        const intentSyns = document.getElementById('semantic-intent-synonyms');
+
+        const filesList = document.getElementById('test-search-files-list');
+        const filesCount = document.getElementById('test-search-files-count');
+        const sectionsList = document.getElementById('test-search-section-links');
+        const sectionsCount = document.getElementById('test-search-sections-count');
 
         if (targetGroup && targetSelect) {
             targetGroup.querySelectorAll('.segmented-btn').forEach((btn) => {
@@ -548,8 +671,6 @@
                 });
             });
         }
-        const statsEl = document.getElementById('db-search-stats');
-        const resultsContainer = document.getElementById('db-results-container');
 
         searchBtn.onclick = async () => {
             const q = queryInput.value.trim();
@@ -557,13 +678,134 @@
 
             searchBtn.disabled = true;
             searchBtn.textContent = 'Searching...';
-            statsEl.textContent = 'Executing query...';
+            statsEl.textContent = 'Executing semantic hybrid search...';
+            if (filesList) filesList.innerHTML = '<p class="text-xs text-brand-300 animate-pulse py-4 text-center">Finding matching files...</p>';
+            if (sectionsList) sectionsList.innerHTML = '<p class="text-xs text-emerald-400 animate-pulse py-4 text-center">Extracting matching sections...</p>';
             resultsContainer.innerHTML = '<p class="text-xs text-brand-300 animate-pulse">Querying database indexes...</p>';
 
             const target = targetSelect.value || 'all';
             const t0 = performance.now();
+
             try {
-                const res = await fetch('/api/search', {
+                // 1. Run Semantic Hybrid Decomposition Endpoint
+                const semRes = await fetch(`/api/search/semantic-hybrid?q=${encodeURIComponent(q)}&limit=15`);
+                const semData = await semRes.json();
+
+                const t1 = performance.now();
+                const latency = Math.round(t1 - t0);
+
+                if (semData.status === 'ok') {
+                    const decomp = semData.query_decomposition || {};
+                    if (intentBanner && intentPill) {
+                        intentBanner.classList.remove('hidden');
+                        const coreEnt = decomp.core_entity || q;
+                        const aspKey = decomp.aspect_key || 'general overview';
+                        intentPill.textContent = `Entity: ${coreEnt} • Semantic Aspect: ${aspKey.toUpperCase()}`;
+                        if (intentSyns) {
+                            const syns = decomp.aspect_synonyms || [];
+                            intentSyns.textContent = syns.length > 0 ? `Synonyms: ${syns.slice(0, 5).join(', ')}` : '';
+                        }
+                    }
+
+                    // Render Matching Files List
+                    const mFiles = semData.matching_files || [];
+                    if (filesCount) filesCount.textContent = mFiles.length;
+                    if (filesList) {
+                        if (mFiles.length === 0) {
+                            filesList.innerHTML = '<p class="text-xs text-muted py-4 text-center">No matching parent files found.</p>';
+                        } else {
+                            filesList.innerHTML = mFiles.map((f, i) => {
+                                const st = String(f.source_type || 'doc').toLowerCase();
+                                const isPdf = st === 'pdf';
+                                const isObs = st === 'obsidian';
+                                const badgeColor = isPdf ? 'bg-blue-500/20 text-blue-300 border-blue-500/40' :
+                                    isObs ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' :
+                                    'bg-amber-500/20 text-amber-300 border-amber-500/40';
+
+                                const fallbackStem = (f.file_path || '').split('/').pop().replace(/\.[^/.]+$/, '') || 'Document';
+                                return `
+                                <div class="p-3 rounded-xl bg-gray-900/50 border border-gray-700/60 hover:border-brand-500/40 transition-all flex items-center justify-between text-xs gap-3">
+                                    <div class="min-w-0 flex-1">
+                                        <div class="flex items-center gap-2 mb-1">
+                                            <span class="px-2 py-0.5 rounded text-[10px] font-bold font-mono border ${badgeColor}">${escapeHTML(st.toUpperCase())}</span>
+                                            <span class="font-bold text-gray-200 truncate">${escapeHTML(f.title || fallbackStem)}</span>
+                                            ${f.page > 1 ? `<span class="text-muted font-mono text-[10px]">(p. ${f.page})</span>` : ''}
+                                        </div>
+                                        <p class="text-[11px] text-muted font-mono truncate">${escapeHTML(f.file_path || f.title)}</p>
+                                    </div>
+                                    <div class="shrink-0">
+                                        ${isPdf ? `
+                                            <a href="#" class="citation-link citation-pdf secondary-btn text-[11px] px-2.5 py-1 rounded inline-flex items-center gap-1 no-underline"
+                                               data-source-type="pdf" data-file-path="${escapeHTML(f.file_path)}" data-filepath="${escapeHTML(f.file_path)}" data-page="${f.page || 1}">
+                                                📕 Open PDF ↗
+                                            </a>
+                                        ` : isObs ? `
+                                            <span class="citation-link citation-obsidian cursor-pointer secondary-btn text-[11px] px-2.5 py-1 rounded inline-flex items-center gap-1"
+                                                  data-source-type="obsidian" data-file-path="${escapeHTML(f.file_path)}" data-file="${escapeHTML(f.title)}">
+                                                📓 Read Note
+                                            </span>
+                                        ` : `
+                                            <span class="citation-link citation-zim cursor-pointer secondary-btn text-[11px] px-2.5 py-1 rounded inline-flex items-center gap-1"
+                                                  data-source-type="zim" data-article-id="${escapeHTML(f.title)}">
+                                                🌐 Read ZIM
+                                            </span>
+                                        `}
+                                    </div>
+                                </div>
+                                `;
+                            }).join('');
+                        }
+                    }
+
+                    // Render Section Popup Links
+                    const sLinks = semData.section_popup_links || [];
+                    if (sectionsCount) sectionsCount.textContent = sLinks.length;
+                    if (sectionsList) {
+                        if (sLinks.length === 0) {
+                            sectionsList.innerHTML = '<p class="text-xs text-muted py-4 text-center">No granular sections isolated.</p>';
+                        } else {
+                            sectionsList.innerHTML = sLinks.map((sec, i) => {
+                                const st = String(sec.source_type || 'doc').toLowerCase();
+                                const isPdf = st === 'pdf';
+                                const badgeText = isPdf ? 'PDF • Indra OCR + Heading Opt' : (st === 'obsidian' ? 'OBSIDIAN' : 'ZIM');
+                                const badgeColor = isPdf ? 'bg-blue-500/20 text-blue-300 border-blue-500/40' :
+                                    st === 'obsidian' ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' :
+                                    'bg-amber-500/20 text-amber-300 border-amber-500/40';
+
+                                return `
+                                <div class="open-section-popup-link p-3 rounded-xl bg-gray-900/60 border border-gray-700/60 hover:border-emerald-500/50 transition-all cursor-pointer space-y-1.5 text-xs group"
+                                     data-popup-url="${escapeHTML(sec.popup_url)}" data-heading="${escapeHTML(sec.section_heading || '')}">
+                                    <div class="flex items-center justify-between gap-2">
+                                        <div class="flex items-center gap-2 truncate">
+                                            <span class="px-2 py-0.5 rounded text-[10px] font-bold font-mono border ${badgeColor}">${escapeHTML(badgeText)}</span>
+                                            <span class="font-bold text-emerald-300 group-hover:text-emerald-200 transition-colors truncate">
+                                                ${escapeHTML(sec.title)} — ${escapeHTML(sec.section_heading || 'Section')} ${sec.page ? `(p. ${sec.page})` : ''}
+                                            </span>
+                                        </div>
+                                        <span class="text-emerald-400 font-bold shrink-0 text-[11px] group-hover:translate-x-0.5 transition-transform">
+                                            Open Popup &rarr;
+                                        </span>
+                                    </div>
+                                    <p class="text-gray-300 text-[11px] line-clamp-2 italic">
+                                        ${escapeHTML(sec.preview || '')}
+                                    </p>
+                                </div>
+                                `;
+                            }).join('');
+
+                            sectionsList.querySelectorAll('.open-section-popup-link').forEach(card => {
+                                card.onclick = () => {
+                                    const pUrl = card.dataset.popupUrl;
+                                    const hHint = card.dataset.heading;
+                                    if (pUrl) openIsolatedSectionModal(pUrl, hHint);
+                                };
+                            });
+                        }
+                    }
+                }
+
+                // 2. Also run base search for raw chunk inspection
+                const baseRes = await fetch('/api/search', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -573,10 +815,7 @@
                         enable_rerank: true
                     })
                 });
-                const t1 = performance.now();
-                const latency = Math.round(t1 - t0);
-                const data = await res.json();
-
+                const data = await baseRes.json();
                 let docs = data.candidates || data.documents || [];
                 if (target === 'lancedb' && data.all_results && Array.isArray(data.all_results.lancedb) && data.all_results.lancedb.length > 0) {
                     docs = data.all_results.lancedb;
@@ -585,10 +824,10 @@
                 const aliasesStr = Array.isArray(data.aliases) && data.aliases.length > 1
                     ? ` | Aliases: ${data.aliases.slice(0, 4).join(', ')}`
                     : '';
-                statsEl.textContent = `Found ${docs.length} records in ${latency} ms${aliasesStr}`;
+                statsEl.textContent = `Completed in ${latency} ms${aliasesStr}`;
 
                 if (docs.length === 0) {
-                    resultsContainer.innerHTML = '<p class="text-xs text-muted py-4">No matching records found for query.</p>';
+                    resultsContainer.innerHTML = '<p class="text-xs text-muted py-4">No matching raw records found for query.</p>';
                 } else {
                     resultsContainer.innerHTML = docs.map((doc, idx) => {
                         const scoreVal = typeof doc.rerank_score === 'number'
@@ -598,13 +837,13 @@
                         const fp = doc.file_path || doc.source_article || '';
                         const pg = doc.page || doc.page_number || 1;
                         return `
-                        <div class="p-3.5 rounded-xl bg-gray-900/40 border border-gray-700/50 space-y-1.5 text-xs">
+                        <div class="p-3 rounded-xl bg-gray-900/40 border border-gray-700/50 space-y-1 text-xs">
                             <div class="flex justify-between items-center text-brand-300 font-bold gap-2">
                                 <span class="truncate">#${idx + 1} [${escapeHTML(srcType.toUpperCase())}] ${escapeHTML(doc.title || doc.heading_path || doc.source_article || 'Record')}</span>
                                 <span class="text-emerald-400 font-mono shrink-0">Score: ${scoreVal}</span>
                             </div>
                             <p class="text-muted font-mono break-all text-[11px]">Path: ${escapeHTML(fp || 'N/A')} ${srcType === 'pdf' ? `(Page ${pg})` : ''}</p>
-                            <p class="text-gray-200 mt-2 line-clamp-3">${escapeHTML(doc.snippet || doc.child_content || doc.text || doc.parent_content || '')}</p>
+                            <p class="text-gray-200 mt-1 line-clamp-2">${escapeHTML(doc.snippet || doc.child_content || doc.text || doc.parent_content || '')}</p>
                         </div>
                         `;
                     }).join('');
@@ -614,7 +853,7 @@
                 resultsContainer.innerHTML = `<p class="text-xs text-danger-300">Error executing query: ${escapeHTML(err.message)}</p>`;
             } finally {
                 searchBtn.disabled = false;
-                searchBtn.textContent = 'Search Database';
+                searchBtn.textContent = 'Search Target';
             }
         };
     }

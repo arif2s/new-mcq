@@ -1478,6 +1478,43 @@
       </div>
     </div>
 
+    <!-- ISOLATED SECTION POPUP MODAL (ISSUES #14, #15, #16) -->
+    <div id="isolated-section-popup-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 220;">
+      <div class="glass-modal w-full max-w-4xl max-h-[88vh] flex flex-col shadow-2xl relative text-left p-0 border border-gray-700/60 overflow-hidden">
+        <!-- Header -->
+        <div class="flex items-center justify-between p-4 border-b border-gray-700/60 bg-gray-900/60 shrink-0">
+          <div class="flex items-center gap-2.5 truncate pr-2">
+            <span id="section-popup-source-badge" class="px-2.5 py-0.5 rounded text-[11px] font-bold font-mono bg-brand-500/20 text-brand-300 border border-brand-500/40">
+              PDF
+            </span>
+            <span id="section-popup-engine-badge" class="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+              Indra Base OCR + Heading Opt
+            </span>
+            <h3 id="section-popup-title" class="text-sm font-bold text-gray-100 truncate">
+              Document Section
+            </h3>
+          </div>
+          <button type="button" id="close-section-popup-btn" class="p-1.5 text-muted hover:text-white bg-transparent border-none cursor-pointer text-lg leading-none rounded-lg hover:bg-gray-800/60" aria-label="Close Section Popup">
+            &times;
+          </button>
+        </div>
+
+        <!-- Section Heading Bar -->
+        <div class="px-4 py-2 bg-gray-950/40 border-b border-gray-800/80 flex items-center justify-between text-xs text-muted shrink-0">
+          <div class="flex items-center gap-2">
+            <span class="text-gray-400 font-bold">Heading:</span>
+            <span id="section-popup-heading" class="text-brand-300 font-semibold font-mono">Overview</span>
+          </div>
+          <span id="section-popup-page-badge" class="text-muted font-mono text-[11px]">Page 1</span>
+        </div>
+
+        <!-- Scrollable Content Body -->
+        <div id="section-popup-body" class="flex-1 overflow-y-auto p-6 prose max-w-none text-xs leading-relaxed text-gray-200">
+          <div class="text-center py-12 text-muted animate-pulse">Loading section content...</div>
+        </div>
+      </div>
+    </div>
+
     <!-- REGENERATE CHOICE MODAL -->
     <div id="regenerate-confirm-modal" class="modal-backdrop fade-enter" style="display: none; z-index: 200;">
       <div class="modal glass-modal text-left">

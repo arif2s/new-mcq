@@ -2656,6 +2656,30 @@ body.light-theme #note-topic-carousel-container .note-carousel-pill:hover {
   width: 100%;
 }
 
+/* ==========================================================================
+   Isolated Section Popup Modal & Deep-Link Cards (Issues #14, #15, #16)
+   ========================================================================== */
+#isolated-section-popup-modal .glass-modal {
+  background: var(--card-bg, rgba(15, 23, 42, 0.94));
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 1.25rem;
+}
+
+#section-popup-body {
+  max-height: 65vh;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.open-section-popup-link {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.open-section-popup-link:hover {
+  transform: translateY(-1px);
+}
+
 .kh-card-title {
   flex: 0 0 auto;
   font-size: 1.05rem;
