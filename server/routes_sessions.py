@@ -2015,7 +2015,7 @@ def get_session_history() -> List[Dict[str, Any]]:
                 is_comp = bool(s.get("is_completed")) or (total_q > 0 and answered_count >= total_q)
 
                 # If auto_remove_completed is true and full questions in set are revised/completed, clean up
-                if auto_remove_completed and is_comp and sid != CONSOLIDATED_REVIEWS_SESSION_ID:
+                if auto_remove_completed and is_comp:
                     completed_sids_to_clean.append(sid)
                     continue
 

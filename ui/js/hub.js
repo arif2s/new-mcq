@@ -68,14 +68,12 @@ async function loadSessions(silent = false) {
     const loadingEl = document.getElementById('hub-loading');
     const emptyEl = document.getElementById('hub-empty');
     const gridEl = document.getElementById('hub-grid');
-    const dueContainer = document.getElementById('hub-due-container');
 
     if (!silent) {
         if (!hubSessions || hubSessions.length === 0) {
             if (loadingEl) loadingEl.style.display = 'block';
             if (emptyEl) emptyEl.style.display = 'none';
             if (gridEl) gridEl.style.display = 'none';
-            if (dueContainer) dueContainer.style.display = 'none';
         } else {
             // Already cached, render immediately without flash
             renderHub();
@@ -343,10 +341,6 @@ function renderHub() {
     const loadingEl = document.getElementById('hub-loading');
     const emptyEl = document.getElementById('hub-empty');
     const gridEl = document.getElementById('hub-grid');
-    const dueContainer = document.getElementById('hub-due-container');
-    const dueGrid = document.getElementById('hub-due-grid');
-    const dueCountBadge = document.getElementById('hub-due-count-badge');
-    const studySetsCount = document.getElementById('hub-study-sets-count');
     const editBtn = document.getElementById('hub-edit-btn');
 
     if (loadingEl) loadingEl.style.display = 'none';
@@ -355,29 +349,11 @@ function renderHub() {
     const dueSession = sessions.find(s => s.id === CONSOLIDATED_REVIEWS_SESSION_ID);
     const studySetSessions = sessions.filter(s => s.id !== CONSOLIDATED_REVIEWS_SESSION_ID);
 
-    // 1. Dedicated Due & Spaced Repetition Reviews Section Placement
-    const dueTotalQ = Number(dueSession?.total_questions || 0);
-    if (dueSession && dueTotalQ > 0) {
-        if (dueContainer) dueContainer.style.display = 'block';
-        if (dueCountBadge) {
-            dueCountBadge.textContent = `${dueTotalQ} Question${dueTotalQ === 1 ? '' : 's'} Due`;
-        }
-        if (dueGrid) {
-            dueGrid.innerHTML = '';
-            const dueCard = createSessionCardNode(dueSession, true);
-            dueGrid.appendChild(dueCard);
-        }
-    } else {
-        if (dueContainer) dueContainer.style.display = 'none';
-        if (dueGrid) dueGrid.innerHTML = '';
-    }
+    const hasDueCard = Boolean(dueSession && Number(dueSession.total_questions || 0) > 0);
+    const totalActiveCards = (hasDueCard ? 1 : 0) + studySetSessions.length;
 
-    // 2. Curated Study Sets Section Placement
-    if (studySetsCount) {
-        studySetsCount.textContent = `${studySetSessions.length} set${studySetSessions.length === 1 ? '' : 's'}`;
-    }
-
-    if (studySetSessions.length === 0) {
+    // Show empty message only when all cards (both due review set and study sets) are absent
+    if (totalActiveCards === 0) {
         if (emptyEl) emptyEl.style.display = 'block';
         if (gridEl) {
             gridEl.style.display = 'none';
@@ -395,19 +371,34 @@ function renderHub() {
             editBtn.disabled = true;
             editBtn.classList.add('opacity-40', 'cursor-not-allowed');
         }
-    } else {
-        if (emptyEl) emptyEl.style.display = 'none';
-        if (editBtn) {
-            editBtn.disabled = false;
+        return;
+    }
+
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (!gridEl) return;
+
+    gridEl.style.display = 'grid';
+    gridEl.innerHTML = '';
+
+    // Render Due & Spaced Repetition card in the same group as the rest of the cards (first slot)
+    if (hasDueCard) {
+        const dueCard = createSessionCardNode(dueSession, true);
+        gridEl.appendChild(dueCard);
+    }
+
+    // Render regular curated study sets in the same grid
+    studySetSessions.forEach(session => {
+        const card = createSessionCardNode(session, false);
+        gridEl.appendChild(card);
+    });
+
+    if (editBtn) {
+        const hasDeletableSets = studySetSessions.length > 0;
+        editBtn.disabled = !hasDeletableSets;
+        if (!hasDeletableSets) {
+            editBtn.classList.add('opacity-40', 'cursor-not-allowed');
+        } else {
             editBtn.classList.remove('opacity-40', 'cursor-not-allowed');
-        }
-        if (gridEl) {
-            gridEl.style.display = 'grid';
-            gridEl.innerHTML = '';
-            studySetSessions.forEach(session => {
-                const card = createSessionCardNode(session, false);
-                gridEl.appendChild(card);
-            });
         }
     }
 }

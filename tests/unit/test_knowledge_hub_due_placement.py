@@ -20,13 +20,13 @@ def setup_db():
     with get_db_connection() as conn:
         conn.execute("DELETE FROM csv_questions WHERE id LIKE 'test_%'")
         conn.execute("DELETE FROM session_questions WHERE question_id LIKE 'test_%'")
-        conn.execute("DELETE FROM quiz_sessions WHERE id LIKE 'test_%'")
+        conn.execute("DELETE FROM quiz_sessions WHERE id LIKE 'test_%' OR id LIKE 'sess_%'")
         conn.commit()
     yield
     with get_db_connection() as conn:
         conn.execute("DELETE FROM csv_questions WHERE id LIKE 'test_%'")
         conn.execute("DELETE FROM session_questions WHERE question_id LIKE 'test_%'")
-        conn.execute("DELETE FROM quiz_sessions WHERE id LIKE 'test_%'")
+        conn.execute("DELETE FROM quiz_sessions WHERE id LIKE 'test_%' OR id LIKE 'sess_%'")
         conn.commit()
 
 
@@ -36,40 +36,38 @@ def client():
 
 
 def test_knowledge_hub_html_dom_structure():
-    """Verify ui/index.html contains the separated Due Review section and Curated Study Sets section."""
+    """Verify ui/index.html contains unified #hub-grid and #hub-empty without wasted space."""
     html_text = (ROOT_DIR / "ui" / "index.html").read_text(encoding="utf-8")
 
-    assert 'id="hub-due-container"' in html_text, "Missing #hub-due-container in ui/index.html"
-    assert 'id="hub-due-grid"' in html_text, "Missing #hub-due-grid in ui/index.html"
-    assert 'id="hub-due-count-badge"' in html_text, "Missing #hub-due-count-badge in ui/index.html"
-    assert 'id="hub-study-sets-section"' in html_text, "Missing #hub-study-sets-section in ui/index.html"
-    assert 'id="hub-study-sets-count"' in html_text, "Missing #hub-study-sets-count in ui/index.html"
+    assert 'id="hub-main-container"' in html_text, "Missing #hub-main-container in ui/index.html"
+    assert 'id="hub-loading"' in html_text, "Missing #hub-loading in ui/index.html"
     assert 'id="hub-empty"' in html_text, "Missing #hub-empty in ui/index.html"
     assert 'id="hub-grid"' in html_text, "Missing #hub-grid in ui/index.html"
 
 
-def test_knowledge_hub_js_rendering_separation():
-    """Verify ui/js/hub.js separates sess_spaced_repetition_due from curated study sets."""
+def test_knowledge_hub_js_unified_grid_rendering():
+    """Verify ui/js/hub.js renders due review set in the same group as other cards in #hub-grid."""
     hub_js = (ROOT_DIR / "ui" / "js" / "hub.js").read_text(encoding="utf-8")
 
-    # Verify separation logic
+    # Verify unified rendering in #hub-grid
     assert 'CONSOLIDATED_REVIEWS_SESSION_ID = "sess_spaced_repetition_due"' in hub_js
-    assert 'hub-due-container' in hub_js
-    assert 'hub-due-grid' in hub_js
     assert 'createSessionCardNode' in hub_js
+    assert 'hasDueCard' in hub_js
+    assert 'totalActiveCards === 0' in hub_js
+    assert 'gridEl.appendChild(dueCard)' in hub_js
 
-    # Verify empty box is shown when studySetSessions is empty
-    assert 'studySetSessions.length === 0' in hub_js
+    # Verify empty box is shown only when all active cards are 0
+    assert 'if (totalActiveCards === 0)' in hub_js
     assert 'emptyEl.style.display = \'block\'' in hub_js
 
     # Verify Due session is not selectable for bulk delete
     assert 'sessionId === CONSOLIDATED_REVIEWS_SESSION_ID' in hub_js
 
 
-def test_auto_removal_with_due_set_retention(client):
+def test_auto_removal_when_questions_revisited(client):
     """
-    Verify that when auto_remove_completed_sets is enabled, completed study sets
-    are pruned while sess_spaced_repetition_due remains active as long as questions are due.
+    Verify that when questions are revisited and completed, the due & wrong review set
+    is properly removed from Knowledge Hub before the no questions in hub message appears.
     """
     with get_db_connection() as conn:
         conn.execute(
@@ -104,14 +102,14 @@ def test_auto_removal_with_due_set_retention(client):
     assert save_res.status_code == 200
 
     # Normal study set is completed, so it is auto-removed from history,
-    # but sess_spaced_repetition_due must remain because test_qid is now due!
+    # and sess_spaced_repetition_due appears with the due question
     hist_res = client.get("/api/sessions/history")
     assert hist_res.status_code == 200
     active_sids = [s["id"] for s in hist_res.json()]
     assert "sess_normal_study_1" not in active_sids
     assert "sess_spaced_repetition_due" in active_sids
 
-    # Now user reviews the due set and answers correctly
+    # Now user reviews/revisits the due set and answers correctly
     rev_res = client.post(
         "/api/sessions/save",
         json={
@@ -125,10 +123,12 @@ def test_auto_removal_with_due_set_retention(client):
     )
     assert rev_res.status_code == 200
 
-    # With no questions due, sess_spaced_repetition_due is now cleanly removed
+    # With questions revisited and completed, sess_spaced_repetition_due is cleanly removed
     hist_res2 = client.get("/api/sessions/history")
     active_sids2 = [s["id"] for s in hist_res2.json()]
     assert "sess_spaced_repetition_due" not in active_sids2
+    # All sets are now empty, so total sessions returned is 0
+    assert len(active_sids2) == 0
 
     # Clean up
     with get_db_connection() as conn:
