@@ -1661,6 +1661,78 @@ async def delete_lecture_note_item(
     return res
 
 
+@router.get("/topic/{topic_key}/summary")
+async def get_topic_and_referenced_summaries(topic_key: str, refresh: bool = False):
+    """Returns LM Studio summary and clickable referenced topic summary links for any Viewer or My Notes topic."""
+    from agents.tema_q.pipeline import run_tema_q_synthesis
+    from parsers.tantivy_engine import search_index
+
+    norm_key = re.sub(r"[\s_]+", "-", topic_key.lower().strip())
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT topic_key, display_title, enhanced_explanation, unified_article,
+                   per_article_summaries_json, referenced_topics_json
+            FROM cached_syntheses
+            WHERE topic_key = ?
+            """,
+            (norm_key,),
+        )
+        cached = cursor.fetchone()
+
+        if cached and not refresh:
+            per_art = json.loads(cached["per_article_summaries_json"] or "[]")
+            ref_links = json.loads(cached["referenced_topics_json"] or "[]")
+            if cached["enhanced_explanation"] and (per_art or "Referenced" in cached["enhanced_explanation"]):
+                slug = re.sub(r"[^a-z0-9]+", "_", norm_key).strip("_")[:100]
+                return {
+                    "status": "ok",
+                    "topic_key": cached["topic_key"],
+                    "display_title": cached["display_title"],
+                    "enhanced_explanation": cached["enhanced_explanation"],
+                    "per_article_summaries": per_art,
+                    "reference_links": ref_links,
+                    "report_url": f"/reports/{slug}_report.html",
+                }
+
+        # Check if topic exists in user_lecture_note_items ("My Notes")
+        cursor.execute(
+            "SELECT item_id, note_id, topic_text, references_json FROM user_lecture_note_items WHERE topic_key = ? OR LOWER(topic_text) = ?",
+            (norm_key, topic_key.lower().strip()),
+        )
+        note_item = cursor.fetchone()
+
+    display_topic = note_item["topic_text"] if note_item else topic_key.replace("-", " ").title()
+    search_results = await asyncio.to_thread(search_index, display_topic, limit_per_source=3)
+    synthesis = await run_tema_q_synthesis(display_topic, search_results, skip_lm=False)
+
+    from core.queue_manager import queue_worker
+    await asyncio.to_thread(queue_worker._persist_cached_synthesis, display_topic, synthesis, search_results)
+
+    if note_item:
+        with closing(get_db_connection()) as conn:
+            conn.execute(
+                "UPDATE user_lecture_note_items SET llm_summary = ?, referenced_summaries_json = ?, updated_at = unixepoch('now') WHERE item_id = ?",
+                (
+                    synthesis.get("enhanced_explanation", ""),
+                    json.dumps(synthesis.get("per_article_summaries", [])),
+                    note_item["item_id"],
+                ),
+            )
+
+    slug = re.sub(r"[^a-z0-9]+", "_", synthesis["topic_key"]).strip("_")[:100]
+    return {
+        "status": "ok",
+        "topic_key": synthesis["topic_key"],
+        "display_title": synthesis["display_title"],
+        "enhanced_explanation": synthesis["enhanced_explanation"],
+        "per_article_summaries": synthesis.get("per_article_summaries", []),
+        "reference_links": synthesis.get("reference_links", []),
+        "report_url": f"/reports/{slug}_report.html",
+    }
+
+
 @router.delete("/{note_id}/topics")
 @router.delete("/lecture-notes/{note_id}/topics")
 async def delete_lecture_note_topic(

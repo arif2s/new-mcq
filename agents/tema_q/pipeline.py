@@ -191,22 +191,30 @@ def truncate_to_token_limit(text: str, max_tokens: int) -> str:
 async def call_llm_async(
     system_prompt: str,
     user_prompt: str,
-    max_tokens: int = 500,
+    max_tokens: int = 800,
     model_id: Optional[str] = None,
     telemetry_meta: Optional[Dict[str, Any]] = None,
     context_length_tokens: Optional[int] = None,
 ) -> str:
     """Async chat completion against local LM Studio server with dynamic context token ceiling."""
     import time
+    from core.model_lifecycle import model_lifecycle
+
     t0 = time.perf_counter()
-    active_model = str(model_id or DEFAULT_MODEL).strip() or DEFAULT_MODEL
-    safe_max_out = max(16, min(int(max_tokens or 500), 1500))
+    active_model = str(model_id or model_lifecycle._active_model_id or DEFAULT_MODEL).strip() or DEFAULT_MODEL
+
+    # Dynamic context ceiling: prefer passed context_length_tokens, then live cached LM Studio context
+    effective_ctx = max(
+        2048,
+        int(context_length_tokens or model_lifecycle._cached_context_tokens or MAX_CONTEXT_TOKENS),
+    )
+    dynamic_out_cap = max(1500, min(12000, int(effective_ctx * 0.25)))
+    safe_max_out = max(16, min(int(max_tokens or 800), dynamic_out_cap))
+
     sys_str = str(system_prompt or "").strip()
     sys_tokens = count_tokens(sys_str)
 
-    # Dynamic context ceiling: use context_length_tokens if passed or fallback to MAX_CONTEXT_TOKENS (4096)
-    effective_ctx = max(2048, int(context_length_tokens or MAX_CONTEXT_TOKENS))
-    available_user_tokens = max(128, effective_ctx - sys_tokens - safe_max_out - 64)
+    available_user_tokens = max(256, effective_ctx - sys_tokens - safe_max_out - 64)
     bounded_user_prompt = truncate_to_token_limit(str(user_prompt or ""), available_user_tokens)
     user_tokens = count_tokens(bounded_user_prompt)
 
@@ -234,6 +242,7 @@ async def call_llm_async(
     if isinstance(telemetry_meta, dict):
         telemetry_meta.update({
             "model_id": active_model,
+            "effective_context_tokens": effective_ctx,
             "prompt_tokens": sys_tokens + user_tokens,
             "completion_tokens": out_tokens,
             "latency_ms": elapsed_ms,
@@ -242,6 +251,106 @@ async def call_llm_async(
             "bounded_user_prompt": bounded_user_prompt,
         })
     return cleaned
+
+
+async def generate_referenced_topic_summaries(
+    topic: str,
+    documents: List[Dict[str, Any]],
+    ctx_info: Dict[str, Any],
+    active_model: str,
+    lm_available: bool = True,
+) -> List[Dict[str, Any]]:
+    """Ensures every referenced document/topic has an LM Studio generated summary and viewer links."""
+    summaries: List[Dict[str, Any]] = []
+    seen_ref_keys: Set[str] = set()
+    max_words_per_ref = int(ctx_info.get("primary_source_input_words") or ctx_info.get("effective_summary_word_limit") or 2500)
+    max_out_tokens = max(650, min(3000, int(ctx_info.get("max_output_tokens", 1500) * 0.4)))
+    loaded_ctx = int(ctx_info.get("loaded_context_length_tokens") or MAX_CONTEXT_TOKENS)
+
+    ref_prompt = (
+        f"You are an expert clinical medical educator summarizing a referenced topic for '{topic}'. "
+        "Output a structured JSON object:\n"
+        "{\n"
+        '  "section": "Reference Summary",\n'
+        '  "clinical_points": [{"point": "High-yield clinical fact", "source": "Source", "page": 1}],\n'
+        '  "summary_markdown": "Comprehensive, high-yield clinical summary of this reference."\n'
+        "}\n"
+        "Preserve 100% of numerical dosages, staging criteria, pathology findings, and diagnostic cutoffs."
+    )
+
+    for idx, doc in enumerate(documents):
+        source_lbl = str(doc.get("source_label") or f"Reference {idx + 1}").strip()
+        source_tp = str(doc.get("source_type") or "ref").strip().lower()
+        pg = int(doc.get("page") or 1)
+        clean_title = re.sub(r"^(?:ZIM|PDF|Obsidian)\s*:\s*", "", source_lbl, flags=re.I).strip() or source_lbl
+        ref_topic_key = re.sub(r"[^a-z0-9]+", "-", f"{clean_title}-{source_tp}-p{pg}".lower()).strip("-")
+        if ref_topic_key in seen_ref_keys:
+            continue
+        seen_ref_keys.add(ref_topic_key)
+
+        filtered_passage = extract_topic_exclusive_passages(
+            doc.get("raw_text") or "",
+            target_topic=topic,
+            max_words=max_words_per_ref,
+            is_microedit=False,
+        )
+        word_count_sent = len(filtered_passage.split())
+        article_md = ""
+        article_pts: List[Dict[str, Any]] = []
+
+        if lm_available and filtered_passage:
+            user_msg = (
+                f"Primary Topic: {topic}\n"
+                f"Referenced Topic / Source: {source_lbl} (Page {pg})\n"
+                f"Reference Content:\n{filtered_passage}"
+            )
+            try:
+                resp_str = await call_llm_async(
+                    ref_prompt,
+                    user_msg,
+                    max_tokens=max_out_tokens,
+                    model_id=active_model,
+                    context_length_tokens=loaded_ctx,
+                )
+                parsed = parse_llm_json(resp_str)
+                if isinstance(parsed, dict):
+                    article_md = str(parsed.get("summary_markdown") or "").strip()
+                    raw_pts = parsed.get("clinical_points") or []
+                    if isinstance(raw_pts, list):
+                        for p in raw_pts:
+                            if isinstance(p, dict) and p.get("point"):
+                                p.setdefault("source", source_lbl)
+                                p.setdefault("page", pg)
+                                article_pts.append(p)
+                            elif isinstance(p, str) and p.strip():
+                                article_pts.append({"point": p.strip(), "source": source_lbl, "page": pg})
+            except Exception as exc:
+                logger.warning("Reference summary LLM call failed for '%s': %s", source_lbl, exc)
+
+        if not article_pts and filtered_passage:
+            for sentence in filtered_passage.split(". ")[:5]:
+                if sentence.strip():
+                    article_pts.append({"point": sentence.strip(), "source": source_lbl, "page": pg})
+
+        if not article_md:
+            pts_bullets = "\n".join(f"- {p['point']}" for p in article_pts[:6])
+            article_md = f"Summary of clinical findings from {source_lbl}:\n{pts_bullets}"
+
+        report_slug = re.sub(r"[^a-z0-9]+", "_", ref_topic_key).strip("_")[:100]
+        summaries.append({
+            "ref_topic_key": ref_topic_key,
+            "ref_display_title": clean_title,
+            "source": source_lbl,
+            "source_type": source_tp,
+            "page": pg,
+            "word_count_sent": word_count_sent,
+            "summary_markdown": article_md,
+            "clinical_points": article_pts,
+            "summary_link": f"/api/notes/topic/{ref_topic_key}/summary",
+            "report_url": f"/reports/{report_slug}_report.html",
+        })
+
+    return summaries
 
 
 async def call_vlm_page_images_async(
@@ -1122,9 +1231,24 @@ async def run_tema_q_synthesis(
                 )
 
         # Fast CPU Question-Anchored Subtopic Router & Pruner
+        primary_in_words = int(ctx_info.get("primary_source_input_words") or 650)
+        sec_in_words = int(ctx_info.get("secondary_source_input_words") or 450)
+        block_char_limit = int(ctx_info.get("subtopic_block_char_limit") or 600)
+        primary_max_out_words = int(ctx_info.get("primary_max_words") or 500)
+        combined_max_out_words = int(ctx_info.get("combined_max_words") or 1000)
+        max_out_tokens = int(ctx_info.get("max_output_tokens") or 800)
+
         t_route_0 = time.perf_counter()
         subtopic_buckets = await asyncio.to_thread(
-            route_and_prune_subtopics, topic, documents, mcq_context, 5, 650, 450, trace
+            route_and_prune_subtopics,
+            topic,
+            documents,
+            mcq_context,
+            5,
+            primary_in_words,
+            sec_in_words,
+            trace,
+            block_char_limit,
         )
         t_route_ms = round((time.perf_counter() - t_route_0) * 1000.0, 2)
         if trace:
@@ -1275,7 +1399,7 @@ async def run_tema_q_synthesis(
                         subtopic_node,
                         heading_json,
                         metadata={"source": sec_src, "page": sec_pg},
-                        primary_max_words=500,
+                        primary_max_words=primary_max_out_words,
                         telemetry=trace,
                     )
 
@@ -1406,7 +1530,7 @@ async def run_tema_q_synthesis(
                         subtopic_node,
                         sec_json,
                         metadata={"source": sec_src, "page": sec_page},
-                        max_words=1000,
+                        max_words=combined_max_out_words,
                         telemetry=trace,
                     )
 
@@ -1451,11 +1575,30 @@ async def run_tema_q_synthesis(
                 None,
                 base_note_json,
                 metadata={"source": doc1["source_label"], "page": doc1["page"]},
-                primary_max_words=500,
+                primary_max_words=primary_max_out_words,
                 telemetry=trace,
             )
 
         enhanced_markdown = _format_article_as_markdown(final_article, topic)
+
+    if not per_article_summaries and documents:
+        per_article_summaries = await generate_referenced_topic_summaries(
+            topic=topic,
+            documents=documents,
+            ctx_info=ctx_info,
+            active_model=active_model,
+            lm_available=lm_available,
+        )
+
+    if per_article_summaries:
+        links_md = ["\n\n### Referenced Topic Summaries"]
+        for ref_s in per_article_summaries:
+            r_title = ref_s.get("ref_display_title") or ref_s.get("source")
+            r_link = ref_s.get("summary_link") or f"/api/notes/topic/{ref_s.get('ref_topic_key')}/summary"
+            r_rep = ref_s.get("report_url") or "#"
+            r_type = str(ref_s.get("source_type") or "REF").upper()
+            links_md.append(f"- [{r_title} ({r_type}, p.{ref_s.get('page', 1)})]({r_link}) — [Open Dossier]({r_rep})")
+        enhanced_markdown = f"{enhanced_markdown}\n" + "\n".join(links_md)
 
     # Detect variances if discrepancies empty
     from agents.tema_q.auditor import detect_clinical_variances

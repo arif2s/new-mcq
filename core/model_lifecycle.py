@@ -74,7 +74,8 @@ class LazyModelHolder:
 
 
 class ModelLifecycleManager:
-    """Queries LM Studio native REST API (/api/v0/models) for loaded_context_length."""
+    """Queries LM Studio native REST API (/api/v0/models) for loaded_context_length
+    and dynamically scales input/output word and token budgets for 4k–60k+ models."""
 
     def __init__(self, lm_studio_url: str = LM_STUDIO_URL) -> None:
         raw = str(lm_studio_url or "http://localhost:1234/v1").rstrip("/")
@@ -82,6 +83,7 @@ class ModelLifecycleManager:
         self._cached_context_tokens: int = int(MAX_CONTEXT_TOKENS or 4096)
         self._cached_max_tokens: int = 32768
         self._active_model_id: str = str(DEFAULT_MODEL or "local-model")
+        self._last_probe_ts: float = 0.0
 
     def calculate_budgets_from_tokens(
         self,
@@ -90,10 +92,18 @@ class ModelLifecycleManager:
         model_id: Optional[str] = None,
         user_max_words_override: Optional[int] = None,
     ) -> dict[str, Any]:
-        loaded_ctx = max(1024, int(loaded_ctx or MAX_CONTEXT_TOKENS or 4096))
+        loaded_ctx = max(2048, int(loaded_ctx or self._cached_context_tokens or MAX_CONTEXT_TOKENS or 4096))
         max_ctx = max(loaded_ctx, int(max_ctx or 32768))
-        usable_input_tokens = max(512, int((loaded_ctx - 800) * 0.75))
-        auto_summary_word_limit = max(400, int(usable_input_tokens / 1.35))
+
+        # Scale factor relative to legacy 4096-token baseline
+        scale_factor = max(1.0, loaded_ctx / 4096.0)
+
+        # Reserve 22% for output completion and system prompt framing
+        usable_input_tokens = max(1024, int((loaded_ctx - 600) * 0.78))
+        max_output_tokens = max(800, min(12000, int(loaded_ctx * 0.22)))
+
+        # Convert token capacity to words (1 clinical word ~= 1.35 tokens)
+        auto_summary_word_limit = max(650, int(usable_input_tokens / 1.35))
 
         override_val = int(user_max_words_override or 0)
         if override_val > 100:
@@ -101,17 +111,31 @@ class ModelLifecycleManager:
         else:
             effective_summary_words = auto_summary_word_limit
 
-        microedit_word_limit = min(280, max(150, effective_summary_words // 6))
+        # Scale per-stage word caps proportionally for 30k-60k context windows
+        primary_source_input_words = max(650, min(25000, int(effective_summary_words * 0.70)))
+        secondary_source_input_words = max(450, min(18000, int(effective_summary_words * 0.50)))
+        microedit_word_limit = max(280, min(6000, int(effective_summary_words // 3)))
         if override_val > 0:
-            microedit_word_limit = min(microedit_word_limit, max(80, override_val))
+            microedit_word_limit = min(microedit_word_limit, max(150, override_val))
+
+        primary_max_words = max(500, min(8000, int(500 * scale_factor)))
+        combined_max_words = max(1000, min(15000, int(1000 * scale_factor)))
+        subtopic_block_char_limit = max(600, min(18000, int(600 * scale_factor)))
 
         return {
             "model_id": model_id or self._active_model_id,
             "loaded_context_length_tokens": loaded_ctx,
             "max_context_length_tokens": max_ctx,
+            "usable_input_tokens": usable_input_tokens,
+            "max_output_tokens": max_output_tokens,
             "auto_summary_word_limit": auto_summary_word_limit,
             "effective_summary_word_limit": effective_summary_words,
+            "primary_source_input_words": primary_source_input_words,
+            "secondary_source_input_words": secondary_source_input_words,
             "microedit_word_limit": microedit_word_limit,
+            "primary_max_words": primary_max_words,
+            "combined_max_words": combined_max_words,
+            "subtopic_block_char_limit": subtopic_block_char_limit,
             "user_max_words_override": override_val if override_val > 0 else None,
         }
 
@@ -125,17 +149,18 @@ class ModelLifecycleManager:
         model_id = self._active_model_id
 
         owns_client = client is None
+        http_client = client or httpx.AsyncClient(timeout=2.5)
         try:
-            http_client = client or httpx.AsyncClient(timeout=2.5)
             resp = await http_client.get(f"{self.base_url}/api/v0/models")
             if resp.status_code == 200:
                 payload = resp.json()
                 models = payload.get("data") or payload.get("models") or []
                 if isinstance(models, list) and models:
+                    # Strictly prioritize models with state == 'loaded' or explicit loaded_context_length
                     loaded_models = [
                         m for m in models
                         if isinstance(m, dict)
-                        and m.get("state") == "loaded"
+                        and (m.get("state") == "loaded" or m.get("loaded_context_length") is not None)
                         and m.get("type") in ("llm", "vlm", None)
                     ]
                     target = loaded_models[0] if loaded_models else models[0]
@@ -145,17 +170,18 @@ class ModelLifecycleManager:
                         loaded_ctx = int(
                             target.get("loaded_context_length")
                             or target.get("context_length")
-                            or min(max_ctx, 8192)
+                            or max_ctx
                         )
                         self._cached_context_tokens = loaded_ctx
                         self._cached_max_tokens = max_ctx
                         self._active_model_id = model_id
+                        self._last_probe_ts = time.monotonic()
         except Exception as exc:
             logger.debug("Using cached LM Studio context length (%d): %s", loaded_ctx, exc)
         finally:
-            if owns_client and client is not None:
+            if owns_client and http_client is not None:
                 try:
-                    await client.aclose()
+                    await http_client.aclose()
                 except Exception:
                     pass
 

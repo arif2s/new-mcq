@@ -681,19 +681,23 @@ class PriorityQueueWorker:
             cursor = conn.cursor()
             topic_key = re.sub(r"[\s_]+", "-", topic.lower().strip())
             cursor.execute(
-                "SELECT unified_article FROM cached_syntheses WHERE topic_key = ?",
+                "SELECT unified_article, enhanced_explanation, distractor_analysis, per_article_summaries_json "
+                "FROM cached_syntheses WHERE topic_key = ?",
                 (topic_key,),
             )
             row = cursor.fetchone()
             if row:
-                article = row[0] if isinstance(row, tuple) else row["unified_article"]
-                art_str = str(article or "").strip()
+                art_str = str(row["unified_article"] or "").strip()
+                exp_str = str(row["enhanced_explanation"] or "").strip()
+                dist_str = str(row["distractor_analysis"] or "").strip()
+                ref_sums = str(row["per_article_summaries_json"] or "[]").strip()
                 if (
                     art_str
+                    and exp_str
                     and "LM Studio processing skipped" not in art_str
-                    and "Skipped LM Studio processing" not in art_str
-                    and "Please add reference material" not in art_str
-                    and "No relevant documents passed" not in art_str
+                    and "LM Studio unresponsive" not in dist_str
+                    and "No local reference files found" not in exp_str
+                    and ref_sums not in ("", "[]")
                 ):
                     return True
             return False
@@ -703,32 +707,96 @@ class PriorityQueueWorker:
     ) -> None:
         if not topic:
             return
+        topic_key = re.sub(r"[\s_]+", "-", topic.lower().strip())
+        top_refs = synthesis.get("top_references") or results
+        per_art_summaries = synthesis.get("per_article_summaries") or []
+        ref_links = [
+            {
+                "ref_topic_key": s.get("ref_topic_key"),
+                "title": s.get("ref_display_title") or s.get("source"),
+                "summary_link": s.get("summary_link"),
+                "report_url": s.get("report_url"),
+                "source_type": s.get("source_type"),
+                "page": s.get("page", 1),
+            }
+            for s in per_art_summaries
+        ]
+        variance_text = str(
+            synthesis.get("variance_audit") or synthesis.get("discrepancies") or ""
+        ).strip()
+
         with closing(get_db_connection()) as conn:
-            top_refs = synthesis.get("top_references") or results
-            variance_text = str(
-                synthesis.get("variance_audit") or synthesis.get("discrepancies") or ""
-            ).strip()
             conn.execute(
                 """
                 INSERT OR REPLACE INTO cached_syntheses (
                     topic_key, display_title, enhanced_explanation, distractor_analysis,
                     unified_article, variance_audit, top_references,
+                    per_article_summaries_json, referenced_topics_json,
                     has_obsidian_note, has_pdf_match, has_zim_match, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))
                 """,
                 (
-                    re.sub(r"[\s_]+", "-", topic.lower().strip()),
+                    topic_key,
                     topic,
                     str(synthesis.get("enhanced_explanation", "")),
                     str(synthesis.get("distractor_analysis", "")),
                     str(synthesis.get("unified_article", "")),
                     variance_text,
                     json_lib.dumps(top_refs),
+                    json_lib.dumps(per_art_summaries),
+                    json_lib.dumps(ref_links),
                     1 if results.get("obsidian") else 0,
                     1 if results.get("pdf") else 0,
                     1 if results.get("zim") else 0,
                 ),
             )
+
+            # Persist each referenced topic summary as its own linkable record in cached_syntheses
+            for ref_item in per_art_summaries:
+                r_key = str(ref_item.get("ref_topic_key") or "").strip()
+                r_title = str(ref_item.get("ref_display_title") or ref_item.get("source") or "").strip()
+                r_md = str(ref_item.get("summary_markdown") or "").strip()
+                if not r_key or not r_md:
+                    continue
+                r_article = {
+                    "section": "Reference Summary",
+                    "subtopic": r_title,
+                    "conditional_context": f"Referenced by {topic}",
+                    "clinical_points": ref_item.get("clinical_points", []),
+                    "raw_text": r_md,
+                    "discrepancies": "",
+                }
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO cached_syntheses (
+                        topic_key, display_title, enhanced_explanation, distractor_analysis,
+                        unified_article, variance_audit, top_references,
+                        per_article_summaries_json, referenced_topics_json, updated_at
+                    ) VALUES (?, ?, ?, 'N/A', ?, '', ?, '[]', ?, unixepoch('now'))
+                    """,
+                    (
+                        r_key,
+                        r_title,
+                        r_md,
+                        json_lib.dumps(r_article),
+                        json_lib.dumps([ref_item]),
+                        json_lib.dumps([{"ref_topic_key": topic_key, "title": topic, "summary_link": f"/api/notes/topic/{topic_key}/summary"}]),
+                    ),
+                )
+                try:
+                    generate_topic_report(
+                        r_title,
+                        [ref_item],
+                        {
+                            "topic_key": r_key,
+                            "display_title": r_title,
+                            "enhanced_explanation": r_md,
+                            "unified_article": json_lib.dumps(r_article),
+                            "top_references": [ref_item],
+                        },
+                    )
+                except Exception as rep_err:
+                    logger.debug("Reference report generation warning for '%s': %s", r_key, rep_err)
 
 
 def get_session_queue_info(session_id: str) -> Dict[str, Any]:

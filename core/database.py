@@ -534,6 +534,12 @@ def initialize_database() -> None:
         _safe_add_column(conn, "mcq_bank", "llm_explanation TEXT DEFAULT ''")
         _safe_add_column(conn, "csv_questions", "llm_explanation TEXT DEFAULT ''")
         _safe_add_column(conn, "cached_syntheses", "variance_audit TEXT DEFAULT ''")
+        _safe_add_column(conn, "cached_syntheses", "per_article_summaries_json TEXT DEFAULT '[]'")
+        _safe_add_column(conn, "cached_syntheses", "referenced_topics_json TEXT DEFAULT '[]'")
+        _safe_add_column(conn, "user_lecture_note_items", "llm_summary TEXT DEFAULT ''")
+        _safe_add_column(conn, "user_lecture_note_items", "referenced_summaries_json TEXT DEFAULT '[]'")
+        _safe_add_column(conn, "obsidian_notes", "llm_summary TEXT DEFAULT ''")
+        _safe_add_column(conn, "obsidian_notes", "referenced_summaries_json TEXT DEFAULT '[]'")
 
         for col_def in (
             "state INTEGER DEFAULT 0",

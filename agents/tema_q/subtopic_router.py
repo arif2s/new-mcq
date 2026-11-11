@@ -123,17 +123,26 @@ def sanitize_clinical_prose(raw_text: str) -> str:
                 clean_lines.append("")
             continue
 
-        # Drop Obsidian media embeds, Markdown table rows, and ASCII grid borders
+        # Drop Obsidian media embeds and ASCII grid borders
         if (
             _OBSIDIAN_EMBED_RE.match(stripped)
-            or _MD_TABLE_ROW_RE.match(stripped)
             or _ASCII_GRID_ROW_RE.match(stripped)
         ):
             skip_next_caption_continuation = False
             continue
 
-        # Drop tab-separated or multi-pipe pseudo-table lines
-        if stripped.count("|") >= 2 or stripped.count("\t") >= 2:
+        if _MD_TABLE_ROW_RE.match(stripped):
+            cells = [c.strip() for c in stripped.strip("|").split("|") if c.strip()]
+            # Skip pure separator lines like |---|---|
+            if all(re.fullmatch(r"[:\-]+", c) for c in cells):
+                continue
+            linearized_row = " ; ".join(cells)
+            if linearized_row:
+                clean_lines.append(f"{linearized_row}.")
+            continue
+
+        # Drop tab-separated pseudo-table lines
+        if stripped.count("\t") >= 2:
             skip_next_caption_continuation = False
             continue
 
@@ -622,6 +631,7 @@ def route_and_prune_subtopics(
     max_source1_input_words: int = 650,
     max_sec_input_words: int = 450,
     telemetry: Optional[Any] = None,
+    block_char_limit: int = 2400,
 ) -> List[RoutedSubtopicBucket]:
     """
     Routes paragraphs from all resolved documents into aligned medical subtopic buckets
@@ -657,7 +667,8 @@ def route_and_prune_subtopics(
         return []
 
     questions = [spec.question_template.format(topic=topic) for spec in schema]
-    block_texts = [f"{b.heading}: {b.text[:600]}" for b in all_blocks]
+    safe_char_limit = max(600, int(block_char_limit or 2400))
+    block_texts = [f"{b.heading}: {b.text[:safe_char_limit]}" for b in all_blocks]
 
     embedder = get_embedding_engine()
     cos_mat = embedder.score_texts_against_anchors(block_texts, questions)

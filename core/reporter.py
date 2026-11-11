@@ -178,13 +178,20 @@ DOSSIER_TEMPLATE = """<!DOCTYPE html>
         <li style="margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.05);">
           <div>
             <span class="ref-tag ref-{{ ref.source }}">{{ ref.source }}</span>
-            <a href="#" class="citation-link" data-source-type="{{ ref.source }}" data-file-path="{{ ref.file_path }}" data-page="{{ ref.page or 1 }}" data-article-id="{{ ref.title }}">
+            <a href="{{ ref.summary_link or '#' }}" class="citation-link ref-summary-link" data-topic-key="{{ ref.ref_topic_key }}" data-report-url="{{ ref.report_url }}" data-source-type="{{ ref.source }}" data-file-path="{{ ref.file_path }}" data-page="{{ ref.page or 1 }}" data-article-id="{{ ref.title }}">
               <strong>{{ ref.title }}</strong>
             </a>
+            {% if ref.report_url %}
+              <a href="{{ ref.report_url }}" class="badge ref-summary-link" data-topic-key="{{ ref.ref_topic_key }}">View Summary</a>
+            {% endif %}
             {% if ref.heading %} &mdash; <em>{{ ref.heading }}</em>{% endif %}
             {% if ref.page %} <span style="color: var(--text-muted);">(Page {{ ref.page }})</span>{% endif %}
           </div>
-          {% if ref.snippet %}
+          {% if ref.summary_markdown_html %}
+          <div class="prose-content" style="margin-top: 0.5rem; padding: 0.75rem; background: rgba(255,255,255,0.04); border-radius: 8px;">
+            {{ ref.summary_markdown_html | safe }}
+          </div>
+          {% elif ref.snippet %}
           <div class="snippet-preview">"{{ ref.snippet }}"</div>
           {% endif %}
         </li>
@@ -258,6 +265,7 @@ def _render_markdown_to_html(raw_text: str) -> str:
 def _normalize_references_polymorphic(
     search_results: Any,
     top_references: Any,
+    per_article_summaries: Any = None,
 ) -> List[Dict[str, Any]]:
     """
     Polymorphically extracts and dedupes reference evidence matching Invariant 13.
@@ -272,7 +280,8 @@ def _normalize_references_polymorphic(
             return
 
         title = (
-            item.get("title")
+            item.get("ref_display_title")
+            or item.get("title")
             or item.get("source_article")
             or item.get("main_topic")
             or "Untitled Evidence"
@@ -292,7 +301,7 @@ def _normalize_references_polymorphic(
                 page = None
 
         src = str(
-            item.get("source") or item.get("source_type") or default_src
+            item.get("source_type") or item.get("source") or default_src
         ).strip().lower()
         if src in ("none", "", "all", "lancedb", "tantivy"):
             f_path_low = str(item.get("file_path", "")).lower()
@@ -312,6 +321,12 @@ def _normalize_references_polymorphic(
         if len(snippet) > 280:
             snippet = snippet[:280] + "..."
 
+        ref_topic_key = item.get("ref_topic_key") or ""
+        summary_link = item.get("summary_link") or ""
+        report_url = item.get("report_url") or ""
+        summary_md = str(item.get("summary_markdown") or "").strip()
+        summary_html = _render_markdown_to_html(summary_md) if summary_md else ""
+
         key = (src, str(title).strip().lower(), str(heading).strip().lower(), page)
         if key not in seen:
             seen.add(key)
@@ -323,7 +338,32 @@ def _normalize_references_polymorphic(
                 "page": page,
                 "snippet": snippet,
                 "file_path": str(item.get("file_path", "")),
+                "ref_topic_key": ref_topic_key,
+                "summary_link": summary_link,
+                "report_url": report_url,
+                "summary_markdown": summary_md,
+                "summary_markdown_html": summary_html,
             })
+        else:
+            # If already added, augment with summary links/markdown if missing
+            for existing in normalized:
+                ex_key = (
+                    existing["source"],
+                    str(existing["title"]).strip().lower(),
+                    str(existing["heading"]).strip().lower(),
+                    existing["page"],
+                )
+                if ex_key == key:
+                    if not existing.get("summary_link") and summary_link:
+                        existing["summary_link"] = summary_link
+                    if not existing.get("report_url") and report_url:
+                        existing["report_url"] = report_url
+                    if not existing.get("ref_topic_key") and ref_topic_key:
+                        existing["ref_topic_key"] = ref_topic_key
+                    if not existing.get("summary_markdown_html") and summary_html:
+                        existing["summary_markdown"] = summary_md
+                        existing["summary_markdown_html"] = summary_html
+                    break
 
     def _ingest_source(payload: Any) -> None:
         if not payload:
@@ -352,6 +392,7 @@ def _normalize_references_polymorphic(
                     elif isinstance(items, dict):
                         _add_item(items, default_src=str(src_key))
 
+    _ingest_source(per_article_summaries)
     _ingest_source(search_results)
     _ingest_source(top_references)
     return normalized
@@ -505,6 +546,7 @@ def generate_topic_report(
     normalized_refs = _normalize_references_polymorphic(
         search_results=search_results,
         top_references=synth.get("top_references"),
+        per_article_summaries=synth.get("per_article_summaries"),
     )
 
     enhanced_exp = str(synth.get("enhanced_explanation") or "").strip()
