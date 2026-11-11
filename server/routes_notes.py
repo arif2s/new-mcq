@@ -1111,12 +1111,17 @@ def _get_single_lecture_note_sync(note_id: str) -> Optional[Dict[str, Any]]:
             (note_id,),
         )
         items = []
+        from core.topic_filter import generate_surface_regex_variants
         for r in cursor.fetchall():
             item_dict = dict(r)
             try:
                 item_dict["references"] = json.loads(item_dict.get("references_json") or "{}")
             except Exception:
                 item_dict["references"] = {"obsidian": [], "pdf": [], "zim": []}
+            t_text = item_dict.get("topic_text") or ""
+            t_norm = canonicalize_topic_norm(t_text)
+            item_dict["topic_norm"] = t_norm
+            item_dict["surface_variants"] = generate_surface_regex_variants(t_text, t_norm, [t_text])
             items.append(item_dict)
 
         mining_info = _NOTE_MINING_STATE.get(note_id, {})
@@ -1265,17 +1270,16 @@ def _delete_lecture_note_sync(note_id: str) -> bool:
 def _upsert_lecture_note_item_sync(note_id: str, payload: LectureNoteItemPayload) -> Dict[str, Any]:
     item_id = (payload.item_id or "").strip() or f"item_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
     topic_text = (payload.topic_text or "").strip()
+    topic_norm = canonicalize_topic_norm(topic_text)
 
-    # Resolve references and matching MCQs
-    resolved = _resolve_topic_refs_and_mcqs(topic_text, force_refresh=payload.force_refresh)
-    topic_key = resolved["topic_key"]
-    refs_json = json.dumps(resolved["references"])
+    from core.topic_filter import generate_surface_regex_variants, is_valid_topic
+    from agents.tema_q.topic_extractor import get_ignored_topics_set
 
     with closing(get_db_connection()) as conn:
-        # Verify or ensure parent note exists
         cursor = conn.cursor()
-        cursor.execute("SELECT note_id FROM user_lecture_notes WHERE note_id = ?", (note_id,))
-        if not cursor.fetchone():
+        cursor.execute("SELECT note_id, suppressed_topics_json FROM user_lecture_notes WHERE note_id = ?", (note_id,))
+        parent_row = cursor.fetchone()
+        if not parent_row:
             conn.execute(
                 """
                 INSERT INTO user_lecture_notes (note_id, title, shade_index, is_pinned, created_at, updated_at)
@@ -1283,6 +1287,59 @@ def _upsert_lecture_note_item_sync(note_id: str, payload: LectureNoteItemPayload
                 """,
                 (note_id,),
             )
+            suppressed_list = []
+        else:
+            try:
+                suppressed_list = json.loads(parent_row["suppressed_topics_json"] or "[]")
+            except Exception:
+                suppressed_list = []
+
+        ignored_set = get_ignored_topics_set()
+        suppressed_set = {canonicalize_topic_norm(s) for s in suppressed_list if s}
+        all_excluded = set(ignored_set) | set(suppressed_set)
+
+        if not is_valid_topic(topic_text, extra_ignored=all_excluded) or topic_norm in all_excluded:
+            return {
+                "status": "ignored",
+                "item_id": item_id,
+                "note_id": note_id,
+                "topic_text": topic_text,
+                "topic_key": re.sub(r"[\s_]+", "-", topic_norm),
+                "topic_norm": topic_norm,
+                "surface_variants": [],
+            }
+
+        # Resolve references and matching MCQs
+        resolved = _resolve_topic_refs_and_mcqs(topic_text, force_refresh=payload.force_refresh, conn=conn)
+        topic_key = resolved["topic_key"]
+        refs_json = json.dumps(resolved["references"])
+
+        # Check for existing items with same canonical norm or topic_key in this note
+        cursor.execute(
+            "SELECT item_id, topic_text, topic_key FROM user_lecture_note_items WHERE note_id = ?",
+            (note_id,),
+        )
+        existing_rows = cursor.fetchall()
+        for er in existing_rows:
+            if er["item_id"] != item_id:
+                er_norm = canonicalize_topic_norm(er["topic_text"])
+                if er_norm == topic_norm or er["topic_key"] == topic_key:
+                    return {
+                        "status": "success",
+                        "item_id": er["item_id"],
+                        "note_id": note_id,
+                        "line_order": payload.line_order,
+                        "topic_text": er["topic_text"],
+                        "topic_key": er["topic_key"],
+                        "topic_norm": er_norm,
+                        "surface_variants": generate_surface_regex_variants(er["topic_text"], er_norm),
+                        "mcq_count": resolved["mcq_count"],
+                        "ref_count": resolved["ref_count"],
+                        "obsidian_count": resolved["obsidian_count"],
+                        "pdf_count": resolved["pdf_count"],
+                        "zim_count": resolved["zim_count"],
+                        "references": resolved["references"],
+                    }
 
         conn.execute(
             """
@@ -1322,6 +1379,7 @@ def _upsert_lecture_note_item_sync(note_id: str, payload: LectureNoteItemPayload
             (note_id,),
         )
 
+    surface_variants = generate_surface_regex_variants(topic_text, topic_norm)
     return {
         "status": "success",
         "item_id": item_id,
@@ -1329,6 +1387,8 @@ def _upsert_lecture_note_item_sync(note_id: str, payload: LectureNoteItemPayload
         "line_order": payload.line_order,
         "topic_text": topic_text,
         "topic_key": topic_key,
+        "topic_norm": topic_norm,
+        "surface_variants": surface_variants,
         "mcq_count": resolved["mcq_count"],
         "ref_count": resolved["ref_count"],
         "obsidian_count": resolved["obsidian_count"],
@@ -1344,7 +1404,7 @@ def _delete_lecture_note_item_sync(
     topic_key: Optional[str] = None,
     topic_text: Optional[str] = None,
     global_ignore: bool = False,
-) -> bool:
+) -> Dict[str, Any]:
     clean_item_id = str(item_id) if item_id and not hasattr(item_id, "default") else None
     clean_topic_key = str(topic_key) if topic_key and not hasattr(topic_key, "default") else None
     clean_topic_text = str(topic_text).strip() if topic_text and not hasattr(topic_text, "default") else None
@@ -1352,36 +1412,60 @@ def _delete_lecture_note_item_sync(
 
     with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
-        conditions = ["note_id = ?"]
-        params: list[Any] = [note_id]
-        sub_conds = []
+
+        # If item_id is provided, look up the target item's topic_text and topic_key first
+        target_item = None
         if clean_item_id:
-            sub_conds.append("item_id = ?")
-            params.append(clean_item_id)
-        if clean_topic_key:
-            sub_conds.append("topic_key = ?")
-            params.append(clean_topic_key)
-        if clean_topic_text:
-            sub_conds.append("LOWER(topic_text) = LOWER(?)")
-            params.append(clean_topic_text)
+            cursor.execute(
+                "SELECT item_id, topic_text, topic_key FROM user_lecture_note_items WHERE note_id = ? AND item_id = ?",
+                (note_id, clean_item_id),
+            )
+            target_item = cursor.fetchone()
 
-        if not sub_conds:
-            return False
+        target_text = clean_topic_text or (target_item["topic_text"] if target_item else "")
+        target_key = clean_topic_key or (target_item["topic_key"] if target_item else "")
+        target_norm = canonicalize_topic_norm(target_text or target_key)
+        if not target_key and target_norm:
+            target_key = re.sub(r"[\s_]+", "-", target_norm)
 
-        conditions.append(f"({' OR '.join(sub_conds)})")
-        where_clause = " AND ".join(conditions)
-
+        # Build comprehensive match across all items in note
         cursor.execute(
-            f"SELECT item_id, topic_text, topic_key FROM user_lecture_note_items WHERE {where_clause}",
-            tuple(params),
+            "SELECT item_id, topic_text, topic_key FROM user_lecture_note_items WHERE note_id = ?",
+            (note_id,),
         )
-        matching_rows = [dict(r) for r in cursor.fetchall()]
+        all_note_items = [dict(r) for r in cursor.fetchall()]
 
-        cursor.execute(
-            f"DELETE FROM user_lecture_note_items WHERE {where_clause}",
-            tuple(params),
-        )
-        deleted = cursor.rowcount > 0
+        matching_rows: list[dict] = []
+        matching_ids: list[str] = []
+
+        for it in all_note_items:
+            it_norm = canonicalize_topic_norm(it["topic_text"])
+            it_key = it["topic_key"]
+            it_id = it["item_id"]
+
+            is_match = False
+            if clean_item_id and it_id == clean_item_id:
+                is_match = True
+            elif target_key and it_key == target_key:
+                is_match = True
+            elif target_norm and it_norm == target_norm:
+                is_match = True
+            elif clean_topic_text and it["topic_text"].strip().lower() == clean_topic_text.lower():
+                is_match = True
+
+            if is_match:
+                matching_rows.append(it)
+                matching_ids.append(it_id)
+
+        if matching_ids:
+            placeholders = ",".join("?" for _ in matching_ids)
+            cursor.execute(
+                f"DELETE FROM user_lecture_note_items WHERE note_id = ? AND item_id IN ({placeholders})",
+                [note_id] + matching_ids,
+            )
+            deleted = cursor.rowcount > 0
+        else:
+            deleted = False
 
         cursor.execute(
             "SELECT suppressed_topics_json FROM user_lecture_notes WHERE note_id = ?",
@@ -1398,6 +1482,12 @@ def _delete_lecture_note_item_sync(
         suppressed_changed = False
         terms_to_globally_ignore: list[str] = []
 
+        # Add target_norm and target_key to suppressed topics list
+        for cand in [target_norm, target_key, clean_topic_text.lower() if clean_topic_text else None]:
+            if cand and cand not in existing_suppressed:
+                existing_suppressed.append(cand)
+                suppressed_changed = True
+
         for it in matching_rows:
             t_key = it["topic_key"]
             t_text = (it["topic_text"] or "").strip()
@@ -1409,13 +1499,8 @@ def _delete_lecture_note_item_sync(
             if t_text:
                 terms_to_globally_ignore.append(t_text)
 
-        if clean_topic_text or clean_topic_key:
-            for cand in (clean_topic_key, clean_topic_text.lower() if clean_topic_text else None, canonicalize_topic_norm(clean_topic_text) if clean_topic_text else None):
-                if cand and cand not in existing_suppressed:
-                    existing_suppressed.append(cand)
-                    suppressed_changed = True
-            if clean_topic_text:
-                terms_to_globally_ignore.append(clean_topic_text)
+        if target_text:
+            terms_to_globally_ignore.append(target_text)
 
         if suppressed_changed:
             conn.execute(
@@ -1433,7 +1518,14 @@ def _delete_lecture_note_item_sync(
             for term in terms_to_globally_ignore:
                 add_ignored_topic(term)
 
-        return deleted
+        return {
+            "status": "ok",
+            "deleted": bool(deleted or suppressed_changed),
+            "note_id": note_id,
+            "removed_topic_norm": target_norm,
+            "removed_topic_key": target_key,
+            "suppressed_topics": existing_suppressed,
+        }
 
 
 # Standard REST endpoints and alias /lecture-notes routes
@@ -1547,7 +1639,7 @@ async def delete_lecture_note_item(
     global_ignore: bool = False,
 ) -> Dict[str, Any]:
     """Removes a topic line from a lecture note and appends to suppressed_topics_json."""
-    deleted = await asyncio.to_thread(
+    res = await asyncio.to_thread(
         _delete_lecture_note_item_sync,
         note_id=note_id,
         item_id=item_id,
@@ -1555,7 +1647,7 @@ async def delete_lecture_note_item(
         topic_text=str(topic_text) if topic_text else None,
         global_ignore=bool(global_ignore),
     )
-    return {"status": "success", "deleted": deleted}
+    return res
 
 
 @router.delete("/{note_id}/topics")
@@ -1567,7 +1659,7 @@ async def delete_lecture_note_topic(
     global_ignore: bool = False,
 ) -> Dict[str, Any]:
     """Removes a topic from a lecture note by topic_key or topic_text and suppresses it."""
-    deleted = await asyncio.to_thread(
+    res = await asyncio.to_thread(
         _delete_lecture_note_item_sync,
         note_id=note_id,
         item_id=None,
@@ -1575,4 +1667,4 @@ async def delete_lecture_note_topic(
         topic_text=str(topic_text) if topic_text else None,
         global_ignore=bool(global_ignore),
     )
-    return {"status": "success", "deleted": deleted}
+    return res

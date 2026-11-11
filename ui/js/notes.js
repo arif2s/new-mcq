@@ -75,98 +75,163 @@ export async function sampleRandomBgCardColor() {
 }
 
 /**
- * Highlights recognized medical topic names inside sanitized HTML as interactive clinical spans.
+ * Normalizes a clinical topic into a canonical, case-folded, singularized key in JS.
+ */
+export function canonicalizeTopicNormJS(rawText) {
+  if (!rawText) return "";
+  let cleaned = String(rawText).trim().toLowerCase()
+    .replace(/^[^\w]+|[^\w]+$/g, "")
+    .replace(/^(?:the|a|an)\s+/i, "")
+    .replace(/[\s_\-]+/g, " ")
+    .trim();
+  if (!cleaned) return "";
+  return cleaned.split(" ").map((tok) => {
+    if (tok.length > 4 && tok.endsWith("oses")) return tok.slice(0, -4) + "osis";
+    if (tok.length > 4 && tok.endsWith("ies") && !tok.endsWith("series")) return tok.slice(0, -3) + "y";
+    if (tok.length > 4 && tok.endsWith("es") && !/(ses|xes|zes|ches|shes)$/.test(tok)) return tok.slice(0, -1);
+    if (tok.length > 3 && tok.endsWith("s") && !/(ss|us|is|os|as)$/.test(tok)) return tok.slice(0, -1);
+    return tok;
+  }).join(" ");
+}
+
+/**
+ * Highlights active medical topics in DOM text nodes while skipping code, links, and buttons.
+ */
+export function highlightTopicsInReadingContainer(containerEl, topicItems, suppressedTopics = []) {
+  if (!containerEl) return;
+  const suppressedSet = new Set(
+    (suppressedTopics || []).map((s) => canonicalizeTopicNormJS(s)).filter(Boolean)
+  );
+
+  // First unwrap any existing marks for suppressed topics
+  containerEl.querySelectorAll("mark.note-topic-highlight, .note-topic-highlight").forEach((m) => {
+    const mNorm = canonicalizeTopicNormJS(m.dataset.topicNorm || m.dataset.topicKey || m.textContent);
+    if (suppressedSet.has(mNorm)) {
+      m.replaceWith(document.createTextNode(m.textContent));
+    }
+  });
+  if (containerEl.normalize) containerEl.normalize();
+
+  const variantToMeta = new Map();
+  const allVariants = [];
+
+  for (const item of topicItems || []) {
+    const rawName = item.topic_text || item.topic_name || item.name || "";
+    const norm = canonicalizeTopicNormJS(item.topic_norm || rawName);
+    const key = item.topic_key || norm.replace(/\s+/g, "-");
+    if (!norm || suppressedSet.has(norm)) continue;
+
+    const variants = new Set([
+      rawName,
+      norm,
+      ...(Array.isArray(item.surface_variants) ? item.surface_variants : []),
+    ]);
+    if (norm.endsWith("osis")) variants.add(norm.slice(0, -4) + "oses");
+    else if (norm.endsWith("y") && norm.length > 4) variants.add(norm.slice(0, -1) + "ies");
+    else if (!norm.endsWith("s")) variants.add(norm + "s");
+
+    for (const v of variants) {
+      const vClean = String(v || "").trim();
+      if (vClean.length < 3) continue;
+      const vLow = vClean.toLowerCase();
+      if (!variantToMeta.has(vLow)) {
+        variantToMeta.set(vLow, { topicNorm: norm, topicKey: key, topicText: rawName });
+        allVariants.push(vClean);
+      }
+    }
+  }
+
+  if (!allVariants.length) return;
+  allVariants.sort((a, b) => b.length - a.length);
+  const escaped = allVariants.map((v) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const masterRegex = new RegExp(`\\b(${escaped.join("|")})\\b`, "gi");
+
+  const walker = document.createTreeWalker(containerEl, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+      const parent = node.parentElement;
+      if (!parent) return NodeFilter.FILTER_REJECT;
+      if (parent.closest("mark, code, pre, script, style, a, button, input, textarea")) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+
+  const textNodes = [];
+  let current;
+  while ((current = walker.nextNode())) textNodes.push(current);
+
+  for (const textNode of textNodes) {
+    const text = textNode.nodeValue;
+    masterRegex.lastIndex = 0;
+    if (!masterRegex.test(text)) continue;
+    masterRegex.lastIndex = 0;
+
+    const frag = document.createDocumentFragment();
+    let lastIndex = 0;
+    let match;
+    while ((match = masterRegex.exec(text)) !== null) {
+      const matchedStr = match[0];
+      const start = match.index;
+      if (start > lastIndex) {
+        frag.appendChild(document.createTextNode(text.slice(lastIndex, start)));
+      }
+      const meta = variantToMeta.get(matchedStr.toLowerCase()) || {
+        topicNorm: canonicalizeTopicNormJS(matchedStr),
+        topicKey: canonicalizeTopicNormJS(matchedStr).replace(/\s+/g, "-"),
+        topicText: matchedStr,
+      };
+      const mark = document.createElement("mark");
+      mark.className = "note-topic-highlight";
+      mark.dataset.topicNorm = meta.topicNorm;
+      mark.dataset.topicKey = meta.topicKey;
+      mark.dataset.topic = meta.topicText;
+      mark.textContent = matchedStr;
+      frag.appendChild(mark);
+      lastIndex = start + matchedStr.length;
+    }
+    if (lastIndex < text.length) {
+      frag.appendChild(document.createTextNode(text.slice(lastIndex)));
+    }
+    textNode.replaceWith(frag);
+  }
+}
+
+/**
+ * Unwraps all matching <mark class="note-topic-highlight"> elements for a topic in DOM.
+ */
+export function unwrapTopicHighlightsInDOM(topicIdentifier, rootEl = document) {
+  const targetNorm = canonicalizeTopicNormJS(topicIdentifier);
+  if (!targetNorm) return 0;
+  const targetKey = targetNorm.replace(/\s+/g, "-");
+  let removedCount = 0;
+
+  const marks = rootEl.querySelectorAll("mark.note-topic-highlight, .note-topic-highlight");
+  marks.forEach((markEl) => {
+    const elNorm = canonicalizeTopicNormJS(
+      markEl.dataset.topicNorm || markEl.dataset.topicKey || markEl.dataset.topic || markEl.textContent
+    );
+    const elKey = (markEl.dataset.topicKey || "").toLowerCase();
+    if (elNorm === targetNorm || elKey === targetKey) {
+      const textNode = document.createTextNode(markEl.textContent);
+      markEl.replaceWith(textNode);
+      removedCount++;
+    }
+  });
+  if (rootEl.normalize) rootEl.normalize();
+  return removedCount;
+}
+
+/**
+ * Backward compatibility alias for HTML highlighting
  */
 export function highlightRecognizedTopicsInHtml(safeHtml, topicsList, suppressedList = []) {
   if (!safeHtml || !Array.isArray(topicsList) || topicsList.length === 0) return safeHtml;
   if (typeof document === 'undefined') return safeHtml;
-
-  const suppressedSet = new Set((suppressedList || []).map(s => String(s || '').trim().toLowerCase()));
-
-  // Collect all surface variants and topics mapped to canonical item
-  const variantMap = new Map();
-  for (const t of topicsList) {
-    if (!t) continue;
-    const text = (t.topic_text || '').trim();
-    if (text.length < 3) continue;
-    const lower = text.toLowerCase();
-    const key = (t.topic_key || '').trim().toLowerCase();
-    const norm = (t.topic_norm || '').trim().toLowerCase();
-    if (suppressedSet.has(lower) || (key && suppressedSet.has(key)) || (norm && suppressedSet.has(norm))) {
-      continue;
-    }
-
-    const variants = Array.isArray(t.surface_variants) && t.surface_variants.length > 0
-      ? t.surface_variants
-      : [text];
-
-    for (const v of variants) {
-      const vClean = String(v || '').trim();
-      const vLower = vClean.toLowerCase();
-      if (vClean.length >= 3 && !suppressedSet.has(vLower)) {
-        if (!variantMap.has(vLower)) {
-          variantMap.set(vLower, {
-            pattern: vClean,
-            canonicalText: text,
-            topicKey: key || lower.replace(/[\s_]+/g, '-'),
-            topicNorm: norm || lower
-          });
-        }
-      }
-    }
-  }
-
-  const allEntries = Array.from(variantMap.values()).sort((a, b) => b.pattern.length - a.pattern.length);
-  if (!allEntries.length) return safeHtml;
-
   const container = document.createElement('div');
   container.innerHTML = safeHtml;
-
-  const escapedPatterns = allEntries.map(e =>
-    e.pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  );
-  const topicRegex = new RegExp(`\\b(${escapedPatterns.join('|')})\\b`, 'gi');
-
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
-  const textNodes = [];
-  while (walker.nextNode()) textNodes.push(walker.currentNode);
-
-  for (const node of textNodes) {
-    if (node.parentElement && node.parentElement.closest('code, pre, a, .note-topic-highlight')) continue;
-    const text = node.nodeValue;
-    if (!topicRegex.test(text)) continue;
-    topicRegex.lastIndex = 0;
-
-    const frag = document.createDocumentFragment();
-    let lastIdx = 0;
-    let match;
-    while ((match = topicRegex.exec(text)) !== null) {
-      if (match.index > lastIdx) {
-        frag.appendChild(document.createTextNode(text.slice(lastIdx, match.index)));
-      }
-      const matchedText = match[0];
-      const entry = variantMap.get(matchedText.toLowerCase()) || {
-        canonicalText: matchedText,
-        topicKey: matchedText.toLowerCase().replace(/[\s_]+/g, '-'),
-        topicNorm: matchedText.toLowerCase()
-      };
-
-      const markEl = document.createElement('mark');
-      markEl.className = 'note-topic-highlight';
-      markEl.dataset.topicNorm = entry.topicNorm;
-      markEl.dataset.topicKey = entry.topicKey;
-      markEl.dataset.surface = matchedText;
-      markEl.dataset.topic = entry.canonicalText;
-      markEl.dataset.topicName = entry.canonicalText;
-      markEl.textContent = matchedText;
-      frag.appendChild(markEl);
-      lastIdx = topicRegex.lastIndex;
-    }
-    if (lastIdx < text.length) {
-      frag.appendChild(document.createTextNode(text.slice(lastIdx)));
-    }
-    node.parentNode.replaceChild(frag, node);
-  }
+  highlightTopicsInReadingContainer(container, topicsList, suppressedList);
   return container.innerHTML;
 }
 
@@ -1239,21 +1304,7 @@ export class LectureNoteEditor {
       // Unwrap all matching <mark class="note-topic-highlight"> elements in the DOM reading container
       const readingViewport = this.workspaceEl.querySelector('#note-reading-viewport');
       if (readingViewport) {
-        const marks = readingViewport.querySelectorAll('mark.note-topic-highlight, .note-topic-highlight');
-        marks.forEach((markEl) => {
-          const mNorm = (markEl.dataset.topicNorm || '').toLowerCase();
-          const mKey = (markEl.dataset.topicKey || '').toLowerCase();
-          const mText = (markEl.dataset.topic || markEl.dataset.topicName || markEl.textContent || '').trim().toLowerCase();
-          if (
-            (targetNorm && mNorm === targetNorm) ||
-            (targetKey && mKey === targetKey) ||
-            (targetText && mText === targetText)
-          ) {
-            const textNode = document.createTextNode(markEl.textContent);
-            markEl.replaceWith(textNode);
-          }
-        });
-        readingViewport.normalize();
+        unwrapTopicHighlightsInDOM(targetNorm || targetKey || targetText, readingViewport);
       }
 
       if (this.activeItemId === itemId) {
@@ -1802,5 +1853,10 @@ export class MyNotesController {
 }
 
 // Global initialization singleton helper
-window.MyNotesController = MyNotesController;
+if (typeof window !== 'undefined') {
+  window.MyNotesController = MyNotesController;
+  window.canonicalizeTopicNormJS = canonicalizeTopicNormJS;
+  window.highlightTopicsInReadingContainer = highlightTopicsInReadingContainer;
+  window.unwrapTopicHighlightsInDOM = unwrapTopicHighlightsInDOM;
+}
 export default MyNotesController;

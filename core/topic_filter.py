@@ -1,66 +1,56 @@
-from functools import lru_cache
+# File: core/topic_filter.py
+from __future__ import annotations
+
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 IGNORE_FILE_PATH = Path(__file__).resolve().parent.parent / "Ignore_list.txt"
 _NON_ALNUM_RE = re.compile(r"^[\W\d_]+$")
 _TOKEN_SPLIT_RE = re.compile(r"[\s_\-/]+")
+_LEADING_ARTICLE_RE = re.compile(r"^(?:the|a|an)\s+", re.IGNORECASE)
+_WRAP_PUNCT_RE = re.compile(r"^[^\w]+|[^\w]+$")
+
+_CACHED_IGNORE_MTIME: float = -1.0
+_CACHED_IGNORE_SET: frozenset[str] = frozenset()
 
 
-@lru_cache(maxsize=1)
 def load_ignore_set() -> frozenset[str]:
+    """Loads Ignore_list.txt with automatic mtime invalidation."""
+    global _CACHED_IGNORE_MTIME, _CACHED_IGNORE_SET
     if not IGNORE_FILE_PATH.exists():
         return frozenset()
-    terms: set[str] = set()
-    for line in IGNORE_FILE_PATH.read_text(encoding="utf-8").splitlines():
-        cleaned = line.strip().lower()
-        if cleaned and not cleaned.startswith("#"):
-            terms.add(cleaned)
-    return frozenset(terms)
+    try:
+        mtime = IGNORE_FILE_PATH.stat().st_mtime
+        if mtime == _CACHED_IGNORE_MTIME and _CACHED_IGNORE_SET:
+            return _CACHED_IGNORE_SET
+        terms: set[str] = set()
+        for line in IGNORE_FILE_PATH.read_text(encoding="utf-8").splitlines():
+            cleaned = line.strip().lower()
+            if cleaned and not cleaned.startswith("#"):
+                terms.add(cleaned)
+                terms.add(canonicalize_topic_norm(cleaned))
+        _CACHED_IGNORE_MTIME = mtime
+        _CACHED_IGNORE_SET = frozenset(t for t in terms if t)
+        return _CACHED_IGNORE_SET
+    except Exception:
+        return _CACHED_IGNORE_SET
 
 
-def is_valid_topic(topic: str | None) -> bool:
-    """Return True only if `topic` is a meaningful domain topic and not in Ignore_list.txt."""
-    if not topic or not isinstance(topic, str):
-        return False
-    normalized = topic.strip().lower()
-    if len(normalized) < 3:
-        return False
-    if _NON_ALNUM_RE.match(normalized):
-        return False
-    ignore_set = load_ignore_set()
-    if normalized in ignore_set:
-        return False
-    # Reject if every constituent word in a multi-word phrase is an ignored stopword
-    tokens = [t for t in _TOKEN_SPLIT_RE.split(normalized) if t]
-    if not tokens or all(t in ignore_set for t in tokens):
-        return False
-    return True
-
-
-def filter_topics(topics: list[str]) -> list[str]:
-    """Filter and deduplicate a list of topic strings while preserving order."""
-    seen: set[str] = set()
-    valid: list[str] = []
-    for t in topics:
-        if not is_valid_topic(t):
-            continue
-        key = t.strip().lower()
-        if key not in seen:
-            seen.add(key)
-            valid.append(t.strip())
-    return valid
-
-
-def canonicalize_topic_norm(text: str) -> str:
-    """Produces a case-folded, singularized canonical key for strict deduplication."""
-    if not text:
+def canonicalize_topic_norm(text: str | None) -> str:
+    """
+    Normalizes a clinical topic into a canonical, case-folded, singularized key.
+    Collapses 'Amyloidosis', 'amyloidosis', 'Amyloidoses', 'the amyloidosis' -> 'amyloidosis'.
+    """
+    if not text or not isinstance(text, str):
         return ""
-    cleaned = re.sub(r"^[^\w]+|[^\w]+$", "", str(text).strip().lower())
-    cleaned = re.sub(r"^(?:the|a|an)\s+", "", cleaned)
+    cleaned = _WRAP_PUNCT_RE.sub("", text.strip().lower())
+    cleaned = _LEADING_ARTICLE_RE.sub("", cleaned).strip()
     cleaned = re.sub(r"[\s_\-]+", " ", cleaned).strip()
-    tokens = []
+    if not cleaned:
+        return ""
+
+    tokens: list[str] = []
     for tok in cleaned.split():
         if len(tok) > 4 and tok.endswith("oses"):
             tok = tok[:-4] + "osis"
@@ -68,71 +58,149 @@ def canonicalize_topic_norm(text: str) -> str:
             tok = tok[:-3] + "y"
         elif len(tok) > 4 and tok.endswith("es") and not tok.endswith(("ses", "xes", "zes", "ches", "shes")):
             tok = tok[:-1]
-        elif len(tok) > 3 and tok.endswith("s") and not tok.endswith(("ss", "us", "is", "os")):
+        elif len(tok) > 3 and tok.endswith("s") and not tok.endswith(("ss", "us", "is", "os", "as")):
             tok = tok[:-1]
         tokens.append(tok)
     return " ".join(tokens)
 
 
+def is_valid_topic(topic: str | None, extra_ignored: Optional[Set[str] | frozenset[str]] = None) -> bool:
+    """Return True only if `topic` is a valid clinical topic and not in Ignore_list.txt or extra_ignored."""
+    if not topic or not isinstance(topic, str):
+        return False
+    normalized = topic.strip().lower()
+    if len(normalized) < 3 or _NON_ALNUM_RE.match(normalized):
+        return False
+
+    norm_stem = canonicalize_topic_norm(normalized)
+    if not norm_stem or len(norm_stem) < 3:
+        return False
+
+    ignore_set = load_ignore_set()
+    if normalized in ignore_set or norm_stem in ignore_set:
+        return False
+    if extra_ignored and (normalized in extra_ignored or norm_stem in extra_ignored):
+        return False
+
+    tokens = [t for t in _TOKEN_SPLIT_RE.split(norm_stem) if t]
+    if not tokens or all((t in ignore_set or (extra_ignored and t in extra_ignored)) for t in tokens):
+        return False
+    return True
+
+
+def filter_topics(topics: Iterable[str], extra_ignored: Optional[Set[str] | frozenset[str]] = None) -> list[str]:
+    """Filter and deduplicate a list of topic strings by canonical stem while preserving order."""
+    seen_norms: set[str] = set()
+    valid: list[str] = []
+    for t in topics or []:
+        if not isinstance(t, str) or not is_valid_topic(t, extra_ignored=extra_ignored):
+            continue
+        norm = canonicalize_topic_norm(t)
+        if norm and norm not in seen_norms:
+            seen_norms.add(norm)
+            valid.append(t.strip())
+    return valid
+
+
+def generate_surface_regex_variants(topic_text: str, topic_norm: str, variants: Iterable[str] = ()) -> list[str]:
+    """Generates surface forms (including plural/singular variants) for whole-word text highlighting."""
+    forms: set[str] = set()
+    for candidate in [topic_text, topic_norm, *(variants or [])]:
+        c = str(candidate or "").strip()
+        if len(c) >= 3:
+            forms.add(c)
+            low = c.lower()
+            if low.endswith("osis"):
+                forms.add(c[:-4] + "oses")
+            elif low.endswith("y") and len(c) > 4:
+                forms.add(c[:-1] + "ies")
+            elif not low.endswith("s"):
+                forms.add(c + "s")
+    return sorted(forms, key=len, reverse=True)
+
+
 def deduplicate_note_topics(
-    candidates: list[Any],
-    ignored_norms: set[str] | frozenset[str],
-    suppressed_norms: set[str] | frozenset[str],
-) -> list[dict[str, Any]]:
+    candidates: Iterable[Any],
+    ignored_norms: Optional[Set[str] | frozenset[str]] = None,
+    suppressed_norms: Optional[Set[str] | frozenset[str]] = None,
+) -> List[Dict[str, Any]]:
     """
-    Deduplicates extracted topics by canonical norm and CUI while enforcing
-    Ignore_list.txt, SQLite ignored_topics, per-note suppressed_topics_json,
-    CLINICAL_STOPWORDS, and ISOLATED_GENERIC_WORDS.
+    Deduplicates extracted note topics by canonical morphological stem and UMLS CUI,
+    filtering against Ignore_list.txt, SQLite ignored_topics, and note suppressed_topics_json.
     """
-    from agents.tema_q.topic_extractor import CLINICAL_STOPWORDS, ISOLATED_GENERIC_WORDS
-
     file_ignore = load_ignore_set()
-    all_excluded = {canonicalize_topic_norm(x) for x in (set(ignored_norms) | set(suppressed_norms) | set(file_ignore)) if x}
-    for w in CLINICAL_STOPWORDS:
-        all_excluded.add(canonicalize_topic_norm(w))
-    for w in ISOLATED_GENERIC_WORDS:
-        all_excluded.add(canonicalize_topic_norm(w))
+    combined_excluded: set[str] = set(file_ignore)
 
-    seen_norms: dict[str, dict[str, Any]] = {}
-    seen_cuis: dict[str, str] = {}
+    try:
+        from agents.tema_q.topic_extractor import CLINICAL_STOPWORDS, ISOLATED_GENERIC_WORDS
+        for w in CLINICAL_STOPWORDS:
+            combined_excluded.add(w.lower())
+            combined_excluded.add(canonicalize_topic_norm(w))
+        for w in ISOLATED_GENERIC_WORDS:
+            combined_excluded.add(w.lower())
+            combined_excluded.add(canonicalize_topic_norm(w))
+    except Exception:
+        pass
 
-    for item in candidates:
-        if isinstance(item, dict):
-            raw_name = str(item.get("name") or item.get("topic_name") or item.get("topic_text") or "").strip()
-            cui = str(item.get("cui") or "").strip()
+    for src_set in (ignored_norms, suppressed_norms):
+        if src_set:
+            for item in src_set:
+                s = str(item or "").strip().lower()
+                if s:
+                    combined_excluded.add(s)
+                    combined_excluded.add(canonicalize_topic_norm(s))
+
+    by_norm: Dict[str, Dict[str, Any]] = {}
+    cui_to_norm: Dict[str, str] = {}
+
+    for cand in candidates or []:
+        if isinstance(cand, dict):
+            raw_name = str(
+                cand.get("topic_text") or cand.get("name") or cand.get("topic_name") or ""
+            ).strip()
+            cui = str(cand.get("cui") or "").strip()
+            existing_variants = cand.get("surface_variants") or []
         else:
-            raw_name = str(item or "").strip()
+            raw_name = str(cand or "").strip()
             cui = ""
+            existing_variants = []
 
-        if not raw_name or not is_valid_topic(raw_name):
+        if not raw_name or not is_valid_topic(raw_name, extra_ignored=combined_excluded):
             continue
 
         norm = canonicalize_topic_norm(raw_name)
-        if not norm or norm in all_excluded or raw_name.lower() in file_ignore:
+        if not norm or norm in combined_excluded:
             continue
 
-        target_norm = seen_cuis.get(cui, norm) if cui else norm
-        if target_norm in all_excluded:
+        primary_norm = cui_to_norm.get(cui, norm) if cui else norm
+        if primary_norm in combined_excluded:
             continue
 
-        if cui and cui not in seen_cuis:
-            seen_cuis[cui] = target_norm
+        if cui and cui not in cui_to_norm:
+            cui_to_norm[cui] = primary_norm
 
-        topic_key = re.sub(r"[\s_]+", "-", target_norm)
-        if target_norm not in seen_norms:
-            seen_norms[target_norm] = {
+        topic_key = re.sub(r"[\s_]+", "-", primary_norm)
+        if primary_norm not in by_norm:
+            base_vars = [raw_name]
+            for ev in existing_variants:
+                if ev and ev not in base_vars:
+                    base_vars.append(ev)
+            by_norm[primary_norm] = {
                 "topic_text": raw_name,
-                "topic_norm": target_norm,
+                "topic_norm": primary_norm,
                 "topic_key": topic_key,
                 "cui": cui,
-                "surface_variants": [raw_name],
+                "surface_variants": base_vars,
             }
         else:
-            variants = seen_norms[target_norm]["surface_variants"]
-            if raw_name not in variants:
-                variants.append(raw_name)
+            entry = by_norm[primary_norm]
+            if raw_name and raw_name not in entry["surface_variants"]:
+                entry["surface_variants"].append(raw_name)
+            for ev in existing_variants:
+                if ev and ev not in entry["surface_variants"]:
+                    entry["surface_variants"].append(ev)
 
-    return list(seen_norms.values())
+    return list(by_norm.values())
 
 
 # Alias for Requirement C1
