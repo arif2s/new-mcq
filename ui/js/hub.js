@@ -68,12 +68,14 @@ async function loadSessions(silent = false) {
     const loadingEl = document.getElementById('hub-loading');
     const emptyEl = document.getElementById('hub-empty');
     const gridEl = document.getElementById('hub-grid');
+    const dueContainer = document.getElementById('hub-due-container');
 
     if (!silent) {
         if (!hubSessions || hubSessions.length === 0) {
             if (loadingEl) loadingEl.style.display = 'block';
             if (emptyEl) emptyEl.style.display = 'none';
             if (gridEl) gridEl.style.display = 'none';
+            if (dueContainer) dueContainer.style.display = 'none';
         } else {
             // Already cached, render immediately without flash
             renderHub();
@@ -166,151 +168,149 @@ function renderStatusCirclesHTML(session) {
     `;
 }
 
-function renderHub() {
-    const loadingEl = document.getElementById('hub-loading');
-    const emptyEl = document.getElementById('hub-empty');
-    const gridEl = document.getElementById('hub-grid');
+const CONSOLIDATED_REVIEWS_SESSION_ID = "sess_spaced_repetition_due";
 
-    if (loadingEl) loadingEl.style.display = 'none';
+function createSessionCardNode(session, isDueSession = false) {
+    const isSelectedForDelete = hubSelected.has(session.id);
+    const isInspectorActive = activeInspectorSessionId === session.id;
+    const reviewed = Boolean(session.topics_reviewed);
 
-    if (!hubSessions || hubSessions.length === 0) {
-        if (emptyEl) emptyEl.style.display = 'block';
-        if (gridEl) gridEl.style.display = 'none';
-        return;
-    }
+    const totalQ = Number(session.total_questions || 0);
+    const answeredQ = session.completed_questions !== undefined
+        ? Number(session.completed_questions)
+        : Number((session.correct_answers || 0) + (session.wrong_answers || 0));
 
-    if (emptyEl) emptyEl.style.display = 'none';
-    if (!gridEl) return;
+    const cardHeading = session.custom_title || session.subject_name || (isDueSession ? '🧠 Due & Wrong Review Set' : 'Clinical Question Set');
+    const subBadge = session.subject_name || (isDueSession ? 'Spaced Repetition & Wrong Qs' : 'General');
+    const lastAttMs = _toMs(session.last_attempted);
+    const createdMs = _toMs(session.timestamp) || Date.now();
+    const dateLabel = lastAttMs > 0
+        ? `Attempted ${new Date(lastAttMs).toLocaleDateString()}`
+        : `Created ${new Date(createdMs).toLocaleDateString()}`;
 
-    gridEl.style.display = 'grid';
-    gridEl.innerHTML = '';
+    const cardNode = document.createElement('div');
+    const specialBorder = isDueSession
+        ? 'border-warning-500/50 shadow-[0_0_15px_rgba(234,179,8,0.15)] ring-1 ring-warning-500/30'
+        : '';
+    cardNode.className = `kh-portrait-card cursor-pointer hub-card glass-card rounded-2xl transition-all flex flex-col h-full overflow-hidden shadow-lg relative ${specialBorder} ${
+        isSelectedForDelete || isInspectorActive ? 'border-brand-500 ring-1 ring-brand-500' : ''
+    }`;
+    cardNode.setAttribute('data-adaptive-contrast', 'true');
+    cardNode.setAttribute('data-session-id', escapeAttr(session.id));
+    cardNode.dataset.sessionId = session.id;
 
-    hubSessions.forEach(session => {
-        const isSelectedForDelete = hubSelected.has(session.id);
-        const isInspectorActive = activeInspectorSessionId === session.id;
-        const reviewed = Boolean(session.topics_reviewed);
-
-        const totalQ = Number(session.total_questions || 0);
-        const answeredQ = session.completed_questions !== undefined
-            ? Number(session.completed_questions)
-            : Number((session.correct_answers || 0) + (session.wrong_answers || 0));
-        const isCompleted = Boolean(session.is_completed) || (totalQ > 0 && answeredQ >= totalQ);
-
-        const cardHeading = session.custom_title || session.subject_name || 'Clinical Question Set';
-        const subBadge = session.subject_name || 'General';
-        const lastAttMs = _toMs(session.last_attempted);
-        const createdMs = _toMs(session.timestamp) || Date.now();
-        const dateLabel = lastAttMs > 0
-            ? `Attempted ${new Date(lastAttMs).toLocaleDateString()}`
-            : `Created ${new Date(createdMs).toLocaleDateString()}`;
-
-        const cardNode = document.createElement('div');
-        cardNode.className = `kh-portrait-card cursor-pointer hub-card glass-card rounded-2xl transition-all flex flex-col h-full overflow-hidden shadow-lg relative ${
-            isSelectedForDelete || isInspectorActive ? 'border-brand-500 ring-1 ring-brand-500' : ''
-        }`;
-        cardNode.setAttribute('data-adaptive-contrast', 'true');
-        cardNode.setAttribute('data-session-id', escapeAttr(session.id));
-        cardNode.dataset.sessionId = session.id;
-
-        let topicsHtml = '';
-        if (!reviewed) {
-            topicsHtml = `
-                <div class="mb-2 flex items-center justify-between glass-panel px-3 py-1.5 rounded-xl border border-warning/30">
-                    <span class="text-xs text-muted truncate pr-2">Topics not confirmed yet</span>
-                    <button type="button" class="btn-review-topics secondary-btn px-2.5 py-1 text-xs font-semibold text-brand-300 shrink-0 cursor-pointer">
-                        🩺 Review Topics
-                    </button>
-                </div>
-            `;
-        }
-
-        const accuracyDisplay = formatSessionAccuracyDisplay(session);
-        const isAttempted = accuracyDisplay !== "—";
-        const accValue = Math.round(Number(session.accuracy || 0));
-        const accColor = !isAttempted
-            ? 'text-muted'
-            : accValue >= 70
-                ? 'text-success-500'
-                : accValue >= 50
-                    ? 'text-warning-500'
-                    : 'text-danger-500';
-
-        cardNode.innerHTML = `
-            <div class="hub-select-container absolute top-3 right-3 z-10 ${isEditing ? '' : 'hidden'}">
-                <input type="checkbox" class="hub-select-cb w-5 h-5 rounded glass-input text-brand-500 cursor-pointer" ${isSelectedForDelete ? 'checked' : ''}>
-            </div>
-
-            <!-- Locked Zone 1: Header -->
-            <div class="kh-card-header flex justify-between items-center gap-2 ${isEditing ? 'pr-7' : ''}">
-                <span class="csv-topic-badge-dynamic hub-card-subject" title="${escapeAttr(subBadge)}">
-                    ${escapeAttr(subBadge)}
-                </span>
-                ${renderStatusCirclesHTML(session)}
-            </div>
-
-            <!-- Locked Zone 2: Title (clamped to 3 lines) -->
-            <h3 class="kh-card-title hub-card-title text-base font-bold" title="${escapeAttr(cardHeading)}">
-                ${escapeAttr(cardHeading)}
-            </h3>
-
-            <!-- Locked Zone 3: Body with fade mask -->
-            <div class="kh-card-body hub-card-body flex-1">
-                <div class="text-[11px] text-muted flex items-center justify-between kh-card-body-text">
-                    <span>${escapeAttr(dateLabel)}</span>
-                    <span class="font-mono font-semibold text-brand-300">${answeredQ} / ${totalQ} Completed</span>
-                </div>
-
-                <!-- Review Topics Trigger if unconfirmed -->
-                ${topicsHtml}
-
-                <!-- Progress & Accuracy Box -->
-                <div class="grid grid-cols-2 gap-2 glass-panel rounded-xl p-2.5 border border-gray-700/50">
-                    <div class="text-center">
-                        <p class="text-[10px] text-muted mb-0.5">Questions</p>
-                        <p class="hub-card-score text-sm font-bold">${answeredQ} / ${totalQ}</p>
-                    </div>
-                    <div class="text-center">
-                        <p class="text-[10px] text-muted mb-0.5">Accuracy</p>
-                        <p class="hub-card-accuracy text-sm font-bold ${accColor}">
-                            ${accuracyDisplay}
-                        </p>
-                    </div>
-                </div>
-
-                <div class="flex justify-between text-xs text-muted px-1 kh-card-body-text">
-                    <span><span class="hub-card-correct text-success-400 font-bold">${session.correct_answers || 0}</span> Correct</span>
-                    <span><span class="hub-card-wrong text-danger-400 font-bold">${session.wrong_answers || 0}</span> Wrong</span>
-                </div>
-
-                <button type="button" class="btn-study study-topics-covered-btn mt-1">
-                    📖 Study Topics Covered
+    let topicsHtml = '';
+    if (!reviewed && !isDueSession) {
+        topicsHtml = `
+            <div class="mb-2 flex items-center justify-between glass-panel px-3 py-1.5 rounded-xl border border-warning/30">
+                <span class="text-xs text-muted truncate pr-2">Topics not confirmed yet</span>
+                <button type="button" class="btn-review-topics secondary-btn px-2.5 py-1 text-xs font-semibold text-brand-300 shrink-0 cursor-pointer">
+                    🩺 Review Topics
                 </button>
             </div>
+        `;
+    }
 
-            <!-- Locked Zone 4: Footer Action Controls -->
-            <div class="kh-card-footer border-t border-gray-700 pt-2">
-                <div class="kh-equal-actions-grid">
-                    <button type="button" class="btn-review kh-action-btn-equal kh-action-btn-explanation">
-                        📝 Explanations
-                    </button>
-                    <button type="button" class="btn-retake kh-action-btn-equal kh-action-btn-start-quiz">
-                        ${answeredQ === 0 ? '▶️ Start Quiz' : '🔄 Retake Set'}
-                    </button>
+    const accuracyDisplay = formatSessionAccuracyDisplay(session);
+    const isAttempted = accuracyDisplay !== "—";
+    const accValue = Math.round(Number(session.accuracy || 0));
+    const accColor = !isAttempted
+        ? 'text-muted'
+        : accValue >= 70
+            ? 'text-success-500'
+            : accValue >= 50
+                ? 'text-warning-500'
+                : 'text-danger-500';
+
+    const headerRightHtml = isDueSession
+        ? `<span class="badge bg-warning text-xs font-bold font-mono px-2 py-0.5 rounded-full border border-warning-400/40 shadow-[0_0_8px_rgba(234,179,8,0.3)]">🧠 FSRS Review</span>`
+        : renderStatusCirclesHTML(session);
+
+    const selectContainerHtml = (!isDueSession && isEditing)
+        ? `<div class="hub-select-container absolute top-3 right-3 z-10">
+               <input type="checkbox" class="hub-select-cb w-5 h-5 rounded glass-input text-brand-500 cursor-pointer" ${isSelectedForDelete ? 'checked' : ''}>
+           </div>`
+        : '';
+
+    const retakeLabel = answeredQ === 0
+        ? '▶️ Start Quiz'
+        : (isDueSession ? '🔄 Review Set' : '🔄 Retake Set');
+
+    cardNode.innerHTML = `
+        ${selectContainerHtml}
+
+        <!-- Locked Zone 1: Header -->
+        <div class="kh-card-header flex justify-between items-center gap-2 ${(!isDueSession && isEditing) ? 'pr-7' : ''}">
+            <span class="csv-topic-badge-dynamic hub-card-subject" title="${escapeAttr(subBadge)}">
+                ${escapeAttr(subBadge)}
+            </span>
+            ${headerRightHtml}
+        </div>
+
+        <!-- Locked Zone 2: Title (clamped to 3 lines) -->
+        <h3 class="kh-card-title hub-card-title text-base font-bold" title="${escapeAttr(cardHeading)}">
+            ${escapeAttr(cardHeading)}
+        </h3>
+
+        <!-- Locked Zone 3: Body with fade mask -->
+        <div class="kh-card-body hub-card-body flex-1">
+            <div class="text-[11px] text-muted flex items-center justify-between kh-card-body-text">
+                <span>${escapeAttr(dateLabel)}</span>
+                <span class="font-mono font-semibold text-brand-300">${answeredQ} / ${totalQ} Completed</span>
+            </div>
+
+            <!-- Review Topics Trigger if unconfirmed -->
+            ${topicsHtml}
+
+            <!-- Progress & Accuracy Box -->
+            <div class="grid grid-cols-2 gap-2 glass-panel rounded-xl p-2.5 border border-gray-700/50">
+                <div class="text-center">
+                    <p class="text-[10px] text-muted mb-0.5">Questions</p>
+                    <p class="hub-card-score text-sm font-bold">${answeredQ} / ${totalQ}</p>
+                </div>
+                <div class="text-center">
+                    <p class="text-[10px] text-muted mb-0.5">Accuracy</p>
+                    <p class="hub-card-accuracy text-sm font-bold ${accColor}">
+                        ${accuracyDisplay}
+                    </p>
                 </div>
             </div>
-        `;
 
-        const cb = cardNode.querySelector('.hub-select-cb');
-        if (isEditing && cb) {
-            cb.addEventListener('change', (e) => {
-                e.stopPropagation();
-                if (e.target.checked) hubSelected.add(session.id);
-                else hubSelected.delete(session.id);
-                updateDeleteBtn();
-                renderHub();
-            });
-        }
+            <div class="flex justify-between text-xs text-muted px-1 kh-card-body-text">
+                <span><span class="hub-card-correct text-success-400 font-bold">${session.correct_answers || 0}</span> Correct</span>
+                <span><span class="hub-card-wrong text-danger-400 font-bold">${session.wrong_answers || 0}</span> Wrong</span>
+            </div>
 
+            <button type="button" class="btn-study study-topics-covered-btn mt-1">
+                📖 Study Topics Covered
+            </button>
+        </div>
+
+        <!-- Locked Zone 4: Footer Action Controls -->
+        <div class="kh-card-footer border-t border-gray-700 pt-2">
+            <div class="kh-equal-actions-grid">
+                <button type="button" class="btn-review kh-action-btn-equal kh-action-btn-explanation">
+                    📝 Explanations
+                </button>
+                <button type="button" class="btn-retake kh-action-btn-equal kh-action-btn-start-quiz">
+                    ${retakeLabel}
+                </button>
+            </div>
+        </div>
+    `;
+
+    const cb = cardNode.querySelector('.hub-select-cb');
+    if (cb) {
+        cb.addEventListener('change', (e) => {
+            e.stopPropagation();
+            if (e.target.checked) hubSelected.add(session.id);
+            else hubSelected.delete(session.id);
+            updateDeleteBtn();
+            renderHub();
+        });
+    }
+
+    if (!isDueSession) {
         const triggerTopicPopup = async (e) => {
             e.stopPropagation();
             await reopenTopicVerificationForSession(session);
@@ -319,29 +319,103 @@ function renderHub() {
         if (!reviewed) {
             cardNode.querySelector('.hub-circle-1')?.addEventListener('click', triggerTopicPopup);
         }
+    }
 
-        cardNode.querySelector('.btn-study')?.addEventListener('click', (e) => {
-            e.stopPropagation();
-            openTopicCarousel(session.id);
-        });
-
-        cardNode.querySelector('.btn-review')?.addEventListener('click', (e) => {
-            e.stopPropagation();
-            openSessionReview(session.id);
-        });
-
-        cardNode.querySelector('.btn-retake')?.addEventListener('click', (e) => {
-            e.stopPropagation();
-            retakeSession(session);
-        });
-
-        gridEl.appendChild(cardNode);
+    cardNode.querySelector('.btn-study')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openTopicCarousel(session.id);
     });
+
+    cardNode.querySelector('.btn-review')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openSessionReview(session.id);
+    });
+
+    cardNode.querySelector('.btn-retake')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        retakeSession(session);
+    });
+
+    return cardNode;
+}
+
+function renderHub() {
+    const loadingEl = document.getElementById('hub-loading');
+    const emptyEl = document.getElementById('hub-empty');
+    const gridEl = document.getElementById('hub-grid');
+    const dueContainer = document.getElementById('hub-due-container');
+    const dueGrid = document.getElementById('hub-due-grid');
+    const dueCountBadge = document.getElementById('hub-due-count-badge');
+    const studySetsCount = document.getElementById('hub-study-sets-count');
+    const editBtn = document.getElementById('hub-edit-btn');
+
+    if (loadingEl) loadingEl.style.display = 'none';
+
+    const sessions = Array.isArray(hubSessions) ? hubSessions : [];
+    const dueSession = sessions.find(s => s.id === CONSOLIDATED_REVIEWS_SESSION_ID);
+    const studySetSessions = sessions.filter(s => s.id !== CONSOLIDATED_REVIEWS_SESSION_ID);
+
+    // 1. Dedicated Due & Spaced Repetition Reviews Section Placement
+    const dueTotalQ = Number(dueSession?.total_questions || 0);
+    if (dueSession && dueTotalQ > 0) {
+        if (dueContainer) dueContainer.style.display = 'block';
+        if (dueCountBadge) {
+            dueCountBadge.textContent = `${dueTotalQ} Question${dueTotalQ === 1 ? '' : 's'} Due`;
+        }
+        if (dueGrid) {
+            dueGrid.innerHTML = '';
+            const dueCard = createSessionCardNode(dueSession, true);
+            dueGrid.appendChild(dueCard);
+        }
+    } else {
+        if (dueContainer) dueContainer.style.display = 'none';
+        if (dueGrid) dueGrid.innerHTML = '';
+    }
+
+    // 2. Curated Study Sets Section Placement
+    if (studySetsCount) {
+        studySetsCount.textContent = `${studySetSessions.length} set${studySetSessions.length === 1 ? '' : 's'}`;
+    }
+
+    if (studySetSessions.length === 0) {
+        if (emptyEl) emptyEl.style.display = 'block';
+        if (gridEl) {
+            gridEl.style.display = 'none';
+            gridEl.innerHTML = '';
+        }
+        if (isEditing) {
+            isEditing = false;
+            hubSelected.clear();
+            updateDeleteBtn();
+            const deleteBtn = document.getElementById('hub-delete-btn');
+            if (editBtn) editBtn.classList.remove('bg-brand-600', 'text-white');
+            if (deleteBtn) deleteBtn.style.display = 'none';
+        }
+        if (editBtn) {
+            editBtn.disabled = true;
+            editBtn.classList.add('opacity-40', 'cursor-not-allowed');
+        }
+    } else {
+        if (emptyEl) emptyEl.style.display = 'none';
+        if (editBtn) {
+            editBtn.disabled = false;
+            editBtn.classList.remove('opacity-40', 'cursor-not-allowed');
+        }
+        if (gridEl) {
+            gridEl.style.display = 'grid';
+            gridEl.innerHTML = '';
+            studySetSessions.forEach(session => {
+                const card = createSessionCardNode(session, false);
+                gridEl.appendChild(card);
+            });
+        }
+    }
 }
 
 function openKnowledgeHubRightSidebar(sessionId) {
     if (!sessionId) return;
     if (isEditing) {
+        if (sessionId === CONSOLIDATED_REVIEWS_SESSION_ID) return;
         if (hubSelected.has(sessionId)) {
             hubSelected.delete(sessionId);
         } else {

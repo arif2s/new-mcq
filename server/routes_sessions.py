@@ -1171,7 +1171,11 @@ def reprocess_session(session_id: str) -> Dict[str, Any]:
 @router.post("/delete")
 def delete_sessions(req: DeleteSessionsRequest) -> Dict[str, Any]:
     """Deletes multiple sessions, session questions, and task queue entries in bounded chunks."""
-    clean_ids = [s.strip() for s in req.session_ids if s and s.strip()]
+    clean_ids = [
+        s.strip()
+        for s in req.session_ids
+        if s and s.strip() and s.strip() != CONSOLIDATED_REVIEWS_SESSION_ID
+    ]
     if not clean_ids:
         return {"status": "success", "deleted_count": 0}
 
@@ -1287,11 +1291,11 @@ WRONG_ANSWER_COOLDOWN_SECONDS = 0
 
 _DUE_OR_WRONG_CSV_WHERE = """
 (
-    (q.due_timestamp > 0 AND q.due_timestamp <= unixepoch('now'))
-    OR (q.last_review IS NOT NULL AND (q.due_timestamp IS NULL OR q.due_timestamp <= unixepoch('now')))
-    OR (COALESCE(q.state, 0) IN (1, 3) AND (q.due_timestamp IS NULL OR q.due_timestamp <= unixepoch('now')))
+    (q.due_timestamp > 0 AND q.due_timestamp <= (unixepoch('now') + 1))
+    OR (q.last_review IS NOT NULL AND (q.due_timestamp IS NULL OR q.due_timestamp <= (unixepoch('now') + 1)))
+    OR (COALESCE(q.state, 0) IN (1, 3) AND (q.due_timestamp IS NULL OR q.due_timestamp <= (unixepoch('now') + 1)))
     OR (
-        COALESCE(q.due_timestamp, 0) <= unixepoch('now')
+        COALESCE(q.due_timestamp, 0) <= (unixepoch('now') + 1)
         AND EXISTS (
             SELECT 1 FROM session_questions sq
             WHERE sq.question_id = q.id
@@ -1313,9 +1317,9 @@ _DUE_OR_WRONG_CSV_WHERE = """
 
 _DUE_OR_WRONG_MCQ_WHERE = """
 (
-    (due_timestamp > 0 AND due_timestamp <= unixepoch('now'))
-    OR (last_review IS NOT NULL AND (due_timestamp IS NULL OR due_timestamp <= unixepoch('now')))
-    OR (COALESCE(state, 0) IN (1, 3) AND (due_timestamp IS NULL OR due_timestamp <= unixepoch('now')))
+    (due_timestamp > 0 AND due_timestamp <= (unixepoch('now') + 1))
+    OR (last_review IS NOT NULL AND (due_timestamp IS NULL OR due_timestamp <= (unixepoch('now') + 1)))
+    OR (COALESCE(state, 0) IN (1, 3) AND (due_timestamp IS NULL OR due_timestamp <= (unixepoch('now') + 1)))
 )
 """
 

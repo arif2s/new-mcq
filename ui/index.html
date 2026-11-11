@@ -421,12 +421,37 @@
 
           <div id="hub-main-container">
             <div id="hub-loading" class="text-center py-12 text-muted">Loading your study sets...</div>
-            <div id="hub-empty" class="text-center py-16 glass-panel rounded-2xl border border-gray-700" style="display: none;">
-              <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-brand-500 mb-4 opacity-50" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
-              <h2 class="text-xl font-semibold mb-2">No Study Sets in Hub Yet</h2>
-              <p class="text-muted">Curate a question set in the Quiz Engine and click "Start Quiz Now" or "Confirm &amp; Launch".</p>
+
+            <!-- Dedicated Due & Spaced Repetition Review Section -->
+            <div id="hub-due-container" class="mb-8" style="display: none;">
+              <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+                <div class="flex items-center gap-2">
+                  <span class="text-base select-none">🧠</span>
+                  <h3 class="text-sm font-bold uppercase tracking-wider text-warning-400">Due &amp; Spaced Repetition Reviews</h3>
+                  <span id="hub-due-count-badge" class="text-xs px-2.5 py-0.5 rounded-full bg-warning-500/20 text-warning-300 font-mono border border-warning-500/30">
+                    0 Questions Due
+                  </span>
+                </div>
+                <p class="text-xs text-muted hidden sm:block">Automated consolidated review set for overdue and incorrectly answered questions</p>
+              </div>
+              <div id="hub-due-grid" class="knowledge-hub-grid"></div>
             </div>
-            <div id="hub-grid" class="knowledge-hub-grid" style="display: none;"></div>
+
+            <!-- Curated Study Sets Section -->
+            <div id="hub-study-sets-section">
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="text-sm font-bold uppercase tracking-wider text-brand-400 flex items-center gap-2">
+                  <span>📚</span> Curated Study Sets
+                </h3>
+                <span id="hub-study-sets-count" class="text-xs text-muted font-mono">0 sets</span>
+              </div>
+              <div id="hub-empty" class="text-center py-16 glass-panel rounded-2xl border border-gray-700" style="display: none;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-brand-500 mb-4 opacity-50" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+                <h2 class="text-xl font-semibold mb-2">No Study Sets in Hub Yet</h2>
+                <p class="text-muted">Curate a question set in the Quiz Engine and click "Start Quiz Now" or "Confirm &amp; Launch".</p>
+              </div>
+              <div id="hub-grid" class="knowledge-hub-grid" style="display: none;"></div>
+            </div>
           </div>
 
           <!-- Session Review Sub-View -->
