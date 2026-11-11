@@ -1787,13 +1787,26 @@ export class MyNotesController {
       (refObj) => {
         // Open reference document
         const type = refObj._type || refObj.source_type || 'pdf';
-        const target = refObj.file_path || refObj.path || refObj.title || refObj.doc_id || '';
         const page = refObj.page || refObj.page_number || 1;
+        let target = '';
+        let extraMeta = {
+          anchor: refObj.heading || refObj.heading_path || '',
+          title: refObj.title || '',
+          heading: refObj.heading || ''
+        };
+
+        if (type === 'zim') {
+          target = refObj.article_id || refObj.title || refObj.heading || refObj.doc_id || '';
+          extraMeta.zimPath = refObj.zim_path || refObj.file_path || '';
+        } else if (type === 'obsidian') {
+          target = refObj.file_path || refObj.path || refObj.title || refObj.doc_id || '';
+        } else {
+          // pdf
+          target = refObj.file_path || refObj.path || refObj.title || refObj.doc_id || '';
+        }
+
         if (typeof window.openLocalResource === 'function') {
-          window.openLocalResource(type, target, page, {
-            anchor: refObj.heading || refObj.heading_path || '',
-            zimPath: refObj.zim_path || (type === 'zim' ? refObj.file_path : undefined)
-          });
+          window.openLocalResource(type, target, page, extraMeta);
         }
       }
     );

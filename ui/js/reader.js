@@ -55,6 +55,13 @@
                 }
                 isNavigatingBack = false;
                 baseOpenReader(opts);
+                const contentArea = document.getElementById("zim-content-area");
+                if (contentArea && (!opts || !opts.anchor)) {
+                    contentArea.scrollTop = 0;
+                    if (typeof contentArea.scrollTo === "function") {
+                        contentArea.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                    }
+                }
                 renderReaderBackButton();
                 applyReaderFontSize();
             };

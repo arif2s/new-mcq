@@ -487,6 +487,16 @@ window.openDocumentReader = function({ title, sourceType, htmlContent, markdownC
     document.body.classList.add('zim-reader-open');
     viewerContainer.style.display = 'flex';
 
+    // Scroll back to top on loading new article/document
+    contentArea.scrollTop = 0;
+    if (typeof contentArea.scrollTo === 'function') {
+        contentArea.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    }
+    viewerContainer.scrollTop = 0;
+    if (typeof viewerContainer.scrollTo === 'function') {
+        viewerContainer.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    }
+
     // Scroll to heading anchor if specified
     if (anchor) {
         setTimeout(() => {
@@ -586,8 +596,21 @@ window.openLocalResource = async function(type, pathOrId, extraPageOrTitle = 1, 
 
     if (normType === 'zim') {
         try {
-            const qParams = new URLSearchParams({ article_id: pathOrId });
-            if (extraMeta?.zimPath) qParams.set('zim_path', extraMeta.zimPath);
+            // Defensively guard against accidental ZIM file path passed as pathOrId
+            let targetArticle = pathOrId;
+            let effectiveZimPath = extraMeta?.zimPath || '';
+            if (
+                typeof targetArticle === 'string' &&
+                (targetArticle.endsWith('.zim') || targetArticle.includes('/') || targetArticle.includes('\\'))
+            ) {
+                if (!effectiveZimPath) effectiveZimPath = targetArticle;
+                targetArticle = (typeof extraPageOrTitle === 'string' && extraPageOrTitle)
+                    ? extraPageOrTitle
+                    : (extraMeta?.title || extraMeta?.heading || '');
+            }
+
+            const qParams = new URLSearchParams({ article_id: targetArticle });
+            if (effectiveZimPath) qParams.set('zim_path', effectiveZimPath);
             const res = await fetch(`/api/notes/zim-article?${qParams.toString()}`);
             const data = await res.json();
             if (data.status === 'success') {
