@@ -1388,7 +1388,7 @@ export class MyNotesController {
         <div id="notes-view-content" class="flex-1 min-h-0 overflow-hidden relative">
           <!-- Multi-Column Grid View -->
           <div id="notes-grid-view" class="h-full flex flex-col min-h-0 min-w-0">
-            <div id="my-notes-grid" class="flex-1 overflow-y-auto pr-1" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; align-content: start;">
+            <div id="my-notes-grid" class="my-notes-grid flex-1 overflow-y-auto pr-1">
               <!-- Note Cards injected here -->
             </div>
 
@@ -1524,7 +1524,7 @@ export class MyNotesController {
         this.launchCombinedQuizForNote(doMcqBtn.dataset.noteId, doMcqBtn.dataset.noteTitle || '');
         return;
       }
-      const card = e.target.closest('.lecture-note-card');
+      const card = e.target.closest('.note-card') || e.target.closest('.lecture-note-card');
       if (card) {
         this.openNoteEditor(card.dataset.noteId);
       }
@@ -1616,59 +1616,58 @@ export class MyNotesController {
       const modeBadge = (n.note_mode || 'list').toLowerCase() === 'notes' ? '📖 Notes' : '📋 List';
 
       return `
-        <div class="lecture-note-card rounded-2xl border p-4 flex flex-col justify-between shadow-lg hover:shadow-2xl transition-all cursor-pointer group hover:-translate-y-1 select-none"
+        <div class="note-card lecture-note-card rounded-2xl border p-4 flex flex-col justify-between shadow-lg hover:shadow-2xl transition-all cursor-pointer group hover:-translate-y-1 select-none"
+             data-adaptive-contrast="true"
              data-note-id="${n.note_id}"
              style="background: ${cardBg}; border-color: ${cardBorder}; min-height: 220px;">
-          <div>
-            <!-- Header: Title & Pin/Delete Actions -->
-            <div class="flex items-start justify-between gap-2 mb-2 pb-2 border-b border-white/10">
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2">
-                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-black/30 text-sky-300 font-mono font-semibold">${modeBadge}</span>
-                  <span class="text-[10px] text-slate-300/80 font-mono">${updatedDate}</span>
-                </div>
-                <h3 class="font-extrabold text-sm text-white truncate mt-1" title="${n.title}">${n.title}</h3>
+          <!-- Header: Title & Pin/Delete Actions -->
+          <div class="note-card-header flex items-start justify-between gap-2 mb-2 pb-2 border-b border-white/10">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] px-1.5 py-0.5 rounded bg-black/30 text-sky-300 font-mono font-semibold">${modeBadge}</span>
+                <span class="text-[10px] text-slate-300/80 font-mono">${updatedDate}</span>
               </div>
-              <div class="flex items-center gap-1 shrink-0">
-                <button type="button" class="btn-pin-note p-1 text-xs rounded hover:bg-white/10 transition cursor-pointer ${
-                  n.is_pinned ? 'text-amber-300' : 'text-slate-400 opacity-0 group-hover:opacity-100'
-                }" data-note-id="${n.note_id}" data-pinned="${n.is_pinned}" title="${n.is_pinned ? 'Unpin' : 'Pin note'}">
-                  ${n.is_pinned ? '📌' : '📍'}
-                </button>
-                <button type="button" class="btn-delete-note p-1 text-xs text-slate-400 hover:text-rose-400 rounded hover:bg-white/10 opacity-0 group-hover:opacity-100 transition cursor-pointer"
-                        data-note-id="${n.note_id}" title="Delete note">
-                  &times;
-                </button>
-              </div>
+              <h3 class="note-card-title font-extrabold text-sm text-white mt-1" title="${this._escapeAttr(n.title)}">${this._escapeHtml(n.title)}</h3>
             </div>
-
-            <!-- Preview List of Topics / Snippet -->
-            <div class="space-y-1.5 my-2">
-              ${topItems.length === 0 ? (
-                n.content_markdown ? `
-                  <p class="text-[11px] text-slate-200/90 line-clamp-3 italic py-1 px-1 bg-slate-950/30 rounded-lg">
-                    ${this._escapeHtml(n.content_markdown.replace(/[#*`_\[\]]/g, ' ').slice(0, 140))}...
-                  </p>
-                ` : `
-                  <p class="text-[11px] text-slate-300/60 italic py-3 text-center">Empty note — click to edit</p>
-                `
-              ) : topItems.map((item, idx) => `
-                <div class="flex items-center justify-between gap-2 text-xs text-slate-200 bg-slate-950/40 rounded-lg px-2.5 py-1">
-                  <span class="truncate flex-1 font-medium">${idx + 1}. ${item.topic_text}</span>
-                  <div class="flex items-center gap-1 shrink-0 text-[10px] font-mono">
-                    ${item.ref_count > 0 ? `<span class="text-sky-300 font-bold">${item.ref_count}r</span>` : ''}
-                    ${item.mcq_count > 0 ? `<span class="text-emerald-300 font-bold">${item.mcq_count}q</span>` : ''}
-                  </div>
-                </div>
-              `).join('')}
-              ${n.total_topics > topItems.length ? `
-                <p class="text-[10px] text-slate-300/70 text-right pr-1">+${n.total_topics - topItems.length} more</p>
-              ` : ''}
+            <div class="flex items-center gap-1 shrink-0">
+              <button type="button" class="btn-pin-note p-1 text-xs rounded hover:bg-white/10 transition cursor-pointer ${
+                n.is_pinned ? 'text-amber-300' : 'text-slate-400 opacity-0 group-hover:opacity-100'
+              }" data-note-id="${n.note_id}" data-pinned="${n.is_pinned}" title="${n.is_pinned ? 'Unpin' : 'Pin note'}">
+                ${n.is_pinned ? '📌' : '📍'}
+              </button>
+              <button type="button" class="btn-delete-note p-1 text-xs text-slate-400 hover:text-rose-400 rounded hover:bg-white/10 opacity-0 group-hover:opacity-100 transition cursor-pointer"
+                      data-note-id="${n.note_id}" title="Delete note">
+                &times;
+              </button>
             </div>
           </div>
 
+          <!-- Preview List of Topics / Snippet (Body / Preview) -->
+          <div class="note-card-preview note-card-body space-y-1.5 my-2">
+            ${topItems.length === 0 ? (
+              n.content_markdown ? `
+                <p class="text-[11px] text-slate-200/90 italic py-1 px-1 bg-slate-950/30 rounded-lg">
+                  ${this._escapeHtml(n.content_markdown.replace(/[#*`_\[\]]/g, ' ').slice(0, 140))}...
+                </p>
+              ` : `
+                <p class="text-[11px] text-slate-300/60 italic py-3 text-center">Empty note — click to edit</p>
+              `
+            ) : topItems.map((item, idx) => `
+              <div class="note-card-topic-row flex items-center justify-between gap-2 text-xs text-slate-200 bg-slate-950/40 rounded-lg px-2.5 py-1">
+                <span class="note-card-topic-name font-medium">${idx + 1}. ${this._escapeHtml(item.topic_text)}</span>
+                <div class="note-card-topic-badges flex items-center gap-1 shrink-0 text-[10px] font-mono">
+                  ${item.ref_count > 0 ? `<span class="text-sky-300 font-bold">${item.ref_count}r</span>` : ''}
+                  ${item.mcq_count > 0 ? `<span class="text-emerald-300 font-bold">${item.mcq_count}q</span>` : ''}
+                </div>
+              </div>
+            `).join('')}
+            ${n.total_topics > topItems.length ? `
+              <p class="text-[10px] text-slate-300/70 text-right pr-1">+${n.total_topics - topItems.length} more</p>
+            ` : ''}
+          </div>
+
           <!-- Footer Summary -->
-          <div class="pt-2 mt-2 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-300 font-semibold gap-2">
+          <div class="note-card-footer pt-2 mt-2 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-300 font-semibold gap-2">
             <span class="truncate">${n.total_topics} Topics • ${n.total_refs} Refs • ${n.total_mcqs} MCQs</span>
             <button type="button" class="btn-do-mcq-note px-2.5 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/35 text-sky-200 border border-sky-400/40 font-bold transition flex items-center gap-1 shrink-0 cursor-pointer shadow"
                     data-note-id="${n.note_id}" data-note-title="${this._escapeAttr(n.title)}" title="Do MCQ from all topics in this note">

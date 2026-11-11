@@ -2480,3 +2480,231 @@ body.light-theme #note-topic-carousel-container .note-carousel-pill:hover {
     background: rgba(226, 232, 240, 0.95);
     color: #0f172a;
 }
+
+
+/* ==========================================================================
+   Issue #7: My Notes Grid & Card Overflow Prevention Across All Viewports
+   ========================================================================== */
+.my-notes-grid {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)) !important;
+  gap: 1.1rem !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  align-items: stretch;
+}
+
+.note-card {
+  background: var(--note-custom-bg, var(--bg-derived-elevated, rgba(30, 41, 59, 0.86)));
+  border: 1px solid var(--border-derived, rgba(148, 163, 184, 0.24));
+  color: var(--local-text-color, var(--text-derived-primary, #f8fafc));
+  text-shadow: var(--local-text-shadow, none);
+  border-radius: 12px;
+  padding: 1rem;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  width: 100% !important;
+  height: 240px;
+  min-height: 220px;
+  max-height: 260px;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+  position: relative;
+}
+
+.note-card * {
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.note-card-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+  width: 100%;
+  margin-bottom: 0.45rem;
+}
+
+.note-card-title {
+  font-size: 1.02rem;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 0 0 0.45rem 0;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+  display: -webkit-box !important;
+  -webkit-line-clamp: 2 !important;
+  -webkit-box-orient: vertical !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.note-card-preview,
+.note-card-body {
+  font-size: 0.88rem;
+  line-height: 1.48;
+  color: var(--local-text-muted, var(--text-derived-muted, #cbd5e1));
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  width: 100%;
+}
+
+/* Ensure topic rows inside List-Mode note cards never overflow horizontally */
+.note-card-topic-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.note-card-topic-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-card-topic-badges {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-wrap: nowrap;
+}
+
+.note-card-footer {
+  flex: 0 0 auto;
+  margin-top: 0.75rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border-derived, rgba(148, 163, 184, 0.2));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+/* ==========================================================================
+   Issue #8: Knowledge Hub Portrait Card (Width < Height, 3:4 Aspect Ratio)
+   ========================================================================== */
+.knowledge-hub-grid {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 250px)) !important;
+  justify-content: start;
+  gap: 1.35rem !important;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.kh-portrait-card {
+  aspect-ratio: 3 / 4 !important;
+  width: 100% !important;
+  max-width: 250px !important;
+  min-height: 330px !important;
+  background: var(--bg-derived-elevated, rgba(30, 41, 59, 0.88));
+  border: 1px solid var(--border-derived, rgba(148, 163, 184, 0.25));
+  color: var(--local-text-color, var(--text-derived-primary, #f8fafc));
+  text-shadow: var(--local-text-shadow, none);
+  border-radius: 16px;
+  padding: 1.1rem;
+  box-sizing: border-box !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.kh-portrait-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--accent-derived-cool, #38bdf8);
+}
+
+.kh-card-header {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+  min-width: 0;
+  width: 100%;
+}
+
+.kh-card-title {
+  flex: 0 0 auto;
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.32;
+  margin: 0 0 0.5rem 0;
+  display: -webkit-box !important;
+  -webkit-line-clamp: 3 !important;
+  -webkit-box-orient: vertical !important;
+  overflow: hidden !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+  min-width: 0;
+}
+
+.kh-card-body {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  position: relative;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  color: var(--local-text-muted, var(--text-derived-muted, #cbd5e1));
+  mask-image: linear-gradient(to bottom, black 76%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 76%, transparent 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 0;
+  width: 100%;
+}
+
+.kh-card-body-text {
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+  overflow: hidden;
+}
+
+.kh-card-footer {
+  flex: 0 0 auto;
+  margin-top: auto;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--border-derived, rgba(148, 163, 184, 0.22));
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  min-width: 0;
+  width: 100%;
+}

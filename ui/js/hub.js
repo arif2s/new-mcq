@@ -188,9 +188,10 @@ function renderHub() {
             : [];
 
         const cardNode = document.createElement('div');
-        cardNode.className = `hub-card glass-card rounded-2xl transition-all flex flex-col h-full overflow-hidden shadow-lg relative cursor-pointer ${
+        cardNode.className = `kh-portrait-card hub-card glass-card rounded-2xl transition-all flex flex-col h-full overflow-hidden shadow-lg relative cursor-pointer ${
             isSelectedForDelete || isInspectorActive ? 'border-brand-500 ring-1 ring-brand-500' : ''
         }`;
+        cardNode.setAttribute('data-adaptive-contrast', 'true');
         cardNode.dataset.sessionId = session.id;
 
         let topicsHtml = '';
@@ -199,7 +200,7 @@ function renderHub() {
                 const visibleTopics = topics.slice(0, 6);
                 const hiddenCount = Math.max(0, topics.length - visibleTopics.length);
                 topicsHtml = `
-                    <div class="hub-card-topics flex flex-wrap gap-1.5 mb-4 overflow-hidden"
+                    <div class="hub-card-topics flex flex-wrap gap-1.5 mb-2 overflow-hidden"
                          style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; max-height: 46px;">
                         ${visibleTopics.map(t => `
                             <span class="text-[11px] px-2.5 py-0.5 glass-panel rounded-full inline-block truncate max-w-[140px]" title="${window.escapeHTML(t)}">
@@ -210,11 +211,11 @@ function renderHub() {
                     </div>
                 `;
             } else {
-                topicsHtml = `<div class="text-xs text-muted italic mb-4 h-[44px] flex items-center">Topics verified (General Clinical Set)</div>`;
+                topicsHtml = `<div class="text-xs text-muted italic mb-2 flex items-center">Topics verified (General Clinical Set)</div>`;
             }
         } else {
             topicsHtml = `
-                <div class="mb-4 h-[46px] flex items-center justify-between glass-panel px-3 py-2 rounded-xl border border-warning/30">
+                <div class="mb-2 flex items-center justify-between glass-panel px-3 py-1.5 rounded-xl border border-warning/30">
                     <span class="text-xs text-muted truncate pr-2">Topics not confirmed yet</span>
                     <button type="button" class="btn-review-topics secondary-btn px-2.5 py-1 text-xs font-semibold text-brand-300 shrink-0 cursor-pointer">
                         🩺 Review Topics
@@ -237,56 +238,58 @@ function renderHub() {
                 <input type="checkbox" class="hub-select-cb w-5 h-5 rounded glass-input text-brand-500 cursor-pointer" ${isSelectedForDelete ? 'checked' : ''}>
             </div>
 
-            <div class="p-5 flex-1 hub-card-body">
-                <!-- Top Row: Subject Tag + 1-2-3 Status Circles -->
-                <div class="flex justify-between items-center gap-2 mb-3 ${isEditing ? 'pr-7' : ''}">
-                    <span class="hub-card-subject text-xs font-medium px-2.5 py-1 bg-brand-600/20 text-brand-400 rounded-lg truncate max-w-[140px]">
-                        ${window.escapeHTML(subBadge)}
-                    </span>
-                    ${renderStatusCirclesHTML(session)}
-                </div>
+            <!-- Locked Zone 1: Header -->
+            <div class="kh-card-header flex justify-between items-center gap-2 ${isEditing ? 'pr-7' : ''}">
+                <span class="hub-card-subject text-xs font-medium px-2 py-0.5 bg-brand-600/20 text-brand-400 rounded-lg truncate max-w-[130px]">
+                    ${window.escapeHTML(subBadge)}
+                </span>
+                ${renderStatusCirclesHTML(session)}
+            </div>
 
-                <!-- Card Heading -->
-                <h3 class="hub-card-title text-lg font-bold mb-1 truncate" title="${window.escapeHTML(cardHeading)}">
-                    ${window.escapeHTML(cardHeading)}
-                </h3>
-                <div class="text-[11px] text-muted mb-3 flex items-center justify-between">
+            <!-- Locked Zone 2: Title (clamped to 3 lines) -->
+            <h3 class="kh-card-title hub-card-title text-base font-bold" title="${window.escapeHTML(cardHeading)}">
+                ${window.escapeHTML(cardHeading)}
+            </h3>
+
+            <!-- Locked Zone 3: Body with fade mask -->
+            <div class="kh-card-body hub-card-body flex-1">
+                <div class="text-[11px] text-muted flex items-center justify-between kh-card-body-text">
                     <span>${window.escapeHTML(dateLabel)}</span>
                     <span class="font-mono font-semibold text-brand-300">${answeredQ} / ${totalQ} Completed</span>
                 </div>
 
-                <!-- 2-Line Clamped Main Topics (or Review Topics Trigger) -->
+                <!-- Main Topics or Review Topics Trigger -->
                 ${topicsHtml}
 
                 <!-- Progress & Accuracy Box -->
-                <div class="grid grid-cols-2 gap-3 glass-panel rounded-xl p-3 border border-gray-700/50 mb-2">
+                <div class="grid grid-cols-2 gap-2 glass-panel rounded-xl p-2.5 border border-gray-700/50">
                     <div class="text-center">
-                        <p class="text-[11px] text-muted mb-0.5">Questions Done</p>
-                        <p class="hub-card-score text-base font-bold">${answeredQ} / ${totalQ}</p>
+                        <p class="text-[10px] text-muted mb-0.5">Questions</p>
+                        <p class="hub-card-score text-sm font-bold">${answeredQ} / ${totalQ}</p>
                     </div>
                     <div class="text-center">
-                        <p class="text-[11px] text-muted mb-0.5">Accuracy</p>
-                        <p class="hub-card-accuracy text-base font-bold ${accColor}">
+                        <p class="text-[10px] text-muted mb-0.5">Accuracy</p>
+                        <p class="hub-card-accuracy text-sm font-bold ${accColor}">
                             ${answeredQ > 0 ? `${accValue}%` : 'Not Attempted'}
                         </p>
                     </div>
                 </div>
 
-                <div class="flex justify-between text-xs text-muted px-1">
+                <div class="flex justify-between text-xs text-muted px-1 kh-card-body-text">
                     <span><span class="hub-card-correct text-success-400 font-bold">${session.correct_answers || 0}</span> Correct</span>
                     <span><span class="hub-card-wrong text-danger-400 font-bold">${session.wrong_answers || 0}</span> Wrong</span>
                 </div>
             </div>
 
-            <!-- Action Footer -->
-            <div class="border-t border-gray-700 p-3 glass-panel grid grid-cols-2 gap-2">
-                <button type="button" class="btn-study cursor-pointer py-2 px-3 text-xs font-medium bg-brand-600/20 text-brand-400 hover:bg-brand-600/30 rounded-lg transition-colors flex items-center justify-center gap-1.5 col-span-2 border-none">
+            <!-- Locked Zone 4: Footer Action Controls -->
+            <div class="kh-card-footer border-t border-gray-700 pt-2 grid grid-cols-2 gap-1.5">
+                <button type="button" class="btn-study cursor-pointer py-1.5 px-2 text-xs font-medium bg-brand-600/20 text-brand-400 hover:bg-brand-600/30 rounded-lg transition-colors flex items-center justify-center gap-1 col-span-2 border-none">
                     📖 Study Topics Covered
                 </button>
-                <button type="button" class="btn-review secondary-btn cursor-pointer py-2 px-3 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5">
+                <button type="button" class="btn-review secondary-btn cursor-pointer py-1 px-2 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1">
                     📝 Explanations
                 </button>
-                <button type="button" class="btn-retake secondary-btn cursor-pointer py-2 px-3 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5">
+                <button type="button" class="btn-retake secondary-btn cursor-pointer py-1 px-2 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1">
                     ${answeredQ === 0 ? '▶️ Start Quiz' : '🔄 Retake Set'}
                 </button>
             </div>
@@ -303,7 +306,8 @@ function renderHub() {
             });
         }
 
-        cardNode.querySelector('.hub-card-body')?.addEventListener('click', (e) => {
+        const bodyEl = cardNode.querySelector('.kh-card-body') || cardNode.querySelector('.hub-card-body');
+        bodyEl?.addEventListener('click', (e) => {
             if (e.target.closest('.btn-review-topics') || e.target.closest('.hub-circle-1')) return;
             if (isEditing && cb) {
                 cb.checked = !cb.checked;
