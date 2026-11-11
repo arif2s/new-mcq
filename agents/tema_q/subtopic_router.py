@@ -408,13 +408,14 @@ DOMAIN_SUBTOPIC_SCHEMAS: Dict[str, Tuple[SubtopicSpec, ...]] = {
 # ---------------------------------------------------------------------------
 @dataclass
 class RawProseBlock:
-    source_idx: int
-    source_label: str
-    source_type: str
-    page: int
-    heading: str
-    text: str
-    word_count: int
+    source_idx: int = 0
+    source_label: str = ""
+    source_type: str = "doc"
+    page: int = 1
+    heading: str = ""
+    text: str = ""
+    word_count: int = 0
+    block_idx: int = 0
 
 
 @dataclass
@@ -520,6 +521,89 @@ def _lexical_signal_score(text_lower: str, keywords: Sequence[str]) -> float:
     return min(1.0, hits / 3.0)
 
 
+def select_clinical_sentences(
+    clean_sents: List[str],
+    scores: List[float],
+    min_relevance: float,
+    max_words: int,
+    source_label: str,
+    heading_breadcrumb: str,
+    telemetry: Optional[Any] = None,
+) -> List[str]:
+    """
+    Selects clinical sentences while preserving narrative order and avoiding telemetry duplication.
+    Defers emitting 'below_min_relevance' telemetry until after fallback resurrection is resolved.
+    """
+    scored_sents: List[Tuple[int, float, str, int]] = []
+    below_threshold_indices: Dict[int, float] = {}
+
+    for idx, (sent, total_sc) in enumerate(zip(clean_sents, scores)):
+        w_cnt = len(sent.split())
+        if total_sc >= min_relevance or len(clean_sents) <= 2:
+            scored_sents.append((idx, total_sc, sent, w_cnt))
+        else:
+            below_threshold_indices[idx] = total_sc
+
+    # Fallback: resurrect top 5 sentences in reading order and remove them from pruned tracking
+    if not scored_sents:
+        for i, s in enumerate(clean_sents[:5]):
+            scored_sents.append((i, 0.5, s, len(s.split())))
+            below_threshold_indices.pop(i, None)
+
+    # Log only genuinely pruned below-threshold sentences
+    if telemetry is not None and hasattr(telemetry, "solar_pruned_sentences"):
+        for idx, sc in below_threshold_indices.items():
+            telemetry.solar_pruned_sentences.append({
+                "sentence": clean_sents[idx],
+                "relevance_score": round(sc, 3),
+                "min_relevance": min_relevance,
+                "source_label": source_label,
+                "heading_breadcrumb": heading_breadcrumb,
+                "reason": "below_min_relevance",
+            })
+
+    scored_sents.sort(key=lambda x: x[1], reverse=True)
+    selected_indices: List[int] = []
+    selected_token_sets: List[Set[str]] = []
+    used_words = 0
+
+    for idx, sc, sent, w_cnt in scored_sents:
+        if used_words + w_cnt > max_words and selected_indices:
+            if telemetry is not None and hasattr(telemetry, "solar_pruned_sentences"):
+                telemetry.solar_pruned_sentences.append({
+                    "sentence": sent,
+                    "relevance_score": round(sc, 3),
+                    "min_relevance": min_relevance,
+                    "source_label": source_label,
+                    "heading_breadcrumb": heading_breadcrumb,
+                    "reason": "budget_exceeded",
+                })
+            continue
+        toks = set(re.findall(r"\w{3,}", sent.lower()))
+        # Intra-subtopic sentence deduplication (Jaccard >= 0.78)
+        if toks and any(
+            len(toks & prev_t) / max(1, len(toks | prev_t)) >= 0.78
+            for prev_t in selected_token_sets
+        ):
+            if telemetry is not None and hasattr(telemetry, "solar_pruned_sentences"):
+                telemetry.solar_pruned_sentences.append({
+                    "sentence": sent,
+                    "relevance_score": round(sc, 3),
+                    "min_relevance": min_relevance,
+                    "source_label": source_label,
+                    "heading_breadcrumb": heading_breadcrumb,
+                    "reason": "intra_subtopic_duplicate",
+                })
+            continue
+        selected_indices.append(idx)
+        if toks:
+            selected_token_sets.append(toks)
+        used_words += w_cnt
+
+    selected_indices.sort()
+    return [clean_sents[i] for i in selected_indices]
+
+
 def prune_solar_sentences(
     sentences: List[str],
     question_anchor: str,
@@ -545,10 +629,9 @@ def prune_solar_sentences(
     embedder = get_embedding_engine()
     cos_matrix = embedder.score_texts_against_anchors(clean_sents, [question_anchor])
 
-    scored_sents: List[Tuple[int, float, str, int]] = []
+    scores: List[float] = []
     for idx, sent in enumerate(clean_sents):
         s_low = sent.lower()
-        w_cnt = len(sent.split())
         lex_sc = _lexical_signal_score(s_low, signal_keywords)
         has_num_or_sig = 0.15 if _NUMERIC_OR_CLINICAL_SIGNAL_RE.search(sent) else 0.0
 
@@ -564,63 +647,18 @@ def prune_solar_sentences(
             s_words = set(re.findall(r"[a-z]{4,}", s_low))
             q_overlap = len(q_words & s_words) / max(1, min(4, len(q_words)))
             total_sc = 0.45 * min(1.0, q_overlap) + 0.40 * lex_sc + has_num_or_sig
+        scores.append(total_sc)
 
-        # Drop 'solar' (stray/off-subtopic) sentences unless only 1-2 sentences exist
-        if total_sc >= min_relevance or len(clean_sents) <= 2:
-            scored_sents.append((idx, total_sc, sent, w_cnt))
-        else:
-            if telemetry is not None and hasattr(telemetry, "solar_pruned_sentences"):
-                telemetry.solar_pruned_sentences.append({
-                    "sentence": sent,
-                    "relevance_score": round(total_sc, 3),
-                    "min_relevance": min_relevance,
-                    "source_label": source_label,
-                    "heading_breadcrumb": heading_breadcrumb,
-                    "reason": "below_min_relevance",
-                })
-
-    if not scored_sents:
-        scored_sents = [(i, 0.5, s, len(s.split())) for i, s in enumerate(clean_sents[:5])]
-
-    # Rank by score descending to select within max_words budget, then restore reading order
-    scored_sents.sort(key=lambda x: x[1], reverse=True)
-    selected_indices: List[int] = []
-    selected_token_sets: List[Set[str]] = []
-    used_words = 0
-
-    for idx, sc, sent, w_cnt in scored_sents:
-        if used_words + w_cnt > max_words and selected_indices:
-            if telemetry is not None and hasattr(telemetry, "solar_pruned_sentences"):
-                telemetry.solar_pruned_sentences.append({
-                    "sentence": sent,
-                    "relevance_score": round(sc, 3),
-                    "source_label": source_label,
-                    "heading_breadcrumb": heading_breadcrumb,
-                    "reason": "budget_exceeded",
-                })
-            continue
-        toks = set(re.findall(r"\w{3,}", sent.lower()))
-        # Intra-subtopic sentence deduplication (Jaccard >= 0.78)
-        if toks and any(
-            len(toks & prev_t) / max(1, len(toks | prev_t)) >= 0.78
-            for prev_t in selected_token_sets
-        ):
-            if telemetry is not None and hasattr(telemetry, "solar_pruned_sentences"):
-                telemetry.solar_pruned_sentences.append({
-                    "sentence": sent,
-                    "relevance_score": round(sc, 3),
-                    "source_label": source_label,
-                    "heading_breadcrumb": heading_breadcrumb,
-                    "reason": "intra_subtopic_duplicate",
-                })
-            continue
-        selected_indices.append(idx)
-        if toks:
-            selected_token_sets.append(toks)
-        used_words += w_cnt
-
-    selected_indices.sort()
-    return " ".join(clean_sents[i] for i in selected_indices).strip()
+    selected = select_clinical_sentences(
+        clean_sents=clean_sents,
+        scores=scores,
+        min_relevance=min_relevance,
+        max_words=max_words,
+        source_label=source_label,
+        heading_breadcrumb=heading_breadcrumb,
+        telemetry=telemetry,
+    )
+    return " ".join(selected).strip()
 
 
 def route_and_prune_subtopics(
@@ -720,7 +758,12 @@ def route_and_prune_subtopics(
         if not sorted_srcs:
             continue
         primary_src_idx = sorted_srcs[0]
-        primary_blocks = [b for _, b in sorted(src_map[primary_src_idx], key=lambda x: x[0], reverse=True)]
+        primary_blocks = [
+            b for _, b in sorted(
+                src_map[primary_src_idx],
+                key=lambda item: getattr(item[1], "block_idx", getattr(item[1], "page", 0)),
+            )
+        ]
         if not primary_blocks:
             continue
 
@@ -906,6 +949,7 @@ __all__ = [
     "RoutedSubtopicBucket",
     "sanitize_clinical_prose",
     "split_clinical_sentences",
+    "select_clinical_sentences",
     "prune_solar_sentences",
     "route_and_prune_subtopics",
     "route_subtopic_blocks",

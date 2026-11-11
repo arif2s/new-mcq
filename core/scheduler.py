@@ -40,11 +40,20 @@ DEFAULT_REQUESTED_RETENTION: float = 0.9
 DEFAULT_MAX_INTERVAL_DAYS: int = 365
 REQUESTED_RETENTION: float = DEFAULT_REQUESTED_RETENTION
 
-# Precomputed decay factor: at t = S, R = (1 + FACTOR)^(-0.5) = 0.9 => FACTOR = (0.9^-2 - 1) = 19/81
-_FACTOR_FORGETTING: float = (DEFAULT_REQUESTED_RETENTION ** -2.0) - 1.0
+# Precomputed decay factor: at t = S, R = (1 + FACTOR)^(-0.5) = 0.9 => FACTOR = (0.9^-2 - 1) = 19/81 (~0.2345679)
+_FACTOR_FORGETTING: float = (0.9 ** -2.0) - 1.0
+_DECAY_POWER: float = -0.5
 _INTERVAL_SCALER: float = (
     (REQUESTED_RETENTION ** -2.0) - 1.0
 ) / _FACTOR_FORGETTING  # Exactly 1.0 at R=0.9
+
+
+def compute_retrievability(elapsed_days: float, stability: float) -> float:
+    """Computes FSRS power-law retrievability R(t, S) in [0.0, 1.0]."""
+    if elapsed_days <= 0.0:
+        return 1.0
+    safe_s = max(stability, 0.1)
+    return float((1.0 + _FACTOR_FORGETTING * (elapsed_days / safe_s)) ** _DECAY_POWER)
 
 # Initial review lookup tables: index 0 is unused dummy, 1=Again, 2=Hard, 3=Good, 4=Easy
 _INIT_D = (
@@ -189,6 +198,84 @@ def get_fsrs_parameters() -> Dict[str, Any]:
     }
 
 
+def compute_next_fsrs_state(
+    curr_state: int,
+    curr_s: float,
+    curr_d: float,
+    curr_lapses: int,
+    grade: int,
+    elapsed_days: float = 0.0,
+    requested_retention: Optional[float] = None,
+    max_interval_days: Optional[int] = None,
+    W: Tuple[float, ...] = (
+        0.4, 0.6, 2.4, 5.8, 4.93, 0.94, 0.86, 0.01,
+        1.49, 0.14, 0.94, 2.18, 0.05, 0.34, 1.26, 0.29, 2.61,
+    ),
+) -> Dict[str, float | int]:
+    """Computes next FSRS stability, difficulty, state, and interval using elapsed-time retrievability."""
+    safe_s = max(float(curr_s or 0.1), 0.1)
+    next_d = min(10.0, max(1.0, float(curr_d or 5.0)))
+
+    if grade == 1:
+        r_now = compute_retrievability(elapsed_days, safe_s)
+        s_forget = (
+            W[11]
+            * (next_d ** -W[12])
+            * (((safe_s + 1.0) ** W[13]) - 1.0)
+            * math.exp(W[14] * (1.0 - r_now))
+        )
+        next_s = max(round(min(safe_s, s_forget), 4), 0.1)
+        if curr_state in (2, 3):
+            next_state = 3  # Relearning
+            next_lapses = curr_lapses + 1
+        else:
+            next_state = 1  # Initial Learning
+            next_lapses = curr_lapses
+    else:
+        # Use dynamic retrievability for active review/relearning cards; default to 0.90 on initial graduation
+        r_now = compute_retrievability(elapsed_days, safe_s) if curr_state in (2, 3) else 0.90
+        grade_factor = W[15] if grade == 2 else (W[16] if grade == 4 else 1.0)
+        s_inc = (
+            math.exp(W[8])
+            * (11.0 - next_d)
+            * (safe_s ** -W[9])
+            * (math.exp(W[10] * (1.0 - r_now)) - 1.0)
+            * grade_factor
+        )
+        next_s = max(round(safe_s * (1.0 + s_inc), 4), 0.1)
+        next_state = 2  # Review
+        next_lapses = curr_lapses
+
+    if requested_retention is None or max_interval_days is None:
+        params = get_fsrs_parameters()
+        target_r = float(requested_retention if requested_retention is not None else params["requested_retention"])
+        max_days = int(max_interval_days if max_interval_days is not None else params["max_interval_days"])
+    else:
+        target_r = float(requested_retention)
+        max_days = int(max_interval_days)
+
+    target_r = max(0.70, min(0.99, target_r))
+    factor_r = (target_r ** -2.0) - 1.0
+    scaler = factor_r / _FACTOR_FORGETTING
+
+    if grade == 1:
+        interval_days = 0
+        interval_seconds = 0
+    else:
+        raw_days = next_s * scaler
+        interval_days = max(1, min(max_days, int(round(raw_days))))
+        interval_seconds = interval_days * 86400
+
+    return {
+        "stability": next_s,
+        "difficulty": next_d,
+        "state": next_state,
+        "lapses": next_lapses,
+        "interval_days": interval_days,
+        "interval_seconds": interval_seconds,
+    }
+
+
 def calculate_fsrs_next_interval(
     rating: int,
     state: int,
@@ -199,6 +286,7 @@ def calculate_fsrs_next_interval(
     now: Optional[float] = None,
     requested_retention: Optional[float] = None,
     max_interval_days: Optional[int] = None,
+    elapsed_days: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Computes updated FSRS v4.5 metrics adhering to the Section 3 & Section 4 FSRS Stats Dict contract.
@@ -211,6 +299,7 @@ def calculate_fsrs_next_interval(
     - reps: total prior reviews
     - lapses: total prior lapses from review state
     - now: optional Unix timestamp for exact due_timestamp computation
+    - elapsed_days: optional days since last review (defaults to stability if None for review state)
     """
     try:
         grade = max(1, min(4, int(rating if rating is not None else 3)))
@@ -222,6 +311,9 @@ def calculate_fsrs_next_interval(
     curr_s = float(stability or 0.0)
     curr_reps = max(0, int(reps or 0))
     curr_lapses = max(0, int(lapses or 0))
+
+    # Determine elapsed days
+    actual_elapsed = float(elapsed_days) if elapsed_days is not None else (curr_s if curr_state in (2, 3) else 0.0)
 
     # Initial Review (New Card)
     if curr_reps == 0 or curr_state == 0:
@@ -241,14 +333,18 @@ def calculate_fsrs_next_interval(
         # Guard stability against zero-lock collapse (>= 0.1 floor)
         safe_s = max(curr_s, 0.1)
 
+        # Compute dynamic retrievability
+        r_now = compute_retrievability(actual_elapsed, safe_s) if curr_state in (2, 3) else 0.90
+
         # Rating 1: Again (Lapse / Relearning)
         if grade == 1:
             s_lapse = (
-                _AGAIN_MULTIPLIER
+                W[11]
                 * (next_d ** -W[12])
                 * (((safe_s + 1.0) ** W[13]) - 1.0)
+                * math.exp(W[14] * (1.0 - r_now))
             )
-            next_s = max(round(s_lapse, 4), 0.1)
+            next_s = max(round(min(safe_s, s_lapse), 4), 0.1)
             if curr_state in (2, 3):
                 next_state = 3  # Relearning
                 next_lapses = curr_lapses + 1
@@ -257,19 +353,32 @@ def calculate_fsrs_next_interval(
                 next_lapses = curr_lapses
         # Ratings 2, 3, 4: Hard, Good, Easy (Recall)
         else:
-            s_recall = safe_s * (
-                1.0
-                + (11.0 - next_d) * (safe_s ** -W[9]) * _RETENTION_MODIFIER[grade]
+            grade_factor = W[15] if grade == 2 else (W[16] if grade == 4 else 1.0)
+            s_inc = (
+                math.exp(W[8])
+                * (11.0 - next_d)
+                * (safe_s ** -W[9])
+                * (math.exp(W[10] * (1.0 - r_now)) - 1.0)
+                * grade_factor
             )
-            next_s = max(round(s_recall, 4), 0.1)
+            next_s = max(round(safe_s * (1.0 + s_inc), 4), 0.1)
             next_state = 2  # Review
             next_lapses = curr_lapses
 
-    # Resolve user-tweaked FSRS parameters
-    params = get_fsrs_parameters()
-    target_r = float(requested_retention if requested_retention is not None else params["requested_retention"])
+    # Resolve user-tweaked FSRS parameters conditionally
+    easy_bonus = 1.3
+    hard_factor = 0.8
+    if requested_retention is None or max_interval_days is None:
+        params = get_fsrs_parameters()
+        target_r = float(requested_retention if requested_retention is not None else params["requested_retention"])
+        max_days = int(max_interval_days if max_interval_days is not None else params["max_interval_days"])
+        easy_bonus = float(params.get("easy_bonus", easy_bonus))
+        hard_factor = float(params.get("hard_factor", hard_factor))
+    else:
+        target_r = float(requested_retention)
+        max_days = int(max_interval_days)
+
     target_r = max(0.70, min(0.99, target_r))
-    max_days = int(max_interval_days if max_interval_days is not None else params["max_interval_days"])
 
     # Decay factor formula: I = S * (R^(-1/decay) - 1) / (0.9^(-1/decay) - 1) with standard power -2.0
     factor_r = (target_r ** -2.0) - 1.0
@@ -283,10 +392,10 @@ def calculate_fsrs_next_interval(
     else:
         raw_interval = next_s * scaler
         if grade == 4:
-            raw_interval *= float(params.get("easy_bonus", 1.3))
+            raw_interval *= easy_bonus
         elif grade == 2:
-            raw_interval *= float(params.get("hard_factor", 0.8))
-        interval_days = max(1, min(max_days, round(raw_interval)))
+            raw_interval *= hard_factor
+        interval_days = max(1, min(max_days, int(round(raw_interval))))
         interval_seconds = int(interval_days * 86400)
     new_reps = curr_reps + 1
 
@@ -399,3 +508,17 @@ def update_fsrs_card_state(
         }
     )
     return state
+
+
+__all__ = [
+    "W",
+    "compute_retrievability",
+    "compute_next_fsrs_state",
+    "calculate_fsrs_next_interval",
+    "get_fsrs_parameters",
+    "map_fsrs_state_to_status",
+    "compute_fsrs_retrievability",
+    "update_fsrs_card_state",
+    "CachedFSRSConfigProvider",
+    "FSRSConfig",
+]

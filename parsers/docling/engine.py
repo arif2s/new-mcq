@@ -19,6 +19,8 @@ import logging
 import math
 import os
 import re
+from bisect import bisect_left, bisect_right
+from collections import deque
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 try:
@@ -58,6 +60,29 @@ from parsers.docling.inspector import (
 )
 
 logger = logging.getLogger(__name__)
+
+class SpatialSpanIndex:
+    """1D Y-axis interval index with precomputed centroids for O(log N + K) bounding-box queries."""
+
+    def __init__(self, spans: List[Dict[str, Any]]) -> None:
+        indexed: List[Tuple[float, float, Dict[str, Any]]] = []
+        for s in spans:
+            if not s.get("is_marginal"):
+                cx = (s["x0"] + s["x1"]) * 0.5
+                cy = (s["y0"] + s["y1"]) * 0.5
+                indexed.append((cy, cx, s))
+        indexed.sort(key=lambda item: item[0])
+        self._ys: List[float] = [item[0] for item in indexed]
+        self._items: List[Tuple[float, float, Dict[str, Any]]] = indexed
+
+    def query_box(self, box: Tuple[float, float, float, float]) -> List[Dict[str, Any]]:
+        """Returns all non-marginal spans whose centroids fall inside (x0, y0, x1, y1)."""
+        bx0, by0, bx1, by1 = box
+        lo = bisect_left(self._ys, by0)
+        hi = bisect_right(self._ys, by1)
+        sub = self._items[lo:hi]
+        return [item[2] for item in sub if bx0 <= item[1] <= bx1]
+
 
 class AdaptivePdfLayoutEngine:
     """
@@ -686,6 +711,7 @@ class AdaptivePdfLayoutEngine:
 
         rules = sorted(self.horizontal_rules, key=lambda r: (r[1], r[0]))
         used_rule_indices = set()
+        span_index = SpatialSpanIndex(spans)
 
         for i, r_top in enumerate(rules):
             if i in used_rule_indices:
@@ -718,11 +744,7 @@ class AdaptivePdfLayoutEngine:
                 if any(_rects_overlap(box, ez) for ez in self.exclusion_zones):
                     continue
 
-                t_spans = [
-                    s for s in spans
-                    if not s.get("is_marginal")
-                    and _point_in_rect((s["x0"] + s["x1"]) * 0.5, (s["y0"] + s["y1"]) * 0.5, box)
-                ]
+                t_spans = span_index.query_box(box)
                 if len(t_spans) < 4:
                     continue
 
@@ -1702,21 +1724,19 @@ class AdaptivePdfLayoutEngine:
         if not lines:
             return sorted(non_text, key=lambda b: (b.get("y0", 0.0), b.get("x0", 0.0)))
 
-        for line in lines:
-            line["is_image_wrapped"] = self._is_wrapped_beside_image(line)
-
         raw_dividers: List[float] = [
             hr[1] for hr in self.horizontal_rules if (hr[2] - hr[0]) >= 0.55 * self.page_width
         ]
+        spanning_banners = [
+            hb for hb in self.header_banners if (hb[2] - hb[0]) >= 0.55 * self.page_width
+        ]
 
         for line in lines:
+            line["is_image_wrapped"] = self._is_wrapped_beside_image(line)
             line_w = line["x1"] - line["x0"]
             l_bbox = line.get("bbox", (line["x0"], line["y0"], line["x1"], line["y1"]))
             in_banner = self._is_in_header_banner(l_bbox)
-            is_spanning_banner = in_banner and any(
-                (hb[2] - hb[0]) >= 0.55 * self.page_width and _rects_overlap(l_bbox, hb)
-                for hb in self.header_banners
-            )
+            is_spanning_banner = in_banner and any(_rects_overlap(l_bbox, hb) for hb in spanning_banners)
             is_heading_candidate = (
                 line["size"] >= 1.12 * self.mu_size
                 or ((line["is_bold"] or line.get("is_accent_color", False)) and line["size"] >= 1.0 * self.mu_size)
@@ -2418,23 +2438,27 @@ class AdaptivePdfLayoutEngine:
             })
             return clean_title
 
+        safe_pw = max(float(self.page_width or 1.0), 1e-6)
+        safe_ph = max(float(self.page_height or 1.0), 1e-6)
+
         def to_norm_bbox(b: Tuple[float, float, float, float]) -> List[float]:
             return [
-                round(b[0] / self.page_width, 4),
-                round(b[1] / self.page_height, 4),
-                round(b[2] / self.page_width, 4),
-                round(b[3] / self.page_height, 4),
+                round(b[0] / safe_pw, 4),
+                round(b[1] / safe_ph, 4),
+                round(b[2] / safe_pw, 4),
+                round(b[3] / safe_ph, 4),
             ]
 
         def flush_pending_floats() -> None:
             nonlocal pending_floats, order_counter
             while pending_floats:
-                flt = pending_floats.pop(0)
+                flt = pending_floats.popleft() if isinstance(pending_floats, deque) else pending_floats.pop(0)
+                md_content = flt.get("markdown", "").strip()
+                if not md_content:
+                    continue
                 f_type = flt.get("type", "caption")
                 f_bbox = flt.get("bbox", (0.0, 0.0, 0.0, 0.0))
-                md_content = flt.get("markdown", "").strip()
-                if md_content:
-                    output_entries.append((f_type, md_content))
+                output_entries.append((f_type, md_content))
                 layout_boxes.append({
                     "order": order_counter,
                     "type": f_type,
@@ -2521,14 +2545,14 @@ class AdaptivePdfLayoutEngine:
                 md_content = item.get("markdown", "").strip()
                 if md_content:
                     output_entries.append((b_type, md_content))
-                layout_boxes.append({
-                    "order": order_counter,
-                    "type": b_type,
-                    "bbox": norm_bbox,
-                    "markdown": md_content,
-                    "label": f"{b_type.title()} #{order_counter}",
-                })
-                order_counter += 1
+                    layout_boxes.append({
+                        "order": order_counter,
+                        "type": b_type,
+                        "bbox": norm_bbox,
+                        "markdown": md_content,
+                        "label": f"{b_type.title()} #{order_counter}",
+                    })
+                    order_counter += 1
                 prev_was_h3 = False
                 continue
 

@@ -13,7 +13,9 @@ import os
 import re
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+import urllib.parse
+from html.parser import HTMLParser
+from typing import Any, Dict, List, Optional, Set, Union
 
 # Enforce Invariant 1: Zero VRAM for backend processes
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -36,6 +38,100 @@ _DANGEROUS_URI_ATTR_RE = re.compile(
     r"""(\b(?:href|src|action)\s*=\s*["']?)\s*(?:javascript|vbscript|data\s*:\s*text/html)\s*:[^"'\s>]*""",
     flags=re.IGNORECASE,
 )
+
+_ALLOWED_TAGS: Set[str] = {
+    "p", "br", "strong", "em", "b", "i", "u", "code", "pre",
+    "ul", "ol", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6",
+    "table", "thead", "tbody", "tr", "th", "td", "hr", "span", "sup", "sub",
+}
+_ALLOWED_ATTRS = {
+    "a": {"href", "title", "class"},
+    "span": {"class"},
+    "code": {"class"},
+    "th": {"align"},
+    "td": {"align"},
+}
+_ALLOWED_URL_SCHEMES = {"http", "https", "obsidian", "mailto"}
+
+
+def sanitize_reference_url(url: Optional[str]) -> str:
+    """Blocks javascript:, data:, and vbscript: protocol injection in reference links."""
+    if not url:
+        return "#"
+    clean_url = str(url).strip()
+    if clean_url.startswith(("/", "#")):
+        return clean_url
+    parsed = urllib.parse.urlparse(clean_url)
+    if parsed.scheme.lower() in _ALLOWED_URL_SCHEMES:
+        return clean_url
+    return "#"
+
+
+class _FallbackAllowlistSanitizer(HTMLParser):
+    """Zero-dependency HTML allowlist sanitizer fallback when nh3 is unavailable."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self._out: list[str] = []
+        self._skip_depth: int = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+        t = tag.lower()
+        if t in ("script", "style", "iframe", "object", "embed"):
+            self._skip_depth += 1
+            return
+        if self._skip_depth > 0 or t not in _ALLOWED_TAGS:
+            return
+        allowed_for_tag = _ALLOWED_ATTRS.get(t, set())
+        clean_attrs: list[str] = []
+        for k, v in attrs:
+            k_low = k.lower()
+            if k_low in allowed_for_tag and v is not None:
+                val = sanitize_reference_url(v) if k_low == "href" else v
+                clean_attrs.append(f' {k_low}="{html.escape(val, quote=True)}"')
+        if t == "a":
+            clean_attrs.append(' rel="noopener noreferrer"')
+        self._out.append(f"<{t}{''.join(clean_attrs)}>")
+
+    def handle_endtag(self, tag: str) -> None:
+        t = tag.lower()
+        if t in ("script", "style", "iframe", "object", "embed"):
+            self._skip_depth = max(0, self._skip_depth - 1)
+            return
+        if self._skip_depth == 0 and t in _ALLOWED_TAGS:
+            self._out.append(f"</{t}>")
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth == 0:
+            self._out.append(html.escape(data))
+
+    def handle_entityref(self, name: str) -> None:
+        if self._skip_depth == 0:
+            self._out.append(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        if self._skip_depth == 0:
+            self._out.append(f"&#{name};")
+
+
+def sanitize_clinical_html(raw_html: str) -> str:
+    """Sanitizes Markdown-rendered HTML using nh3 if available, or strict standard-library parser."""
+    if not raw_html:
+        return ""
+    try:
+        import nh3
+        return nh3.clean(
+            raw_html,
+            tags=_ALLOWED_TAGS,
+            attributes=_ALLOWED_ATTRS,
+            url_schemes=_ALLOWED_URL_SCHEMES,
+            link_rel="noopener noreferrer",
+        )
+    except ImportError:
+        parser = _FallbackAllowlistSanitizer()
+        parser.feed(raw_html)
+        parser.close()
+        return "".join(parser._out)
 
 DOSSIER_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -218,15 +314,7 @@ def _sanitize_rendered_html(rendered: str) -> str:
     """Iteratively strips dangerous tags, inline event handlers, and script URI schemes (Invariant 5)."""
     if not rendered:
         return ""
-    cleaned = rendered
-    while True:
-        next_cleaned = _DANGEROUS_TAG_RE.sub("", cleaned)
-        next_cleaned = _EVENT_ATTR_RE.sub("", next_cleaned)
-        next_cleaned = _DANGEROUS_URI_ATTR_RE.sub(r"\1#", next_cleaned)
-        if next_cleaned == cleaned:
-            break
-        cleaned = next_cleaned
-    return cleaned
+    return sanitize_clinical_html(rendered)
 
 
 def _render_markdown_to_html(raw_text: str) -> str:
@@ -322,10 +410,10 @@ def _normalize_references_polymorphic(
             snippet = snippet[:280] + "..."
 
         ref_topic_key = item.get("ref_topic_key") or ""
-        summary_link = item.get("summary_link") or ""
-        report_url = item.get("report_url") or ""
+        summary_link = sanitize_reference_url(item.get("summary_link"))
+        report_url = sanitize_reference_url(item.get("report_url"))
         summary_md = str(item.get("summary_markdown") or "").strip()
-        summary_html = _render_markdown_to_html(summary_md) if summary_md else ""
+        summary_html = sanitize_clinical_html(_render_markdown_to_html(summary_md)) if summary_md else ""
 
         key = (src, str(title).strip().lower(), str(heading).strip().lower(), page)
         if key not in seen:
@@ -470,7 +558,7 @@ def _normalize_article_payload(unified_raw: Any, fallback_topic: str) -> Dict[st
             "conditional_context": str(parsed_dict.get("conditional_context") or ""),
             "clinical_points": clinical_points,
             "raw_text": raw_prose,
-            "rendered_html": _render_markdown_to_html(raw_prose),
+            "rendered_html": sanitize_clinical_html(_render_markdown_to_html(raw_prose)),
             "discrepancies": str(
                 parsed_dict.get("discrepancies") or parsed_dict.get("variance_audit") or ""
             ),
@@ -483,7 +571,7 @@ def _normalize_article_payload(unified_raw: Any, fallback_topic: str) -> Dict[st
             "conditional_context": "",
             "clinical_points": [],
             "raw_text": unified_raw,
-            "rendered_html": _render_markdown_to_html(unified_raw),
+            "rendered_html": sanitize_clinical_html(_render_markdown_to_html(unified_raw)),
             "discrepancies": "",
         }
 
@@ -552,17 +640,21 @@ def generate_topic_report(
     enhanced_exp = str(synth.get("enhanced_explanation") or "").strip()
     distractor_an = str(synth.get("distractor_analysis") or "").strip()
 
+    enhanced_exp_html = sanitize_clinical_html(_render_markdown_to_html(enhanced_exp))
+    distractor_an_html = sanitize_clinical_html(_render_markdown_to_html(distractor_an))
+    variance_html_rendered = sanitize_clinical_html(_render_markdown_to_html(variance_text))
+
     html_content = _COMPILED_TEMPLATE.render(
         topic=topic,
         topic_key=topic_key,
         display_title=display_title,
         article=article_data,
         enhanced_explanation=enhanced_exp,
-        enhanced_explanation_html=_render_markdown_to_html(enhanced_exp),
+        enhanced_explanation_html=enhanced_exp_html,
         distractor_analysis=distractor_an,
-        distractor_analysis_html=_render_markdown_to_html(distractor_an),
+        distractor_analysis_html=distractor_an_html,
         variance_text=variance_text,
-        variance_html=_render_markdown_to_html(variance_text),
+        variance_html=variance_html_rendered,
         references=normalized_refs,
     )
 
