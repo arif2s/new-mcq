@@ -32,7 +32,11 @@ const DEFAULT_PERSISTENCE = {
     wallpaperIntervalMinutes: 120, // Wallpaper rotation duration in minutes (0 = Never)
     embeddingModel: 'sentence-transformers/all-MiniLM-L6-v2',
     flashrankModel: 'ms-marco-TinyBERT-L-2-v2',
-    scispacyModel: 'en_core_sci_md'
+    scispacyModel: 'en_core_sci_md',
+
+    // AI Synthesis Mode & LM Studio Word Limit Settings
+    synthesisMode: 'tantivy_microedit', // 'tantivy_microedit' | 'per_article_lm_summary'
+    lmMaxWordsOverride: 0 // 0 = Auto-detect from LM Studio loaded_context_length
 };
 
 let appState = JSON.parse(JSON.stringify(DEFAULT_PERSISTENCE));

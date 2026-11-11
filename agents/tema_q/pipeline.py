@@ -194,8 +194,9 @@ async def call_llm_async(
     max_tokens: int = 500,
     model_id: Optional[str] = None,
     telemetry_meta: Optional[Dict[str, Any]] = None,
+    context_length_tokens: Optional[int] = None,
 ) -> str:
-    """Async chat completion against local LM Studio server with hard 4096-token budget (Invariant 4)."""
+    """Async chat completion against local LM Studio server with dynamic context token ceiling."""
     import time
     t0 = time.perf_counter()
     active_model = str(model_id or DEFAULT_MODEL).strip() or DEFAULT_MODEL
@@ -203,8 +204,9 @@ async def call_llm_async(
     sys_str = str(system_prompt or "").strip()
     sys_tokens = count_tokens(sys_str)
 
-    # Enforce Invariant 4: Total prompt + completion tokens must never exceed MAX_CONTEXT_TOKENS (4096)
-    available_user_tokens = max(128, MAX_CONTEXT_TOKENS - sys_tokens - safe_max_out - 64)
+    # Dynamic context ceiling: use context_length_tokens if passed or fallback to MAX_CONTEXT_TOKENS (4096)
+    effective_ctx = max(2048, int(context_length_tokens or MAX_CONTEXT_TOKENS))
+    available_user_tokens = max(128, effective_ctx - sys_tokens - safe_max_out - 64)
     bounded_user_prompt = truncate_to_token_limit(str(user_prompt or ""), available_user_tokens)
     user_tokens = count_tokens(bounded_user_prompt)
 
@@ -651,6 +653,135 @@ async def resolve_primary_and_secondary_docs(search_results: dict) -> Tuple[str,
     return primary, secondary
 
 
+GENERIC_CLINICAL_SUBHEADINGS: Set[str] = {
+    "treatment", "diagnosis", "pathogenesis", "clinical features", "epidemiology",
+    "complications", "overview", "management", "etiology", "pathology", "symptoms",
+    "signs and symptoms", "prognosis", "investigations", "differential diagnosis",
+    "prevention", "screening", "risk factors", "pathophysiology", "classification",
+    "evaluation", "definition", "introduction", "therapy", "clinical presentation",
+}
+
+
+def extract_topic_exclusive_passages(
+    full_text: str, target_topic: str, max_words: int, is_microedit: bool = False
+) -> str:
+    """
+    Extracts topic-exclusive passages from full_text, stripping off-topic sections and conflicting
+    sibling conditions while respecting max_words budget (Issues #11, #12, #13).
+    """
+    if not full_text or not target_topic:
+        return full_text or ""
+
+    from agents.tema_q.topic_extractor import (
+        SIBLING_MUTUAL_EXCLUSIONS,
+        _contains_phrase_bounded,
+        get_topic_aliases,
+    )
+
+    clean_target = target_topic.strip()
+    target_lower = clean_target.lower()
+    try:
+        aliases = get_topic_aliases(clean_target, max_aliases=8)
+    except Exception:
+        aliases = [clean_target]
+
+    if not aliases:
+        aliases = [clean_target]
+    elif clean_target.lower() not in [a.lower() for a in aliases]:
+        aliases.insert(0, clean_target)
+
+    alias_lowers = [a.lower().strip() for a in aliases if a.strip()]
+
+    # Collect conflicting sibling topics
+    conflicting_siblings: Set[str] = set()
+    for group_a, group_b in SIBLING_MUTUAL_EXCLUSIONS:
+        in_a = any(_contains_phrase_bounded(target_lower, t) for t in group_a)
+        in_b = any(_contains_phrase_bounded(target_lower, t) for t in group_b)
+        if in_a and not in_b:
+            conflicting_siblings.update(group_b)
+        elif in_b and not in_a:
+            conflicting_siblings.update(group_a)
+
+    # Split into headed sections or paragraphs: (?m)(?=^#{1,6}\s+|\n\s*\n)
+    blocks = re.split(r"(?m)(?=^#{1,6}\s+|\n\s*\n)", full_text)
+    retained_blocks: List[str] = []
+    active_heading_is_on_topic = True
+
+    for block in blocks:
+        block_str = block.strip()
+        if not block_str:
+            continue
+
+        # Check if block starts with a markdown heading
+        heading_match = re.match(r"^#{1,6}\s+(.+)$", block_str, flags=re.MULTILINE)
+        if heading_match:
+            heading_text = heading_match.group(1).strip()
+            heading_clean = re.sub(r"^[0-9\.\-\s]+", "", heading_text).strip()
+            heading_lower = heading_clean.lower()
+
+            # Check if heading explicitly mentions target topic or aliases
+            heading_has_target = any(
+                _contains_phrase_bounded(heading_lower, a) for a in alias_lowers
+            )
+            # Check if heading is a generic clinical subheading
+            is_generic_subheading = any(
+                heading_lower == g or heading_lower.startswith(f"{g} ") or heading_lower.endswith(f" {g}")
+                for g in GENERIC_CLINICAL_SUBHEADINGS
+            )
+            # Check if heading is conflicting sibling
+            heading_is_conflict = any(
+                _contains_phrase_bounded(heading_lower, sib) for sib in conflicting_siblings
+            )
+
+            if heading_has_target:
+                active_heading_is_on_topic = True
+            elif heading_is_conflict:
+                active_heading_is_on_topic = False
+            elif is_generic_subheading:
+                # Retain previous active_heading_is_on_topic state
+                pass
+            else:
+                # Heading mentions an unrelated topic: check if block body mentions target
+                body_has_target = any(
+                    _contains_phrase_bounded(block_str.lower(), a) for a in alias_lowers
+                )
+                active_heading_is_on_topic = body_has_target
+
+        if not active_heading_is_on_topic:
+            # If off-topic heading, skip unless block explicitly contains target alias
+            if not any(_contains_phrase_bounded(block_str.lower(), a) for a in alias_lowers):
+                continue
+
+        # Exclude block if it focuses on conflicting sibling without mentioning target
+        block_lower = block_str.lower()
+        has_conflict = any(_contains_phrase_bounded(block_lower, sib) for sib in conflicting_siblings)
+        has_target = any(_contains_phrase_bounded(block_lower, a) for a in alias_lowers)
+        if has_conflict and not has_target:
+            continue
+
+        retained_blocks.append(block_str)
+
+    if not retained_blocks:
+        # Fallback: scan for any block mentioning target aliases
+        for block in blocks:
+            b_str = block.strip()
+            if any(_contains_phrase_bounded(b_str.lower(), a) for a in alias_lowers):
+                retained_blocks.append(b_str)
+
+    if not retained_blocks:
+        retained_blocks = [b.strip() for b in blocks if b.strip()]
+
+    combined = "\n\n".join(retained_blocks)
+
+    # Word bounding
+    max_w = max(50, int(max_words or (280 if is_microedit else 1000)))
+    words = combined.split()
+    if len(words) > max_w:
+        combined = " ".join(words[:max_w])
+
+    return combined
+
+
 def _flatten_top_references(search_results: Any) -> List[Dict[str, Any]]:
     """Normalizes search_results into a list[ChunkDict] satisfying SynthesisOutputDict['top_references']."""
     if isinstance(search_results, list):
@@ -720,10 +851,40 @@ async def run_tema_q_synthesis(
     model_id: Optional[str] = None,
     heading_wise: bool = True,
     collect_telemetry: bool = False,
+    synthesis_mode: Optional[str] = None,
+    user_max_words_override: Optional[int] = None,
 ) -> dict:
     """Executes multi-pass clinical synthesis and variance auditing across resolved sources."""
     topic_key = re.sub(r"[\s_]+", "-", (topic or "").lower().strip())
     flat_refs = _flatten_top_references(search_results)
+
+    # Read default synthesis_mode and user_max_words_override from SQLite user_state if omitted
+    effective_synthesis_mode = (synthesis_mode or "").strip().lower()
+    effective_max_words_override = user_max_words_override
+
+    if not effective_synthesis_mode or effective_max_words_override is None:
+        try:
+            with closing(get_db_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM user_state WHERE key = 'app_persistence'")
+                row = cursor.fetchone()
+                if row:
+                    raw_val = row[0] if isinstance(row, tuple) else row["value"]
+                    app_persist = json.loads(raw_val)
+                    if isinstance(app_persist, dict):
+                        if not effective_synthesis_mode:
+                            effective_synthesis_mode = str(
+                                app_persist.get("synthesisMode") or "tantivy_microedit"
+                            ).strip().lower()
+                        if effective_max_words_override is None:
+                            val = app_persist.get("lmMaxWordsOverride")
+                            if val is not None and int(val) > 0:
+                                effective_max_words_override = int(val)
+        except Exception as exc:
+            logger.debug("Failed reading app_persistence for synthesis mode: %s", exc)
+
+    if effective_synthesis_mode not in ("tantivy_microedit", "per_article_lm_summary"):
+        effective_synthesis_mode = "tantivy_microedit"
 
     if skip_lm:
         return {
@@ -735,6 +896,7 @@ async def run_tema_q_synthesis(
             "variance_audit": "",
             "top_references": flat_refs or search_results,
             "reference_links": search_results,
+            "synthesis_mode": effective_synthesis_mode,
         }
 
     documents = await resolve_documents(search_results, topic=topic)
@@ -755,10 +917,16 @@ async def run_tema_q_synthesis(
             "variance_audit": "",
             "top_references": flat_refs or search_results,
             "reference_links": search_results,
+            "synthesis_mode": effective_synthesis_mode,
         }
 
+    from core.model_lifecycle import model_lifecycle
+    ctx_info = await model_lifecycle.get_active_model_context_info(
+        user_max_words_override=effective_max_words_override, client=get_http_client()
+    )
+
     lm_available = True
-    active_model = str(model_id or DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    active_model = str(model_id or ctx_info.get("model_id") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
 
     from agents.tema_q.telemetry import (
         HeadingDispatchTrace,
@@ -797,340 +965,497 @@ async def run_tema_q_synthesis(
                 "target_topic": topic,
             }
 
-    # Fast CPU Question-Anchored Subtopic Router & Pruner
-    t_route_0 = time.perf_counter()
-    subtopic_buckets = await asyncio.to_thread(
-        route_and_prune_subtopics, topic, documents, mcq_context, 5, 650, 450, trace
-    )
-    t_route_ms = round((time.perf_counter() - t_route_0) * 1000.0, 2)
-    if trace:
-        trace.stage_timings_ms["circle2_5_subtopic_routing"] = t_route_ms
+    per_article_summaries: List[Dict[str, Any]] = []
 
-    synthesized_subtopic_nodes: List[Dict[str, Any]] = []
-
-    if subtopic_buckets:
-        for bucket in subtopic_buckets:
-            sub_title = bucket.display_name
-            pass2_sys_prompt = PASS2_AUDIT_SYSTEM_PROMPT.replace("{subtopic}", sub_title)
-
-            # Determine sections to dispatch for Pass 1
-            if heading_wise and getattr(bucket, "primary_heading_sections", None):
-                sections_to_dispatch = bucket.primary_heading_sections
-            else:
-                sections_to_dispatch = [
-                    {
-                        "heading_breadcrumb": bucket.display_name,
-                        "text": bucket.primary_text,
-                        "source_label": bucket.primary_source_label,
-                        "source_type": "ref",
-                        "page": bucket.primary_page,
-                        "word_count": len(bucket.primary_text.split()),
-                    }
-                ]
-
-            subtopic_node: Optional[Dict[str, Any]] = None
-
-            for sec_item in sections_to_dispatch:
-                sec_text = sec_item.get("text") or ""
-                sec_heading = sec_item.get("heading_breadcrumb") or bucket.display_name
-                sec_src = sec_item.get("source_label") or bucket.primary_source_label
-                sec_pg = sec_item.get("page") or bucket.primary_page
-                sec_type = sec_item.get("source_type") or "ref"
-
-                pass1_user_msg = (
-                    f"Clinical Topic: {topic}\n"
-                    f"Target Subtopic: {bucket.display_name} ({bucket.question_anchor})\n"
-                    f"Source Document: {sec_src} (Page {sec_pg})\n"
-                    f"Article Heading Breadcrumb: {sec_heading}\n\n"
-                    f"Heading Text:\n{sec_text}"
-                )
-
-                call_meta: Dict[str, Any] = {}
-                base_note_str = ""
-                heading_json: Dict[str, Any] = {}
-
-                if lm_available:
-                    try:
-                        base_note_str = await call_llm_async(
-                            PASS1_CLINICAL_SYSTEM_PROMPT,
-                            pass1_user_msg,
-                            max_tokens=600,
-                            model_id=active_model,
-                            telemetry_meta=call_meta,
-                        )
-                        parsed_base = parse_llm_json(base_note_str)
-                        if isinstance(parsed_base, list):
-                            heading_json = {
-                                "section": "Clinical Summary",
-                                "subtopic": sub_title,
-                                "conditional_context": "",
-                                "clinical_points": parsed_base,
-                                "discrepancies": "",
-                            }
-                        elif isinstance(parsed_base, dict):
-                            heading_json = parsed_base
-                            heading_json["subtopic"] = sub_title
-                        else:
-                            heading_json = {
-                                "section": "Clinical Summary",
-                                "subtopic": sub_title,
-                                "conditional_context": "",
-                                "clinical_points": [
-                                    {
-                                        "point": str(base_note_str)[:500],
-                                        "source": sec_src,
-                                        "page": sec_pg,
-                                    }
-                                ],
-                                "discrepancies": "",
-                            }
-                    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.HTTPError) as net_err:
-                        logger.warning("LM Studio offline during Pass 1: %s", net_err)
-                        lm_available = False
-                    except Exception as exc:
-                        logger.error("Pass 1 LLM synthesis failed for heading '%s': %s", sec_heading, exc)
-
-                if not heading_json:
-                    heading_json = {
-                        "section": "Clinical Summary",
-                        "subtopic": sub_title,
-                        "conditional_context": "",
-                        "clinical_points": [
-                            {
-                                "point": sec_text[:500],
-                                "source": sec_src,
-                                "page": sec_pg,
-                            }
-                        ],
-                        "discrepancies": "",
-                    }
-
-                # Record Telemetry for this Heading Dispatch
-                if trace:
-                    src_dosages_stages = extract_clinical_numbers_and_stages(sec_text)
-                    llm_pts_str = " ".join(
-                        str(pt.get("point", "")) for pt in heading_json.get("clinical_points", []) if isinstance(pt, dict)
-                    )
-                    retained_ds = [ds for ds in src_dosages_stages if ds in llm_pts_str.lower()]
-                    missing_ds = [ds for ds in src_dosages_stages if ds not in llm_pts_str.lower()]
-                    ret_score = (len(retained_ds) / len(src_dosages_stages)) if src_dosages_stages else 1.0
-
-                    trace.llm_dispatches.append(
-                        HeadingDispatchTrace(
-                            subtopic_id=bucket.subtopic_id,
-                            subtopic_name=bucket.display_name,
-                            heading_breadcrumb=sec_heading,
-                            source_label=sec_src,
-                            source_type=sec_type,
-                            page=sec_pg,
-                            pass_number=1,
-                            model_id=active_model,
-                            input_word_count=len(sec_text.split()),
-                            input_token_count=call_meta.get("prompt_tokens", count_tokens(pass1_user_msg)),
-                            prompt_sent=pass1_user_msg,
-                            raw_llm_response=base_note_str or json.dumps(heading_json),
-                            parsed_points_count=len(heading_json.get("clinical_points", [])),
-                            output_word_count=len(llm_pts_str.split()),
-                            json_repaired_or_fallback=bool(not base_note_str or "{" not in base_note_str),
-                            latency_ms=call_meta.get("latency_ms", 0.0),
-                            tokens_per_sec=call_meta.get("tokens_per_sec", 0.0),
-                            source_dosages_and_stages=src_dosages_stages,
-                            retained_dosages_and_stages=retained_ds,
-                            missing_dosages_and_stages=missing_ds,
-                            retention_score=round(ret_score, 2),
-                        )
-                    )
-
-                subtopic_node = merge_json_nodes(
-                    subtopic_node,
-                    heading_json,
-                    metadata={"source": sec_src, "page": sec_pg},
-                    primary_max_words=500,
-                    telemetry=trace,
-                )
-
-            if subtopic_node is None:
-                subtopic_node = {
-                    "section": "Clinical Summary",
-                    "subtopic": sub_title,
-                    "conditional_context": "",
-                    "clinical_points": [],
-                    "discrepancies": "",
-                }
-
-            # Pass 2+: Secondary Sources Delta Micro-Editing (<= 1000 words combined)
-            for sec_entry in bucket.secondary_entries:
-                sec_text = sec_entry.get("text") or ""
-                sec_src = sec_entry.get("source_label") or "Secondary Reference"
-                sec_page = sec_entry.get("page") or 1
-                sec_breadcrumb = sec_entry.get("heading_breadcrumb") or bucket.display_name
-                sec_type = sec_entry.get("source_type") or "ref"
-
-                novel_sec_text = filter_novel_secondary_sentences(
-                    sec_text,
-                    subtopic_node.get("clinical_points", []),
-                    max_words=400,
-                    telemetry=trace,
-                    source_label=sec_src,
-                )
-                if not novel_sec_text:
-                    continue
-
-                sec_json: Dict[str, Any] = {}
-                sec_call_meta: Dict[str, Any] = {}
-                sec_json_str = ""
-
-                if lm_available:
-                    bounded_base_pts = truncate_to_token_limit(
-                        json.dumps(subtopic_node.get("clinical_points", [])), 1200
-                    )
-                    prompt_header = (
-                        f"Clinical Topic: {topic}\n"
-                        f"Target Subtopic: {sub_title} ({bucket.question_anchor})\n"
-                        f"Source Document: {sec_src} (Page {sec_page})\n"
-                        f"Article Heading Breadcrumb: {sec_breadcrumb}\n"
-                        f"Primary Baseline Points:\n{bounded_base_pts}\n\n"
-                        f"Secondary Reference:\n"
-                    )
-                    used_tokens = count_tokens(pass2_sys_prompt) + count_tokens(prompt_header) + 500
-                    available_tokens = max(100, MAX_CONTEXT_TOKENS - used_tokens)
-                    novel_sec_text = truncate_to_token_limit(novel_sec_text, available_tokens)
-                    sec_msg = f"{prompt_header}{novel_sec_text}"
-                    try:
-                        sec_json_str = await call_llm_async(
-                            pass2_sys_prompt,
-                            sec_msg,
-                            max_tokens=500,
-                            model_id=active_model,
-                            telemetry_meta=sec_call_meta,
-                        )
-                        sec_parsed = parse_llm_json(sec_json_str)
-                        if isinstance(sec_parsed, list):
-                            sec_json = {
-                                "section": "Clinical Summary",
-                                "subtopic": sub_title,
-                                "conditional_context": "",
-                                "clinical_points": sec_parsed,
-                                "discrepancies": "",
-                            }
-                        elif isinstance(sec_parsed, dict):
-                            sec_json = sec_parsed
-                            sec_json["subtopic"] = sub_title
-                    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.HTTPError):
-                        lm_available = False
-                    except Exception as exc:
-                        logger.warning("Pass 2 LLM audit fallback for '%s': %s", sub_title, exc)
-
-                if not sec_json:
-                    sec_json = {
-                        "section": "Clinical Summary",
-                        "subtopic": sub_title,
-                        "conditional_context": "",
-                        "clinical_points": [
-                            {
-                                "point": novel_sec_text[:500],
-                                "source": sec_src,
-                                "page": sec_page,
-                            }
-                        ],
-                        "discrepancies": "",
-                    }
-
-                if trace:
-                    sec_dosages_stages = extract_clinical_numbers_and_stages(novel_sec_text)
-                    sec_pts_str = " ".join(
-                        str(pt.get("point", "")) for pt in sec_json.get("clinical_points", []) if isinstance(pt, dict)
-                    )
-                    retained_ds = [ds for ds in sec_dosages_stages if ds in sec_pts_str.lower()]
-                    missing_ds = [ds for ds in sec_dosages_stages if ds not in sec_pts_str.lower()]
-                    ret_score = (len(retained_ds) / len(sec_dosages_stages)) if sec_dosages_stages else 1.0
-
-                    trace.llm_dispatches.append(
-                        HeadingDispatchTrace(
-                            subtopic_id=bucket.subtopic_id,
-                            subtopic_name=bucket.display_name,
-                            heading_breadcrumb=sec_breadcrumb,
-                            source_label=sec_src,
-                            source_type=sec_type,
-                            page=sec_page,
-                            pass_number=2,
-                            model_id=active_model,
-                            input_word_count=len(novel_sec_text.split()),
-                            input_token_count=sec_call_meta.get("prompt_tokens", count_tokens(sec_msg)),
-                            prompt_sent=sec_msg,
-                            raw_llm_response=sec_json_str or json.dumps(sec_json),
-                            parsed_points_count=len(sec_json.get("clinical_points", [])),
-                            output_word_count=len(sec_pts_str.split()),
-                            json_repaired_or_fallback=bool(not sec_json_str or "{" not in sec_json_str),
-                            latency_ms=sec_call_meta.get("latency_ms", 0.0),
-                            tokens_per_sec=sec_call_meta.get("tokens_per_sec", 0.0),
-                            source_dosages_and_stages=sec_dosages_stages,
-                            retained_dosages_and_stages=retained_ds,
-                            missing_dosages_and_stages=missing_ds,
-                            retention_score=round(ret_score, 2),
-                        )
-                    )
-
-                subtopic_node = merge_json_nodes(
-                    subtopic_node,
-                    sec_json,
-                    metadata={"source": sec_src, "page": sec_page},
-                    max_words=1000,
-                    telemetry=trace,
-                )
-
-            synthesized_subtopic_nodes.append(subtopic_node)
-
-    if synthesized_subtopic_nodes:
+    # -------------------------------------------------------------
+    # BRANCH 1: Mode B - Separate LM Studio Summaries per Article
+    # -------------------------------------------------------------
+    if effective_synthesis_mode == "per_article_lm_summary":
+        article_summary_blocks: List[str] = []
         all_points: List[Dict[str, Any]] = []
-        all_disc: List[str] = []
-        all_ctx: List[str] = []
-        for node in synthesized_subtopic_nodes:
-            all_points.extend(node.get("clinical_points", []))
-            if node.get("conditional_context"):
-                all_ctx.append(node["conditional_context"])
-            if node.get("discrepancies"):
-                all_disc.append(node["discrepancies"])
+        subtopics_list: List[Dict[str, Any]] = []
+
+        per_art_prompt = (
+            f"You are an expert clinical medical professor summarizing evidence for '{topic}'. "
+            "Analyze the provided document excerpt and output a structured JSON object with:\n"
+            "{\n"
+            f'  "section": "{topic}",\n'
+            '  "clinical_points": [\n'
+            '     {"point": "Key clinical fact or finding", "source": "Source Name", "page": 1}\n'
+            "  ],\n"
+            '  "summary_markdown": "Concise high-yield prose summary of the document excerpt."\n'
+            "}\n"
+            "Include key diagnostic criteria, drug dosages, pathophysiology, and distinguishing features. "
+            "Only focus on information relevant to the target topic."
+        )
+
+        for doc in documents:
+            source_lbl = doc.get("source_label") or "Reference Document"
+            source_tp = doc.get("source_type") or "ref"
+            pg = doc.get("page", 1)
+
+            filtered_passage = extract_topic_exclusive_passages(
+                doc.get("raw_text") or "",
+                target_topic=topic,
+                max_words=ctx_info["effective_summary_word_limit"],
+                is_microedit=False,
+            )
+            word_count_sent = len(filtered_passage.split())
+
+            user_msg = (
+                f"Clinical Topic: {topic}\n"
+                f"Source: {source_lbl} (Page {pg})\n"
+                f"Document Excerpt:\n{filtered_passage}"
+            )
+
+            article_md = ""
+            article_pts: List[Dict[str, Any]] = []
+
+            if lm_available:
+                try:
+                    resp_str = await call_llm_async(
+                        per_art_prompt,
+                        user_msg,
+                        max_tokens=650,
+                        model_id=active_model,
+                        context_length_tokens=ctx_info["loaded_context_length_tokens"],
+                    )
+                    parsed = parse_llm_json(resp_str)
+                    if isinstance(parsed, dict):
+                        article_md = str(parsed.get("summary_markdown") or "").strip()
+                        raw_pts = parsed.get("clinical_points") or []
+                        if isinstance(raw_pts, list):
+                            for p in raw_pts:
+                                if isinstance(p, dict) and p.get("point"):
+                                    p.setdefault("source", source_lbl)
+                                    p.setdefault("page", pg)
+                                    article_pts.append(p)
+                                elif isinstance(p, str) and p.strip():
+                                    article_pts.append({"point": p.strip(), "source": source_lbl, "page": pg})
+                    elif isinstance(parsed, list):
+                        for p in parsed:
+                            if isinstance(p, dict) and p.get("point"):
+                                p.setdefault("source", source_lbl)
+                                p.setdefault("page", pg)
+                                article_pts.append(p)
+                            elif isinstance(p, str) and p.strip():
+                                article_pts.append({"point": p.strip(), "source": source_lbl, "page": pg})
+                except (httpx.ConnectError, httpx.ConnectTimeout, httpx.HTTPError) as net_err:
+                    logger.warning("LM Studio offline during per-article summary: %s", net_err)
+                    lm_available = False
+                except Exception as exc:
+                    logger.warning("Per-article summary LLM call failed for '%s': %s", source_lbl, exc)
+
+            if not article_pts:
+                # Fallback to key snippet extraction
+                for sentence in filtered_passage.split(". ")[:4]:
+                    cleaned_s = sentence.strip()
+                    if cleaned_s:
+                        article_pts.append({"point": cleaned_s, "source": source_lbl, "page": pg})
+
+            if not article_md:
+                pts_bullets = "\n".join(f"- {p['point']}" for p in article_pts[:5])
+                article_md = f"Summary of clinical findings from {source_lbl}:\n{pts_bullets}"
+
+            all_points.extend(article_pts)
+            subtopics_list.append({
+                "subtopic": source_lbl,
+                "clinical_points": article_pts,
+                "summary_markdown": article_md,
+            })
+
+            per_article_summaries.append({
+                "source": source_lbl,
+                "source_type": source_tp,
+                "page": pg,
+                "word_count_sent": word_count_sent,
+                "summary_markdown": article_md,
+                "clinical_points": article_pts,
+            })
+
+            badge_type = source_tp.upper()
+            header_str = f"### [{badge_type}] {source_lbl} (Page {pg})\n"
+            article_summary_blocks.append(f"{header_str}\n{article_md}\n\n**Key Points:**\n" + "\n".join(
+                f"- {p['point']}" for p in article_pts
+            ))
 
         final_article = {
             "section": "Clinical Summary",
             "subtopic": topic,
-            "conditional_context": "; ".join(all_ctx),
+            "conditional_context": f"Compiled from {len(documents)} distinct reference document(s)",
             "clinical_points": all_points,
-            "subtopics": synthesized_subtopic_nodes,
-            "discrepancies": "\n".join(all_disc).strip(),
-        }
-    else:
-        # Fallback if no subtopic buckets were formed
-        doc1 = documents[0]
-        base_note_json = {
-            "section": "Clinical Summary",
-            "subtopic": topic,
-            "conditional_context": "",
-            "clinical_points": [
-                {
-                    "point": doc1["raw_text"][:500],
-                    "source": doc1["source_label"],
-                    "page": doc1["page"],
-                }
-            ],
+            "subtopics": subtopics_list,
             "discrepancies": "",
         }
-        final_article = merge_json_nodes(
-            None,
-            base_note_json,
-            metadata={"source": doc1["source_label"], "page": doc1["page"]},
-            primary_max_words=500,
-            telemetry=trace,
+        enhanced_markdown = "\n\n---\n\n".join(article_summary_blocks) if article_summary_blocks else (
+            f"No summary generated for {topic}."
         )
+
+    # -------------------------------------------------------------
+    # BRANCH 2: Mode A - Tantivy Micro-Editing Combination (Default)
+    # -------------------------------------------------------------
+    else:
+        # Pre-filter each resolved document's raw_text through topic gating
+        for doc in documents:
+            if doc.get("raw_text"):
+                doc["raw_text"] = extract_topic_exclusive_passages(
+                    doc["raw_text"],
+                    target_topic=topic,
+                    max_words=ctx_info["effective_summary_word_limit"],
+                    is_microedit=False,
+                )
+
+        # Fast CPU Question-Anchored Subtopic Router & Pruner
+        t_route_0 = time.perf_counter()
+        subtopic_buckets = await asyncio.to_thread(
+            route_and_prune_subtopics, topic, documents, mcq_context, 5, 650, 450, trace
+        )
+        t_route_ms = round((time.perf_counter() - t_route_0) * 1000.0, 2)
+        if trace:
+            trace.stage_timings_ms["circle2_5_subtopic_routing"] = t_route_ms
+
+        synthesized_subtopic_nodes: List[Dict[str, Any]] = []
+
+        micro_budget = ctx_info["microedit_word_limit"]
+
+        if subtopic_buckets:
+            for bucket in subtopic_buckets:
+                sub_title = bucket.display_name
+                pass2_sys_prompt = PASS2_AUDIT_SYSTEM_PROMPT.replace("{subtopic}", sub_title)
+
+                # Determine sections to dispatch for Pass 1
+                if heading_wise and getattr(bucket, "primary_heading_sections", None):
+                    sections_to_dispatch = bucket.primary_heading_sections
+                else:
+                    sections_to_dispatch = [
+                        {
+                            "heading_breadcrumb": bucket.display_name,
+                            "text": bucket.primary_text,
+                            "source_label": bucket.primary_source_label,
+                            "source_type": "ref",
+                            "page": bucket.primary_page,
+                            "word_count": len(bucket.primary_text.split()),
+                        }
+                    ]
+
+                subtopic_node: Optional[Dict[str, Any]] = None
+
+                for sec_item in sections_to_dispatch:
+                    raw_sec_text = sec_item.get("text") or ""
+                    sec_text = extract_topic_exclusive_passages(
+                        raw_sec_text, target_topic=topic, max_words=micro_budget, is_microedit=True
+                    )
+                    sec_heading = sec_item.get("heading_breadcrumb") or bucket.display_name
+                    sec_src = sec_item.get("source_label") or bucket.primary_source_label
+                    sec_pg = sec_item.get("page") or bucket.primary_page
+                    sec_type = sec_item.get("source_type") or "ref"
+
+                    pass1_user_msg = (
+                        f"Clinical Topic: {topic}\n"
+                        f"Target Subtopic: {bucket.display_name} ({bucket.question_anchor})\n"
+                        f"Source Document: {sec_src} (Page {sec_pg})\n"
+                        f"Article Heading Breadcrumb: {sec_heading}\n\n"
+                        f"Heading Text:\n{sec_text}"
+                    )
+
+                    call_meta: Dict[str, Any] = {}
+                    base_note_str = ""
+                    heading_json: Dict[str, Any] = {}
+
+                    if lm_available:
+                        try:
+                            base_note_str = await call_llm_async(
+                                PASS1_CLINICAL_SYSTEM_PROMPT,
+                                pass1_user_msg,
+                                max_tokens=600,
+                                model_id=active_model,
+                                telemetry_meta=call_meta,
+                                context_length_tokens=ctx_info["loaded_context_length_tokens"],
+                            )
+                            parsed_base = parse_llm_json(base_note_str)
+                            if isinstance(parsed_base, list):
+                                heading_json = {
+                                    "section": "Clinical Summary",
+                                    "subtopic": sub_title,
+                                    "conditional_context": "",
+                                    "clinical_points": parsed_base,
+                                    "discrepancies": "",
+                                }
+                            elif isinstance(parsed_base, dict):
+                                heading_json = parsed_base
+                                heading_json["subtopic"] = sub_title
+                            else:
+                                heading_json = {
+                                    "section": "Clinical Summary",
+                                    "subtopic": sub_title,
+                                    "conditional_context": "",
+                                    "clinical_points": [
+                                        {
+                                            "point": str(base_note_str)[:500],
+                                            "source": sec_src,
+                                            "page": sec_pg,
+                                        }
+                                    ],
+                                    "discrepancies": "",
+                                }
+                        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.HTTPError) as net_err:
+                            logger.warning("LM Studio offline during Pass 1: %s", net_err)
+                            lm_available = False
+                        except Exception as exc:
+                            logger.error("Pass 1 LLM synthesis failed for heading '%s': %s", sec_heading, exc)
+
+                    if not heading_json:
+                        heading_json = {
+                            "section": "Clinical Summary",
+                            "subtopic": sub_title,
+                            "conditional_context": "",
+                            "clinical_points": [
+                                {
+                                    "point": sec_text[:500],
+                                    "source": sec_src,
+                                    "page": sec_pg,
+                                }
+                            ],
+                            "discrepancies": "",
+                        }
+
+                    # Record Telemetry for this Heading Dispatch
+                    if trace:
+                        src_dosages_stages = extract_clinical_numbers_and_stages(sec_text)
+                        llm_pts_str = " ".join(
+                            str(pt.get("point", "")) for pt in heading_json.get("clinical_points", []) if isinstance(pt, dict)
+                        )
+                        retained_ds = [ds for ds in src_dosages_stages if ds in llm_pts_str.lower()]
+                        missing_ds = [ds for ds in src_dosages_stages if ds not in llm_pts_str.lower()]
+                        ret_score = (len(retained_ds) / len(src_dosages_stages)) if src_dosages_stages else 1.0
+
+                        trace.llm_dispatches.append(
+                            HeadingDispatchTrace(
+                                subtopic_id=bucket.subtopic_id,
+                                subtopic_name=bucket.display_name,
+                                heading_breadcrumb=sec_heading,
+                                source_label=sec_src,
+                                source_type=sec_type,
+                                page=sec_pg,
+                                pass_number=1,
+                                model_id=active_model,
+                                input_word_count=len(sec_text.split()),
+                                input_token_count=call_meta.get("prompt_tokens", count_tokens(pass1_user_msg)),
+                                prompt_sent=pass1_user_msg,
+                                raw_llm_response=base_note_str or json.dumps(heading_json),
+                                parsed_points_count=len(heading_json.get("clinical_points", [])),
+                                output_word_count=len(llm_pts_str.split()),
+                                json_repaired_or_fallback=bool(not base_note_str or "{" not in base_note_str),
+                                latency_ms=call_meta.get("latency_ms", 0.0),
+                                tokens_per_sec=call_meta.get("tokens_per_sec", 0.0),
+                                source_dosages_and_stages=src_dosages_stages,
+                                retained_dosages_and_stages=retained_ds,
+                                missing_dosages_and_stages=missing_ds,
+                                retention_score=round(ret_score, 2),
+                            )
+                        )
+
+                    subtopic_node = merge_json_nodes(
+                        subtopic_node,
+                        heading_json,
+                        metadata={"source": sec_src, "page": sec_pg},
+                        primary_max_words=500,
+                        telemetry=trace,
+                    )
+
+                if subtopic_node is None:
+                    subtopic_node = {
+                        "section": "Clinical Summary",
+                        "subtopic": sub_title,
+                        "conditional_context": "",
+                        "clinical_points": [],
+                        "discrepancies": "",
+                    }
+
+                # Pass 2+: Secondary Sources Delta Micro-Editing
+                for sec_entry in bucket.secondary_entries:
+                    sec_text = sec_entry.get("text") or ""
+                    sec_src = sec_entry.get("source_label") or "Secondary Reference"
+                    sec_page = sec_entry.get("page") or 1
+                    sec_breadcrumb = sec_entry.get("heading_breadcrumb") or bucket.display_name
+                    sec_type = sec_entry.get("source_type") or "ref"
+
+                    novel_sec_text = filter_novel_secondary_sentences(
+                        sec_text,
+                        subtopic_node.get("clinical_points", []),
+                        max_words=micro_budget,
+                        telemetry=trace,
+                        source_label=sec_src,
+                    )
+                    if not novel_sec_text:
+                        continue
+
+                    sec_json: Dict[str, Any] = {}
+                    sec_call_meta: Dict[str, Any] = {}
+                    sec_json_str = ""
+
+                    if lm_available:
+                        bounded_base_pts = truncate_to_token_limit(
+                            json.dumps(subtopic_node.get("clinical_points", [])), 1200
+                        )
+                        prompt_header = (
+                            f"Clinical Topic: {topic}\n"
+                            f"Target Subtopic: {sub_title} ({bucket.question_anchor})\n"
+                            f"Source Document: {sec_src} (Page {sec_page})\n"
+                            f"Article Heading Breadcrumb: {sec_breadcrumb}\n"
+                            f"Primary Baseline Points:\n{bounded_base_pts}\n\n"
+                            f"Secondary Reference:\n"
+                        )
+                        used_tokens = count_tokens(pass2_sys_prompt) + count_tokens(prompt_header) + 500
+                        available_tokens = max(100, ctx_info["loaded_context_length_tokens"] - used_tokens)
+                        novel_sec_text = truncate_to_token_limit(novel_sec_text, available_tokens)
+                        sec_msg = f"{prompt_header}{novel_sec_text}"
+                        try:
+                            sec_json_str = await call_llm_async(
+                                pass2_sys_prompt,
+                                sec_msg,
+                                max_tokens=500,
+                                model_id=active_model,
+                                telemetry_meta=sec_call_meta,
+                                context_length_tokens=ctx_info["loaded_context_length_tokens"],
+                            )
+                            sec_parsed = parse_llm_json(sec_json_str)
+                            if isinstance(sec_parsed, list):
+                                sec_json = {
+                                    "section": "Clinical Summary",
+                                    "subtopic": sub_title,
+                                    "conditional_context": "",
+                                    "clinical_points": sec_parsed,
+                                    "discrepancies": "",
+                                }
+                            elif isinstance(sec_parsed, dict):
+                                sec_json = sec_parsed
+                                sec_json["subtopic"] = sub_title
+                        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.HTTPError):
+                            lm_available = False
+                        except Exception as exc:
+                            logger.warning("Pass 2 LLM audit fallback for '%s': %s", sub_title, exc)
+
+                    if not sec_json:
+                        sec_json = {
+                            "section": "Clinical Summary",
+                            "subtopic": sub_title,
+                            "conditional_context": "",
+                            "clinical_points": [
+                                {
+                                    "point": novel_sec_text[:500],
+                                    "source": sec_src,
+                                    "page": sec_page,
+                                }
+                            ],
+                            "discrepancies": "",
+                        }
+
+                    if trace:
+                        sec_dosages_stages = extract_clinical_numbers_and_stages(novel_sec_text)
+                        sec_pts_str = " ".join(
+                            str(pt.get("point", "")) for pt in sec_json.get("clinical_points", []) if isinstance(pt, dict)
+                        )
+                        retained_ds = [ds for ds in sec_dosages_stages if ds in sec_pts_str.lower()]
+                        missing_ds = [ds for ds in sec_dosages_stages if ds not in sec_pts_str.lower()]
+                        ret_score = (len(retained_ds) / len(sec_dosages_stages)) if sec_dosages_stages else 1.0
+
+                        trace.llm_dispatches.append(
+                            HeadingDispatchTrace(
+                                subtopic_id=bucket.subtopic_id,
+                                subtopic_name=bucket.display_name,
+                                heading_breadcrumb=sec_breadcrumb,
+                                source_label=sec_src,
+                                source_type=sec_type,
+                                page=sec_page,
+                                pass_number=2,
+                                model_id=active_model,
+                                input_word_count=len(novel_sec_text.split()),
+                                input_token_count=sec_call_meta.get("prompt_tokens", count_tokens(sec_msg)),
+                                prompt_sent=sec_msg,
+                                raw_llm_response=sec_json_str or json.dumps(sec_json),
+                                parsed_points_count=len(sec_json.get("clinical_points", [])),
+                                output_word_count=len(sec_pts_str.split()),
+                                json_repaired_or_fallback=bool(not sec_json_str or "{" not in sec_json_str),
+                                latency_ms=sec_call_meta.get("latency_ms", 0.0),
+                                tokens_per_sec=sec_call_meta.get("tokens_per_sec", 0.0),
+                                source_dosages_and_stages=sec_dosages_stages,
+                                retained_dosages_and_stages=retained_ds,
+                                missing_dosages_and_stages=missing_ds,
+                                retention_score=round(ret_score, 2),
+                            )
+                        )
+
+                    subtopic_node = merge_json_nodes(
+                        subtopic_node,
+                        sec_json,
+                        metadata={"source": sec_src, "page": sec_page},
+                        max_words=1000,
+                        telemetry=trace,
+                    )
+
+                synthesized_subtopic_nodes.append(subtopic_node)
+
+        if synthesized_subtopic_nodes:
+            all_points = []
+            all_disc: List[str] = []
+            all_ctx: List[str] = []
+            for node in synthesized_subtopic_nodes:
+                all_points.extend(node.get("clinical_points", []))
+                if node.get("conditional_context"):
+                    all_ctx.append(node["conditional_context"])
+                if node.get("discrepancies"):
+                    all_disc.append(node["discrepancies"])
+
+            final_article = {
+                "section": "Clinical Summary",
+                "subtopic": topic,
+                "conditional_context": "; ".join(all_ctx),
+                "clinical_points": all_points,
+                "subtopics": synthesized_subtopic_nodes,
+                "discrepancies": "\n".join(all_disc).strip(),
+            }
+        else:
+            # Fallback if no subtopic buckets were formed
+            doc1 = documents[0]
+            base_note_json = {
+                "section": "Clinical Summary",
+                "subtopic": topic,
+                "conditional_context": "",
+                "clinical_points": [
+                    {
+                        "point": doc1["raw_text"][:500],
+                        "source": doc1["source_label"],
+                        "page": doc1["page"],
+                    }
+                ],
+                "discrepancies": "",
+            }
+            final_article = merge_json_nodes(
+                None,
+                base_note_json,
+                metadata={"source": doc1["source_label"], "page": doc1["page"]},
+                primary_max_words=500,
+                telemetry=trace,
+            )
+
+        enhanced_markdown = _format_article_as_markdown(final_article, topic)
+
+    # Detect variances if discrepancies empty
+    from agents.tema_q.auditor import detect_clinical_variances
+    raw_discrepancies = final_article.get("discrepancies", "")
+    if not raw_discrepancies and len(documents) > 1:
+        base_t = str(documents[0].get("raw_text") or "")
+        sec_t = str(documents[1].get("raw_text") or "")
+        detected_vars = detect_clinical_variances(base_t, sec_t)
+        if detected_vars:
+            final_article["discrepancies"] = detected_vars
 
     variance_text = str(
         final_article.get("discrepancies", "")
         or final_article.get("variances", "")
         or ""
     ).strip()
-
-    enhanced_markdown = _format_article_as_markdown(final_article, topic)
 
     # Pass 3: Optional MCQ Distractor Audit
     distractor_output = "Distractors audited against clinical reference criteria."
@@ -1170,6 +1495,8 @@ async def run_tema_q_synthesis(
         "variance_audit": variance_text,
         "top_references": flat_refs or search_results,
         "reference_links": search_results,
+        "synthesis_mode": effective_synthesis_mode,
+        "per_article_summaries": per_article_summaries,
     }
 
     if trace:

@@ -4,12 +4,12 @@ import math
 import os
 from pathlib import Path
 import shutil
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 # Enforce Invariant 1: Zero VRAM for backend processes
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 import httpx
 from pydantic import BaseModel, Field
 
@@ -44,6 +44,16 @@ class SearchRequest(BaseModel):
     limit: int = Field(default=10, ge=1, le=100)
     source_type: str = Field(default="all")
     enable_rerank: bool = Field(default=True)
+
+
+class SynthesizeRequest(BaseModel):
+    topic: str
+    synthesis_mode: Optional[str] = None
+    max_words: Optional[int] = None
+    user_max_words_override: Optional[int] = None
+    mcq_context: Optional[Dict[str, Any]] = None
+    skip_lm: Optional[bool] = False
+    model_id: Optional[str] = None
 
 
 def _get_file_key(doc: Dict[str, Any]) -> str:
@@ -645,3 +655,28 @@ async def execute_parallel_hybrid_search(
 
     ranked_lists = await _asyncio.gather(*(_safe_run(c) for c in search_coroutines))
     return _reciprocal_rank_fusion(list(ranked_lists), k=60, top_n=top_n)
+
+
+@router.post("/synthesize")
+async def search_and_synthesize_topic(req: SynthesizeRequest) -> Dict[str, Any]:
+    """
+    On-demand multi-source search and synthesis endpoint accepting synthesis_mode and word limits.
+    """
+    topic = (req.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic must not be empty.")
+
+    from agents.tema_q.pipeline import run_tema_q_synthesis
+    search_res = await _asyncio.to_thread(search_index, topic, limit_per_source=3)
+    max_w = req.max_words or req.user_max_words_override
+
+    result = await run_tema_q_synthesis(
+        topic=topic,
+        search_results=search_res,
+        mcq_context=req.mcq_context,
+        skip_lm=bool(req.skip_lm),
+        model_id=req.model_id,
+        synthesis_mode=req.synthesis_mode,
+        user_max_words_override=max_w,
+    )
+    return {"status": "success", **result}

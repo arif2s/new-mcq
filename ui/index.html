@@ -201,6 +201,57 @@
               </div>
             </header>
 
+            <!-- AI Synthesis Controls Box -->
+            <div id="search-synthesis-config-card" class="glass-card p-4 rounded-xl border border-brand-500/30 space-y-3">
+              <div class="flex items-center justify-between flex-wrap gap-2">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-bold text-neutral-100 flex items-center gap-1.5">
+                    <span>⚡</span> AI Synthesis Mode &amp; Context Window
+                  </span>
+                  <span id="lm-detected-context-badge" class="badge bg-ok text-[11px] font-mono">
+                    Auto: Detecting LM Studio context...
+                  </span>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                <!-- Option 1: Tantivy Micro-Editing Combination -->
+                <label class="flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer glass-panel border-brand-500/40 hover:border-brand-500 transition-colors">
+                  <input type="radio" name="searchSynthesisMode" value="tantivy_microedit" checked class="mt-0.5 text-brand-500 focus:ring-brand-500" />
+                  <div>
+                    <span class="text-xs font-bold text-neutral-200 block">Tantivy Micro-Edit Combination</span>
+                    <span class="text-[11px] text-muted leading-relaxed block mt-0.5">
+                      Combines cross-document facts using compact 150–280 word micro-edits for high-yield board review.
+                    </span>
+                  </div>
+                </label>
+
+                <!-- Option 2: Separate LM Studio Summaries per Article -->
+                <label class="flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer glass-panel border-gray-700/60 hover:border-brand-500 transition-colors">
+                  <input type="radio" name="searchSynthesisMode" value="per_article_lm_summary" class="mt-0.5 text-brand-500 focus:ring-brand-500" />
+                  <div>
+                    <span class="text-xs font-bold text-neutral-200 block">Separate LM Studio Summaries per Article</span>
+                    <span class="text-[11px] text-muted leading-relaxed block mt-0.5">
+                      Summarizes each referenced article separately with full topic-gated text and distinct headings.
+                    </span>
+                  </div>
+                </label>
+              </div>
+
+              <!-- Manual Word Limit Override -->
+              <div class="flex items-center justify-between flex-wrap gap-3 pt-2 border-t border-gray-700/40">
+                <div class="text-[11px] text-muted">
+                  <strong>Max Words Sent to LM Studio:</strong>
+                  <span class="opacity-75">Set to 0 to auto-scale from LM Studio loaded context.</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <input type="number" id="lm-word-limit-override" min="0" max="10000" step="50" value="0"
+                         class="glass-input rounded-lg px-2.5 py-1 text-xs font-mono w-28 text-center text-neutral-100" />
+                  <span class="text-[11px] text-muted font-mono">words</span>
+                </div>
+              </div>
+            </div>
+
             <!-- Central Search Results List -->
             <div id="search-results-container" class="space-y-4">
               <div class="text-center py-16 text-muted glass-panel rounded-2xl border border-gray-700/50">

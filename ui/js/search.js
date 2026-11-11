@@ -306,6 +306,66 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // =========================================================
+    // 3.5 AI SYNTHESIS CONTROLS & LM STUDIO CONTEXT DETECTION
+    // =========================================================
+    async function updateDetectedContextBadge() {
+        const badge = document.getElementById('lm-detected-context-badge');
+        if (!badge) return;
+        try {
+            const overrideVal = (window.appState && window.appState.lmMaxWordsOverride) || 0;
+            const url = overrideVal > 0 ? `/api/models/context-info?max_words=${overrideVal}` : '/api/models/context-info';
+            const res = await fetch(url);
+            if (res.ok) {
+                const info = await res.json();
+                const ctx = info.loaded_context_length_tokens || 4096;
+                const effSummary = info.effective_summary_word_limit || 1690;
+                const micro = info.microedit_word_limit || 280;
+                badge.textContent = `Auto: ${ctx} tok (~${effSummary} words/summary, ${micro} words/micro-edit)`;
+                badge.className = 'badge bg-ok text-[11px] font-mono';
+            }
+        } catch (_) {
+            badge.textContent = 'LM Studio Offline (Fallback 4096 tok)';
+            badge.className = 'badge bg-warning text-[11px] font-mono';
+        }
+    }
+
+    // Init UI inputs from state
+    const savedMode = (window.appState && window.appState.synthesisMode) || 'tantivy_microedit';
+    const modeInput = document.querySelector(`input[name="searchSynthesisMode"][value="${savedMode}"]`);
+    if (modeInput) modeInput.checked = true;
+
+    const wordLimitInput = document.getElementById('lm-word-limit-override');
+    if (wordLimitInput && window.appState && window.appState.lmMaxWordsOverride !== undefined) {
+        wordLimitInput.value = window.appState.lmMaxWordsOverride;
+    }
+
+    document.querySelectorAll('input[name="searchSynthesisMode"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            if (radio.checked && window.appState) {
+                window.appState.synthesisMode = radio.value;
+                if (typeof window.saveState === 'function') {
+                    window.saveState({ synthesisMode: radio.value });
+                }
+            }
+        });
+    });
+
+    if (wordLimitInput) {
+        wordLimitInput.addEventListener('change', () => {
+            const val = parseInt(wordLimitInput.value, 10) || 0;
+            if (window.appState) {
+                window.appState.lmMaxWordsOverride = val;
+                if (typeof window.saveState === 'function') {
+                    window.saveState({ lmMaxWordsOverride: val });
+                }
+            }
+            updateDetectedContextBadge();
+        });
+    }
+
+    updateDetectedContextBadge();
+
+    // =========================================================
     // 4. PERFORM GLOBAL HYBRID SEARCH
     // =========================================================
     async function performGlobalSearch(query) {

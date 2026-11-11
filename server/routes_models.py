@@ -1218,8 +1218,16 @@ async def get_linkers_build_progress() -> Dict[str, Any]:
 
 
 # -----------------------------------------------------------------------------
-# LM Studio Available Models Endpoint
+# LM Studio Available Models & Context Info Endpoints
 # -----------------------------------------------------------------------------
+@router.get("/context-info")
+async def get_model_context_info(max_words: Optional[int] = None) -> Dict[str, Any]:
+    """Returns detected LM Studio context window, word budgets, and manual overrides."""
+    from core.model_lifecycle import model_lifecycle
+    info = await model_lifecycle.get_active_model_context_info(user_max_words_override=max_words)
+    return {"status": "success", **info}
+
+
 @router.get("/lm-studio-available")
 async def get_lm_studio_available_models() -> Dict[str, Any]:
     """Returns availability and model ID list from local LM Studio server."""

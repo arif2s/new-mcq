@@ -144,9 +144,16 @@ class AsyncQueueWorker:
 
                 llm_on = is_llm_processing_enabled()
                 if llm_on and not queue_worker._is_topic_fully_processed(topic):
+                    s_mode = payload.get("synthesis_mode")
+                    m_words = payload.get("max_words") or payload.get("user_max_words_override")
                     try:
                         synthesis_output = await run_tema_q_synthesis(
-                            topic, search_results, mcq_context, skip_lm=False
+                            topic,
+                            search_results,
+                            mcq_context,
+                            skip_lm=False,
+                            synthesis_mode=s_mode,
+                            user_max_words_override=m_words,
                         )
                     except TypeError:
                         synthesis_output = await run_tema_q_synthesis(topic, search_results, mcq_context)
@@ -408,10 +415,17 @@ class PriorityQueueWorker:
 
                         llm_on = is_llm_processing_enabled()
                         if llm_on and not self._is_topic_fully_processed(topic):
+                            s_mode = payload.get("synthesis_mode")
+                            m_words = payload.get("max_words") or payload.get("user_max_words_override")
                             try:
                                 synthesis_output = loop.run_until_complete(
                                     run_tema_q_synthesis(
-                                        topic, search_results, mcq_context, skip_lm=False
+                                        topic,
+                                        search_results,
+                                        mcq_context,
+                                        skip_lm=False,
+                                        synthesis_mode=s_mode,
+                                        user_max_words_override=m_words,
                                     )
                                 )
                             except TypeError:

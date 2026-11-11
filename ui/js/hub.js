@@ -528,6 +528,41 @@ async function openHubCardInspector(session, forceOpen = true) {
         `;
     }
 
+    // 2.5 AI Synthesis Mode & Word Budget Controls for Hub Set
+    const currentMode = (window.appState && window.appState.synthesisMode) || 'tantivy_microedit';
+    const currentMaxWords = (window.appState && window.appState.lmMaxWordsOverride) || 0;
+    html += `
+        <div class="glass-card p-4 rounded-xl border border-brand-500/30 space-y-2.5">
+            <div class="flex items-center justify-between">
+                <h4 class="font-bold text-brand-300 uppercase text-[11px] flex items-center gap-1.5">
+                    <span>⚡</span> AI Synthesis Configuration
+                </h4>
+                <span id="hub-context-badge" class="badge bg-ok text-[10px] font-mono">LM Studio</span>
+            </div>
+            <div class="space-y-1.5 pt-1">
+                <label class="flex items-start gap-2 text-xs text-neutral-200 cursor-pointer">
+                    <input type="radio" name="hubSynthesisMode" value="tantivy_microedit" ${currentMode === 'tantivy_microedit' ? 'checked' : ''} class="mt-0.5 text-brand-500 focus:ring-brand-500" />
+                    <div>
+                        <span class="font-bold block">Tantivy Micro-Edit Combination</span>
+                        <span class="text-[10px] text-muted block">150–280 word high-yield combined micro-edits.</span>
+                    </div>
+                </label>
+                <label class="flex items-start gap-2 text-xs text-neutral-200 cursor-pointer">
+                    <input type="radio" name="hubSynthesisMode" value="per_article_lm_summary" ${currentMode === 'per_article_lm_summary' ? 'checked' : ''} class="mt-0.5 text-brand-500 focus:ring-brand-500" />
+                    <div>
+                        <span class="font-bold block">Separate LM Studio Summaries per Article</span>
+                        <span class="text-[10px] text-muted block">Independent topic-gated summaries per referenced source.</span>
+                    </div>
+                </label>
+            </div>
+            <div class="flex items-center justify-between pt-1 border-t border-gray-700/40">
+                <span class="text-[10px] text-muted font-medium">Max Words (0 = Auto):</span>
+                <input type="number" id="hub-word-limit-override" min="0" max="10000" step="50" value="${currentMaxWords}"
+                       class="glass-input rounded px-2 py-0.5 text-[11px] font-mono w-24 text-center text-neutral-100" />
+            </div>
+        </div>
+    `;
+
     // 3. Processing Queue Position & Priority Boost
     if (queueInfo && queueInfo.in_queue) {
         html += `
@@ -624,6 +659,44 @@ async function openHubCardInspector(session, forceOpen = true) {
 
     html += `</div>`;
     window.openInspector(`Hub Card: ${title}`, html, forceOpen);
+
+    // Fetch and display dynamic context badge in inspector
+    fetch('/api/models/context-info')
+        .then(r => r.json())
+        .then(info => {
+            const b = document.getElementById('hub-context-badge');
+            if (b && info.loaded_context_length_tokens) {
+                b.textContent = `${info.loaded_context_length_tokens} tok (~${info.effective_summary_word_limit}w)`;
+            }
+        })
+        .catch(() => {});
+
+    // Wire synthesis mode toggle in Hub inspector
+    const modeRadios = document.querySelectorAll('input[name="hubSynthesisMode"]');
+    modeRadios.forEach(radio => {
+        radio.addEventListener('change', () => {
+            if (radio.checked && window.appState) {
+                window.appState.synthesisMode = radio.value;
+                if (typeof window.saveState === 'function') {
+                    window.saveState({ synthesisMode: radio.value });
+                }
+            }
+        });
+    });
+
+    // Wire word limit override input
+    const hubWordInput = document.getElementById('hub-word-limit-override');
+    if (hubWordInput) {
+        hubWordInput.addEventListener('change', () => {
+            const val = parseInt(hubWordInput.value, 10) || 0;
+            if (window.appState) {
+                window.appState.lmMaxWordsOverride = val;
+                if (typeof window.saveState === 'function') {
+                    window.saveState({ lmMaxWordsOverride: val });
+                }
+            }
+        });
+    }
 
     // Wire Inspector interactive buttons
     document.getElementById('btn-retry-session-llm')?.addEventListener('click', async (e) => {
