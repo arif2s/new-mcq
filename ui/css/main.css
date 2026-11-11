@@ -2622,8 +2622,8 @@ body.light-theme #note-topic-carousel-container .note-carousel-pill:hover {
   width: 100% !important;
   max-width: 250px !important;
   min-height: 330px !important;
-  background: var(--bg-derived-elevated, rgba(30, 41, 59, 0.88));
-  border: 1px solid var(--border-derived, rgba(148, 163, 184, 0.25));
+  background: var(--glass-card-bg, var(--bg-derived-elevated, rgba(30, 41, 59, 0.88)));
+  border: 1px solid var(--glass-border, var(--border-derived, rgba(148, 163, 184, 0.25)));
   color: var(--local-text-color, var(--text-derived-primary, #f8fafc));
   text-shadow: var(--local-text-shadow, none);
   border-radius: 16px;
@@ -2637,12 +2637,97 @@ body.light-theme #note-topic-carousel-container .note-carousel-pill:hover {
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
-  transition: transform 0.2s ease, border-color 0.2s ease;
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.3s ease;
 }
 
 .kh-portrait-card:hover {
   transform: translateY(-3px);
   border-color: var(--accent-derived-cool, #38bdf8);
+  background: var(--glass-card-hover-bg, var(--bg-derived-elevated, rgba(30, 41, 59, 0.92)));
+}
+
+/* ==========================================================================
+   Knowledge Hub Equal Dimension Buttons, Study Topics & Dynamic CSV Badges
+   ========================================================================== */
+.kh-equal-actions-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 0.5rem !important;
+  width: 100% !important;
+  align-items: stretch !important;
+}
+
+.kh-action-btn-equal {
+  width: 100% !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  padding: 0 0.5rem !important;
+  box-sizing: border-box !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.35rem !important;
+  font-size: 0.78rem !important;
+  font-weight: 600 !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  border-radius: 10px !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  cursor: pointer;
+  transition: transform 0.15s ease, filter 0.2s ease, border-color 0.2s ease;
+}
+
+.kh-action-btn-explanation {
+  background: var(--btn-secondary-bg) !important;
+  color: var(--btn-secondary-text) !important;
+  border: 1px solid var(--btn-secondary-border) !important;
+}
+
+.kh-action-btn-start-quiz {
+  background: var(--btn-primary-bg) !important;
+  color: var(--btn-primary-text) !important;
+  border: 1px solid var(--btn-primary-border) !important;
+}
+
+.study-topics-covered-btn {
+  width: 100% !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  background: var(--btn-study-topics-bg) !important;
+  color: var(--btn-study-topics-text) !important;
+  border: 1px solid var(--btn-study-topics-border) !important;
+  border-radius: 10px !important;
+  font-size: 0.78rem !important;
+  font-weight: 600 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.4rem !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  backdrop-filter: blur(10px);
+  transition: transform 0.15s ease, filter 0.2s ease;
+}
+
+.csv-topic-badge-dynamic {
+  background: var(--badge-csv-bg) !important;
+  color: var(--badge-csv-text) !important;
+  border: 1px solid var(--badge-csv-border) !important;
+  padding: 0.22rem 0.65rem !important;
+  border-radius: 999px !important;
+  font-size: 0.72rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.02em;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
 }
 
 .kh-card-header {

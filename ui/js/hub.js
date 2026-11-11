@@ -15,6 +15,27 @@ function _toMs(ts) {
     return n < 1e11 ? n * 1000 : n;
 }
 
+function escapeAttr(str) {
+    if (typeof window.escapeHTML === 'function') return window.escapeHTML(str);
+    return String(str || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+}
+
+function formatSessionAccuracyDisplay(session) {
+    const attemptedCount =
+        Number(session?.correct_answers || 0) + Number(session?.wrong_answers || 0);
+    const isAttempted =
+        Boolean(session?.is_completed) ||
+        Number(session?.last_attempted || 0) > 0 ||
+        attemptedCount > 0;
+
+    if (!isAttempted || session?.accuracy === null || session?.accuracy === undefined) {
+        return "—";
+    }
+    const num = Number(session.accuracy);
+    if (Number.isNaN(num)) return "—";
+    return `${Math.round(num)}%`;
+}
+
 // Expose globally so app.js and quiz.js can refresh the Hub after saving or confirming topics
 window.loadSessions = loadSessions;
 window.clearActiveInspectorSession = function() {
@@ -132,14 +153,14 @@ function renderStatusCirclesHTML(session) {
                     : '3: LLM Notes Not Generated';
 
     return `
-        <div class="hub-status-circles flex items-center gap-1.5" data-session-id="${window.escapeHTML(session.id)}">
-            <span class="hub-circle-1 w-6 h-6 rounded-full text-[11px] font-bold flex items-center justify-center border transition-all ${styleFor(c1)} ${!reviewed ? 'cursor-pointer hover:scale-110' : ''}"
+        <div class="hub-status-circles flex items-center gap-1.5" data-session-id="${escapeAttr(session.id)}">
+            <span class="hub-circle-1 kh-status-circle-btn w-6 h-6 rounded-full text-[11px] font-bold flex items-center justify-center border transition-all ${styleFor(c1)} ${!reviewed ? 'cursor-pointer hover:scale-110' : ''}"
                   title="${c1Title}">1</span>
             <span class="w-2 h-[1px] bg-gray-600"></span>
-            <span class="hub-circle-2 w-6 h-6 rounded-full text-[11px] font-bold flex items-center justify-center border transition-all ${styleFor(c2)}"
+            <span class="hub-circle-2 kh-status-circle-btn w-6 h-6 rounded-full text-[11px] font-bold flex items-center justify-center border transition-all ${styleFor(c2)}"
                   title="${c2Title}">2</span>
             <span class="w-2 h-[1px] bg-gray-600"></span>
-            <span class="hub-circle-3 w-6 h-6 rounded-full text-[11px] font-bold flex items-center justify-center border transition-all ${styleFor(c3)}"
+            <span class="hub-circle-3 kh-status-circle-btn w-6 h-6 rounded-full text-[11px] font-bold flex items-center justify-center border transition-all ${styleFor(c3)}"
                   title="${c3Title}">3</span>
         </div>
     `;
@@ -183,37 +204,16 @@ function renderHub() {
             ? `Attempted ${new Date(lastAttMs).toLocaleDateString()}`
             : `Created ${new Date(createdMs).toLocaleDateString()}`;
 
-        const topics = Array.isArray(session.topics)
-            ? session.topics.filter(t => t && t !== 'General Medical Concept')
-            : [];
-
         const cardNode = document.createElement('div');
-        cardNode.className = `kh-portrait-card hub-card glass-card rounded-2xl transition-all flex flex-col h-full overflow-hidden shadow-lg relative cursor-pointer ${
+        cardNode.className = `kh-portrait-card cursor-pointer hub-card glass-card rounded-2xl transition-all flex flex-col h-full overflow-hidden shadow-lg relative ${
             isSelectedForDelete || isInspectorActive ? 'border-brand-500 ring-1 ring-brand-500' : ''
         }`;
         cardNode.setAttribute('data-adaptive-contrast', 'true');
+        cardNode.setAttribute('data-session-id', escapeAttr(session.id));
         cardNode.dataset.sessionId = session.id;
 
         let topicsHtml = '';
-        if (reviewed) {
-            if (topics.length > 0) {
-                const visibleTopics = topics.slice(0, 6);
-                const hiddenCount = Math.max(0, topics.length - visibleTopics.length);
-                topicsHtml = `
-                    <div class="hub-card-topics flex flex-wrap gap-1.5 mb-2 overflow-hidden"
-                         style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; max-height: 46px;">
-                        ${visibleTopics.map(t => `
-                            <span class="text-[11px] px-2.5 py-0.5 glass-panel rounded-full inline-block truncate max-w-[140px]" title="${window.escapeHTML(t)}">
-                                ${window.escapeHTML(t)}
-                            </span>
-                        `).join('')}
-                        ${hiddenCount > 0 ? `<span class="text-[10px] px-2 py-0.5 bg-brand-500/20 text-brand-300 rounded-full inline-block">+${hiddenCount} more</span>` : ''}
-                    </div>
-                `;
-            } else {
-                topicsHtml = `<div class="text-xs text-muted italic mb-2 flex items-center">Topics verified (General Clinical Set)</div>`;
-            }
-        } else {
+        if (!reviewed) {
             topicsHtml = `
                 <div class="mb-2 flex items-center justify-between glass-panel px-3 py-1.5 rounded-xl border border-warning/30">
                     <span class="text-xs text-muted truncate pr-2">Topics not confirmed yet</span>
@@ -224,8 +224,10 @@ function renderHub() {
             `;
         }
 
+        const accuracyDisplay = formatSessionAccuracyDisplay(session);
+        const isAttempted = accuracyDisplay !== "—";
         const accValue = Math.round(Number(session.accuracy || 0));
-        const accColor = !isCompleted && answeredQ === 0
+        const accColor = !isAttempted
             ? 'text-muted'
             : accValue >= 70
                 ? 'text-success-500'
@@ -240,25 +242,25 @@ function renderHub() {
 
             <!-- Locked Zone 1: Header -->
             <div class="kh-card-header flex justify-between items-center gap-2 ${isEditing ? 'pr-7' : ''}">
-                <span class="hub-card-subject text-xs font-medium px-2 py-0.5 bg-brand-600/20 text-brand-400 rounded-lg truncate max-w-[130px]">
-                    ${window.escapeHTML(subBadge)}
+                <span class="csv-topic-badge-dynamic hub-card-subject" title="${escapeAttr(subBadge)}">
+                    ${escapeAttr(subBadge)}
                 </span>
                 ${renderStatusCirclesHTML(session)}
             </div>
 
             <!-- Locked Zone 2: Title (clamped to 3 lines) -->
-            <h3 class="kh-card-title hub-card-title text-base font-bold" title="${window.escapeHTML(cardHeading)}">
-                ${window.escapeHTML(cardHeading)}
+            <h3 class="kh-card-title hub-card-title text-base font-bold" title="${escapeAttr(cardHeading)}">
+                ${escapeAttr(cardHeading)}
             </h3>
 
             <!-- Locked Zone 3: Body with fade mask -->
             <div class="kh-card-body hub-card-body flex-1">
                 <div class="text-[11px] text-muted flex items-center justify-between kh-card-body-text">
-                    <span>${window.escapeHTML(dateLabel)}</span>
+                    <span>${escapeAttr(dateLabel)}</span>
                     <span class="font-mono font-semibold text-brand-300">${answeredQ} / ${totalQ} Completed</span>
                 </div>
 
-                <!-- Main Topics or Review Topics Trigger -->
+                <!-- Review Topics Trigger if unconfirmed -->
                 ${topicsHtml}
 
                 <!-- Progress & Accuracy Box -->
@@ -270,7 +272,7 @@ function renderHub() {
                     <div class="text-center">
                         <p class="text-[10px] text-muted mb-0.5">Accuracy</p>
                         <p class="hub-card-accuracy text-sm font-bold ${accColor}">
-                            ${answeredQ > 0 ? `${accValue}%` : 'Not Attempted'}
+                            ${accuracyDisplay}
                         </p>
                     </div>
                 </div>
@@ -279,19 +281,22 @@ function renderHub() {
                     <span><span class="hub-card-correct text-success-400 font-bold">${session.correct_answers || 0}</span> Correct</span>
                     <span><span class="hub-card-wrong text-danger-400 font-bold">${session.wrong_answers || 0}</span> Wrong</span>
                 </div>
+
+                <button type="button" class="btn-study study-topics-covered-btn mt-1">
+                    📖 Study Topics Covered
+                </button>
             </div>
 
             <!-- Locked Zone 4: Footer Action Controls -->
-            <div class="kh-card-footer border-t border-gray-700 pt-2 grid grid-cols-2 gap-1.5">
-                <button type="button" class="btn-study cursor-pointer py-1.5 px-2 text-xs font-medium bg-brand-600/20 text-brand-400 hover:bg-brand-600/30 rounded-lg transition-colors flex items-center justify-center gap-1 col-span-2 border-none">
-                    📖 Study Topics Covered
-                </button>
-                <button type="button" class="btn-review secondary-btn cursor-pointer py-1 px-2 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1">
-                    📝 Explanations
-                </button>
-                <button type="button" class="btn-retake secondary-btn cursor-pointer py-1 px-2 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1">
-                    ${answeredQ === 0 ? '▶️ Start Quiz' : '🔄 Retake Set'}
-                </button>
+            <div class="kh-card-footer border-t border-gray-700 pt-2">
+                <div class="kh-equal-actions-grid">
+                    <button type="button" class="btn-review kh-action-btn-equal kh-action-btn-explanation">
+                        📝 Explanations
+                    </button>
+                    <button type="button" class="btn-retake kh-action-btn-equal kh-action-btn-start-quiz">
+                        ${answeredQ === 0 ? '▶️ Start Quiz' : '🔄 Retake Set'}
+                    </button>
+                </div>
             </div>
         `;
 
@@ -305,19 +310,6 @@ function renderHub() {
                 renderHub();
             });
         }
-
-        const bodyEl = cardNode.querySelector('.kh-card-body') || cardNode.querySelector('.hub-card-body');
-        bodyEl?.addEventListener('click', (e) => {
-            if (e.target.closest('.btn-review-topics') || e.target.closest('.hub-circle-1')) return;
-            if (isEditing && cb) {
-                cb.checked = !cb.checked;
-                cb.dispatchEvent(new Event('change'));
-                return;
-            }
-            activeInspectorSessionId = session.id;
-            renderHub();
-            openHubCardInspector(session);
-        });
 
         const triggerTopicPopup = async (e) => {
             e.stopPropagation();
@@ -346,6 +338,52 @@ function renderHub() {
         gridEl.appendChild(cardNode);
     });
 }
+
+function openKnowledgeHubRightSidebar(sessionId) {
+    if (!sessionId) return;
+    if (isEditing) {
+        if (hubSelected.has(sessionId)) {
+            hubSelected.delete(sessionId);
+        } else {
+            hubSelected.add(sessionId);
+        }
+        updateDeleteBtn();
+        renderHub();
+        return;
+    }
+    activeInspectorSessionId = sessionId;
+    const session = Array.isArray(hubSessions) ? hubSessions.find(s => s.id === sessionId) : null;
+    if (session) {
+        renderHub();
+        openHubCardInspector(session, true);
+    } else {
+        fetch(`/api/sessions/${encodeURIComponent(sessionId)}`)
+            .then(res => res.ok ? res.json() : null)
+            .then(sess => {
+                if (sess) openHubCardInspector(sess, true);
+            })
+            .catch(err => console.warn("Failed to open right sidebar for session:", err));
+    }
+}
+window.openKnowledgeHubRightSidebar = openKnowledgeHubRightSidebar;
+
+document.addEventListener("click", (e) => {
+    const card = e.target.closest(".kh-portrait-card");
+    if (!card) return;
+
+    // Ignore clicks on any interactive button, link, input, or status action inside the card
+    const interactiveChild = e.target.closest(
+        "button, a, input, select, textarea, label, [role='button'], .kh-action-btn-equal, .study-topics-covered-btn, .kh-status-circle-btn"
+    );
+    if (interactiveChild && card.contains(interactiveChild)) {
+        return;
+    }
+
+    const sessionId = card.dataset.sessionId;
+    if (sessionId) {
+        openKnowledgeHubRightSidebar(sessionId);
+    }
+});
 
 async function reopenTopicVerificationForSession(session) {
     try {

@@ -6,33 +6,27 @@
  */
 export function computeNoteCardShadeStyle(shadeIndex = 0) {
   const rootStyle = typeof window !== 'undefined' && window.getComputedStyle ? getComputedStyle(document.documentElement) : null;
-  const baseHue = (rootStyle && Number.parseFloat(rootStyle.getPropertyValue('--bg-dominant-hue'))) || 218;
-  const baseSat = (rootStyle && Number.parseFloat(rootStyle.getPropertyValue('--bg-dominant-sat'))) || 42;
+  const baseHue = (rootStyle && (Number.parseFloat(rootStyle.getPropertyValue('--bg-hue')) || Number.parseFloat(rootStyle.getPropertyValue('--bg-dominant-hue')))) || 218;
+  const baseSat = (rootStyle && (Number.parseFloat(rootStyle.getPropertyValue('--bg-sat')) || Number.parseFloat(rootStyle.getPropertyValue('--bg-dominant-sat')))) || 42;
   const isLightMode = typeof document !== 'undefined' &&
                       (document.documentElement.classList.contains('light') ||
                        document.body.classList.contains('light-theme') ||
                        document.body.classList.contains('light-mode'));
 
-  const shadeOffsets = [
-    { dh: 0,   ds: 0,   dl: 0 },
-    { dh: 18,  ds: 6,   dl: 3 },
-    { dh: -18, ds: 4,   dl: -2 },
-    { dh: 34,  ds: -4,  dl: 4 },
-    { dh: -32, ds: 8,   dl: 2 },
-    { dh: 50,  ds: -6,  dl: -3 },
-    { dh: -48, ds: 5,   dl: 5 },
-    { dh: 12,  ds: 10,  dl: -4 }
-  ];
-
-  const offset = shadeOffsets[Math.abs(Number(shadeIndex) || 0) % shadeOffsets.length];
-  const h = (baseHue + offset.dh + 360) % 360;
-  const s = Math.max(18, Math.min(78, baseSat + offset.ds));
-  const l = isLightMode ? Math.min(94, 86 + offset.dl) : Math.max(12, Math.min(26, 17 + offset.dl));
-  const borderL = isLightMode ? l - 14 : l + 16;
+  const sIndex = Math.abs(Number(shadeIndex) || 0);
+  const hueOffset = ((sIndex * 18) % 60) - 24;
+  const h = (baseHue + hueOffset + 360) % 360;
+  const s = Math.max(20, Math.min(65, baseSat));
+  const l = isLightMode ? 92 : 16;
+  const borderL = isLightMode ? l - 16 : l + 18;
 
   return {
-    background: `linear-gradient(155deg, hsla(${h}, ${s}%, ${l}%, 0.82) 0%, hsla(${(h + 14) % 360}, ${s}%, ${Math.max(8, l - 4)}%, 0.90) 100%)`,
-    borderColor: `hsla(${h}, ${Math.min(90, s + 12)}%, ${borderL}%, 0.38)`,
+    background: isLightMode
+      ? `linear-gradient(155deg, hsla(${h}, ${Math.min(s, 48)}%, 94%, 0.82) 0%, hsla(${(h + 14) % 360}, ${Math.min(s, 44)}%, 90%, 0.90) 100%)`
+      : `linear-gradient(155deg, hsla(${h}, ${s}%, 18%, 0.82) 0%, hsla(${(h + 14) % 360}, ${s}%, 13%, 0.90) 100%)`,
+    borderColor: isLightMode
+      ? `hsla(${h}, ${s}%, 60%, 0.40)`
+      : `hsla(${h}, ${Math.min(90, s + 12)}%, ${borderL}%, 0.38)`,
     accentColor: `hsl(${h}, ${Math.min(95, s + 20)}%, ${isLightMode ? 38 : 72}%)`,
     rawH: h
   };
@@ -478,29 +472,6 @@ export class LectureNoteEditor {
                         (document.documentElement.classList.contains('light') ||
                          document.body.classList.contains('light-theme') ||
                          document.body.classList.contains('light-mode'));
-
-    if (this.note.card_color && this.note.card_color.startsWith('rgba')) {
-      const match = this.note.card_color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-      if (match) {
-        let [, r, g, b] = match.map(Number);
-        if (isLightMode) {
-          // Adapt sampled color dynamically to light theme
-          r = Math.min(255, Math.round(r * 0.35 + 240 * 0.65));
-          g = Math.min(255, Math.round(g * 0.35 + 242 * 0.65));
-          b = Math.min(255, Math.round(b * 0.35 + 245 * 0.65));
-          return {
-            background: `linear-gradient(155deg, rgba(${r}, ${g}, ${b}, 0.88) 0%, rgba(${r}, ${g}, ${b}, 0.96) 100%)`,
-            borderColor: `rgba(${r - 30}, ${g - 30}, ${b - 30}, 0.25)`,
-            isLightCard: true
-          };
-        }
-        return {
-          background: `linear-gradient(155deg, rgba(${r}, ${g}, ${b}, 0.82) 0%, rgba(${r}, ${g}, ${b}, 0.92) 100%)`,
-          borderColor: `rgba(${r}, ${g}, ${b}, 0.5)`,
-          isLightCard: false
-        };
-      }
-    }
     const shade = computeNoteCardShadeStyle(this.note.shade_index || 0);
     return {
       background: shade.background,
@@ -1586,33 +1557,10 @@ export class MyNotesController {
                          document.body.classList.contains('light-mode'));
 
     gridEl.innerHTML = notes.map((n) => {
-      let cardBg = '';
-      let cardBorder = '';
-      let isLightCard = isLightMode;
-
-      if (n.card_color && n.card_color.startsWith('rgba')) {
-        const match = n.card_color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-        if (match) {
-          let [, r, g, b] = match.map(Number);
-          if (isLightMode) {
-            r = Math.min(255, Math.round(r * 0.35 + 240 * 0.65));
-            g = Math.min(255, Math.round(g * 0.35 + 242 * 0.65));
-            b = Math.min(255, Math.round(b * 0.35 + 245 * 0.65));
-            cardBg = `linear-gradient(155deg, rgba(${r}, ${g}, ${b}, 0.88) 0%, rgba(${r}, ${g}, ${b}, 0.96) 100%)`;
-            cardBorder = `rgba(${r - 30}, ${g - 30}, ${b - 30}, 0.25)`;
-            isLightCard = true;
-          } else {
-            cardBg = `linear-gradient(155deg, rgba(${r}, ${g}, ${b}, 0.82) 0%, rgba(${r}, ${g}, ${b}, 0.92) 100%)`;
-            cardBorder = `rgba(${r}, ${g}, ${b}, 0.5)`;
-            isLightCard = false;
-          }
-        }
-      }
-      if (!cardBg) {
-        const shade = computeNoteCardShadeStyle(n.shade_index || 0);
-        cardBg = shade.background;
-        cardBorder = shade.borderColor;
-      }
+      const shade = computeNoteCardShadeStyle(n.shade_index || 0);
+      const cardBg = shade.background;
+      const cardBorder = shade.borderColor;
+      const isLightCard = isLightMode;
 
       const topItems = n.top_items || [];
       const updatedDate = n.updated_at ? new Date(n.updated_at * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';

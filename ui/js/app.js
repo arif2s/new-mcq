@@ -924,11 +924,94 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateThemeAndBackground(true);
     };
 
+    // =========================================================
+    // Dynamic Wallpaper-Derived Glassmorphic Palette & Tokens
+    // =========================================================
+    const AdaptiveThemeAndContrastEngine = {
+        baseHSL: { h: 220, s: 45 },
+        getActiveTheme() {
+            return (body.classList.contains('light-theme') || document.documentElement.classList.contains('light'))
+                ? 'light'
+                : 'dark';
+        },
+        applyGlobalDerivedTokens() {
+            const theme = this.getActiveTheme(); // "light" or "dark"
+            const { h, s } = this.baseHSL;
+            const hAccent = (h + 24) % 360;
+            const hBadge = (h + 332) % 360;
+            const root = document.documentElement.style;
+
+            root.setProperty("--bg-hue", `${h}`);
+            root.setProperty("--bg-sat", `${s}%`);
+            root.setProperty("--hue-primary", `${h}`);
+            root.setProperty("--hue-accent", `${hAccent}`);
+            root.setProperty("--hue-badge", `${hBadge}`);
+
+            if (theme === "light") {
+                // Light Mode Glassmorphic Surfaces & Cards
+                root.setProperty("--glass-surface-bg", `hsla(${h}, ${Math.min(s, 45)}%, 94%, 0.72)`);
+                root.setProperty("--glass-card-bg", `linear-gradient(145deg, hsla(${h}, ${Math.min(s, 50)}%, 95%, 0.78), hsla(${hAccent}, ${Math.min(s, 44)}%, 90%, 0.68))`);
+                root.setProperty("--glass-card-hover-bg", `linear-gradient(145deg, hsla(${h}, ${Math.min(s, 55)}%, 92%, 0.86), hsla(${hAccent}, ${Math.min(s, 48)}%, 87%, 0.80))`);
+                root.setProperty("--glass-border", `hsla(${h}, ${s}%, 65%, 0.42)`);
+                root.setProperty("--glass-highlight-edge", `hsla(0, 0%, 100%, 0.65)`);
+
+                // Dynamic Buttons ('Explanation', 'Start Quiz', 'Study Topics Covered') & CSV Badge in Light Mode
+                root.setProperty("--btn-primary-bg", `linear-gradient(135deg, hsla(${h}, 72%, 38%, 0.92), hsla(${hAccent}, 68%, 32%, 0.92))`);
+                root.setProperty("--btn-primary-text", `#F8FAFC`);
+                root.setProperty("--btn-primary-border", `hsla(${h}, 75%, 30%, 0.55)`);
+
+                root.setProperty("--btn-secondary-bg", `hsla(${h}, ${Math.min(s + 10, 55)}%, 86%, 0.82)`);
+                root.setProperty("--btn-secondary-text", `hsl(${h}, 45%, 14%)`);
+                root.setProperty("--btn-secondary-border", `hsla(${h}, ${s}%, 58%, 0.48)`);
+
+                root.setProperty("--btn-study-topics-bg", `linear-gradient(135deg, hsla(${hAccent}, 65%, 88%, 0.88), hsla(${h}, 60%, 84%, 0.88))`);
+                root.setProperty("--btn-study-topics-text", `hsl(${hAccent}, 62%, 18%)`);
+                root.setProperty("--btn-study-topics-border", `hsla(${hAccent}, 58%, 55%, 0.50)`);
+
+                root.setProperty("--badge-csv-bg", `hsla(${hBadge}, 62%, 88%, 0.85)`);
+                root.setProperty("--badge-csv-text", `hsl(${hBadge}, 65%, 20%)`);
+                root.setProperty("--badge-csv-border", `hsla(${hBadge}, 55%, 60%, 0.45)`);
+
+                root.setProperty("--text-derived-primary", `hsl(${h}, 36%, 11%)`);
+                root.setProperty("--text-derived-muted", `hsl(${h}, 22%, 30%)`);
+            } else {
+                // Dark Mode Glassmorphic Surfaces & Cards
+                root.setProperty("--glass-surface-bg", `hsla(${h}, ${s}%, 13%, 0.68)`);
+                root.setProperty("--glass-card-bg", `linear-gradient(145deg, hsla(${h}, ${s}%, 17%, 0.74), hsla(${hAccent}, ${Math.max(s - 6, 24)}%, 12%, 0.66))`);
+                root.setProperty("--glass-card-hover-bg", `linear-gradient(145deg, hsla(${h}, ${Math.min(s + 8, 64)}%, 21%, 0.82), hsla(${hAccent}, ${s}%, 15%, 0.76))`);
+                root.setProperty("--glass-border", `hsla(${h}, ${Math.min(s + 12, 70)}%, 68%, 0.24)`);
+                root.setProperty("--glass-highlight-edge", `hsla(${h}, 80%, 85%, 0.14)`);
+
+                // Dynamic Buttons ('Explanation', 'Start Quiz', 'Study Topics Covered') & CSV Badge in Dark Mode
+                root.setProperty("--btn-primary-bg", `linear-gradient(135deg, hsla(${h}, 74%, 46%, 0.88), hsla(${hAccent}, 70%, 38%, 0.88))`);
+                root.setProperty("--btn-primary-text", `#F8FAFC`);
+                root.setProperty("--btn-primary-border", `hsla(${h}, 80%, 66%, 0.42)`);
+
+                root.setProperty("--btn-secondary-bg", `hsla(${h}, ${s}%, 22%, 0.78)`);
+                root.setProperty("--btn-secondary-text", `hsl(${h}, 30%, 95%)`);
+                root.setProperty("--btn-secondary-border", `hsla(${h}, ${s}%, 65%, 0.32)`);
+
+                root.setProperty("--btn-study-topics-bg", `linear-gradient(135deg, hsla(${hAccent}, 58%, 24%, 0.84), hsla(${h}, 54%, 20%, 0.84))`);
+                root.setProperty("--btn-study-topics-text", `hsl(${hAccent}, 85%, 88%)`);
+                root.setProperty("--btn-study-topics-border", `hsla(${hAccent}, 70%, 62%, 0.38)`);
+
+                root.setProperty("--badge-csv-bg", `hsla(${hBadge}, 56%, 22%, 0.82)`);
+                root.setProperty("--badge-csv-text", `hsl(${hBadge}, 85%, 86%)`);
+                root.setProperty("--badge-csv-border", `hsla(${hBadge}, 68%, 62%, 0.36)`);
+
+                root.setProperty("--text-derived-primary", `hsl(${h}, 28%, 96%)`);
+                root.setProperty("--text-derived-muted", `hsl(${h}, 18%, 75%)`);
+            }
+        }
+    };
+    window.AdaptiveThemeAndContrastEngine = AdaptiveThemeAndContrastEngine;
+
     themeToggleBtn?.addEventListener('click', () => {
         const isLight = body.classList.contains('light-theme');
         const newTheme = isLight ? 'dark-theme' : 'light-theme';
         body.classList.replace(isLight ? 'light-theme' : 'dark-theme', newTheme);
         localStorage.setItem('theme', newTheme);
+        AdaptiveThemeAndContrastEngine.applyGlobalDerivedTokens();
         updateThemeAndBackground(false);
     });
 
@@ -1001,15 +1084,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d', { willReadFrequently: true });
-            canvas.width = 64;
-            canvas.height = 64;
-            ctx.drawImage(img, 0, 0, 64, 64);
+            canvas.width = 256;
+            canvas.height = 256;
+            ctx.drawImage(img, 0, 0, 256, 256);
 
             const regions = [
-                { x: 0, y: 0, w: 32, h: 32 },
-                { x: 32, y: 0, w: 32, h: 32 },
-                { x: 0, y: 32, w: 32, h: 32 },
-                { x: 32, y: 32, w: 32, h: 32 }
+                { x: 0, y: 0, w: 128, h: 128 },
+                { x: 128, y: 0, w: 128, h: 128 },
+                { x: 0, y: 128, w: 128, h: 128 },
+                { x: 128, y: 128, w: 128, h: 128 }
             ];
 
             const filteredHues = [];
@@ -1150,6 +1233,34 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             document.documentElement.style.setProperty('--bg-dominant-hue', String(Math.round(domHue)));
             document.documentElement.style.setProperty('--bg-dominant-sat', String(Math.round(btnSat * 100)));
+
+            // Compute saturation-weighted average RGB & clamp saturation between 32% and 62%
+            let sumSatR = 0, sumSatG = 0, sumSatB = 0, totalSatWeight = 0;
+            const fullImgData = ctx.getImageData(0, 0, 256, 256).data;
+            for (let p = 0; p < fullImgData.length; p += 16) {
+                const r = fullImgData[p], g = fullImgData[p + 1], b = fullImgData[p + 2];
+                const [ph, ps, pl] = rgbToHsl(r, g, b);
+                if (pl >= 0.05 && pl <= 0.95) {
+                    const weight = Math.max(0.08, ps);
+                    sumSatR += r * weight;
+                    sumSatG += g * weight;
+                    sumSatB += b * weight;
+                    totalSatWeight += weight;
+                }
+            }
+            let baseHue = Math.round(domHue);
+            let baseSat = Math.round(btnSat * 100);
+            if (totalSatWeight > 0) {
+                const avgR = Math.round(sumSatR / totalSatWeight);
+                const avgG = Math.round(sumSatG / totalSatWeight);
+                const avgB = Math.round(sumSatB / totalSatWeight);
+                const [wH, wS, wL] = rgbToHsl(avgR, avgG, avgB);
+                if (wS > 0.08) baseHue = Math.round(wH);
+                baseSat = Math.round(wS * 100);
+            }
+            const clampedSat = Math.max(32, Math.min(62, baseSat));
+            AdaptiveThemeAndContrastEngine.baseHSL = { h: baseHue, s: clampedSat };
+            AdaptiveThemeAndContrastEngine.applyGlobalDerivedTokens();
 
             // Contrast-safe brand text tokens derived from wallpaper accent
             if (theme === 'dark') {
